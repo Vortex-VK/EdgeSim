@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edgesim"
+version = "0.0.1"
+description = "Edge-Case Simulation & Synthetic Data for Warehouse AMRs (V0 CLI stub)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "EdgeSim" }]
+dependencies = [
+  "PyYAML>=6.0",
+  "numpy>=1.23",
+  "tqdm>=4.65",
+  "networkx>=3.2",
+  "matplotlib>=3.6",
+  "opencv-python>=4.8",
+  "pybullet>=3.2",
+]
+
+[project.scripts]
+edgesim = "edgesim.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["edgesim*"]

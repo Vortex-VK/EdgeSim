@@ -1,0 +1,2 @@
+[console_scripts]
+edgesim = edgesim.cli:main
