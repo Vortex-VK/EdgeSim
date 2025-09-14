@@ -12,7 +12,7 @@ def collect_py_files(start_dir: str, out_file: str = "all_code.txt") -> None:
     with out_path.open("w", encoding="utf-8") as out:
         for root, _, files in os.walk(start_path):
             for fname in files:
-                if fname.endswith(".py"):
+                if fname.endswith(".py") or fname.endswith(".toml"):
                     fpath = Path(root) / fname
                     try:
                         text = fpath.read_text(encoding="utf-8")

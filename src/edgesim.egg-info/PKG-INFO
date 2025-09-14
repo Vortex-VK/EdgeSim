@@ -6,12 +6,13 @@ Author: EdgeSim
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: PyYAML>=6.0
-Requires-Dist: numpy>=1.23
+Requires-Dist: numpy>=1.24
 Requires-Dist: tqdm>=4.65
 Requires-Dist: networkx>=3.2
 Requires-Dist: matplotlib>=3.6
 Requires-Dist: opencv-python>=4.8
 Requires-Dist: pybullet>=3.2
+Requires-Dist: imageio>=2.34.0
 
 ## README.md
 # EdgeSim (V0) — Step 1

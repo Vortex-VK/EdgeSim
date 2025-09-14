@@ -7,3 +7,4 @@ networkx>=3.2
 matplotlib>=3.6
 opencv-python>=4.8
 pybullet>=3.2
+imageio

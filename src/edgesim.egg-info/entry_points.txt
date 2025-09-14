@@ -1,2 +1,3 @@
 [console_scripts]
 edgesim = edgesim.cli:main
+edgesim-report = edgesim.report_latest:main

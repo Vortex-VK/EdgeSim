@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>EdgeSim Report — 2025-09-14_15-13-09_Night_shift_wet_floor_near_dock_human_cr</title>
+<style>
+body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; color: #111; }
+h1 { margin: 0 0 8px 0; }
+h2 { margin-top: 28px; }
+.card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin: 12px 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.small { color: #555; font-size: 12px; }
+.badge { display:inline-block; padding:2px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:12px; }
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; }
+.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; background: #f8fafc; padding: 2px 6px; border-radius: 6px; }
+.svg { width: 100%; height: 160px; border: 1px solid #eee; border-radius: 8px; background: #fafafa; }
+.gallery img { width: 100%; height: auto; border-radius: 8px; border:1px solid #eee; }
+footer { margin-top: 24px; color:#666; font-size:12px; }
+.kv { display:grid; grid-template-columns: 160px 1fr; gap:8px; }
+.kv div:nth-child(odd) { color:#555; }
+.tag { display:inline-block; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:999px; padding:2px 8px; margin:2px; font-size:12px; }
+.acclist li { margin:6px 0; }
+.pass { color:#065f46; }
+.fail { color:#b91c1c; }
+.warn { color:#92400e; }
+</style>
+</head>
+<body>
+<h1>EdgeSim Report</h1>
+<div class="small">Scenario: <span class="code">2025-09-14_15-13-09_Night_shift_wet_floor_near_dock_human_cr</span> • Runs: <b>50</b> • Generated: 2025-09-14 19:13 UTC</div>
+<div class="small">Manifest: per_run_digest <span class="code">4bf60bafa32ebd6dd8274a5e99f52985a531e50824cf504f0c8b6a1591a8ad26</span> • scenario.yaml <span class="code">9a0db84da02a5e3c0dedf7e1a6ea8476ec0f8332eb54c89f3e1d14bca1deb46e</span> • seeds.json <span class="code">f902443a2bae87b1ce70a2e410b21be6c009144c9927f19be087dafcfc9bcfdb</span> • <span class="badge">Repro stamp ready</span></div>
+
+<div class="card">
+  <h2>Acceptance Checklist</h2>
+  <ul class="acclist">
+    <li class="pass">Failure rate ≥ 10% (stress): <b>72.00%</b></li>
+    <li class="pass">Reproducibility stamp present (CSV digest): <b>4bf60bafa32e…</b></li>
+    <li class="pass">Coverage shows at least one uncovered bucket (“gap”): <b>human_phase_pct:none=0%</b></li>
+  </ul>
+  <div class="small">Run <span class="code">edgesim validate 2025-09-14_15-13-09_Night_shift_wet_floor_near_dock_human_cr</span> to see invariant checks in the console.</div>
+</div>
+
+<div class="card">
+  <h2>Outcomes</h2>
+  <div class="grid">
+    <div>
+      <div>Successes: <b>14</b></div>
+      <div>Collision (human): <b>36</b></div>
+      <div>Other/Timeout: <b>0</b></div>
+    </div>
+    <div>
+      <svg class="svg" viewBox="0 0 400 160"><rect x="20" y="74" width="98" height="46" fill="#10b981" /><text x="69.0" y="134" font-size="12" text-anchor="middle">success</text><rect x="126" y="0" width="98" height="120" fill="#ef4444" /><text x="175.0" y="134" font-size="12" text-anchor="middle">collision</text><rect x="232" y="120" width="98" height="0" fill="#9ca3af" /><text x="281.0" y="134" font-size="12" text-anchor="middle">other</text></svg>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Coverage (taxonomy)</h2>
+  <h3 style='margin:8px 0 6px 0;'>Traction (pct)</h3>
+<table class='table'><thead><tr><th>Bucket</th><th>Value</th></tr></thead><tbody>
+<tr><td>wet_encountered</td><td>74.00%</td></tr>
+<tr><td>dry_only</td><td>26.00%</td></tr>
+</tbody></table>
+<h3 style='margin:8px 0 6px 0;'>Human phase (pct)</h3>
+<table class='table'><thead><tr><th>Bucket</th><th>Value</th></tr></thead><tbody>
+<tr><td>none</td><td>0.00%</td></tr>
+<tr><td>running</td><td>16.00%</td></tr>
+<tr><td>fallen</td><td>84.00%</td></tr>
+</tbody></table>
+<h3 style='margin:8px 0 6px 0;'>Clearance bands (pct)</h3>
+<table class='table'><thead><tr><th>Bucket</th><th>Value</th></tr></thead><tbody>
+<tr><td><0.20</td><td>72.00%</td></tr>
+<tr><td>0.20–0.50</td><td>0.00%</td></tr>
+<tr><td>>=0.50</td><td>28.00%</td></tr>
+</tbody></table>
+<h3 style='margin:8px 0 6px 0;'>Outcomes (pct)</h3>
+<table class='table'><thead><tr><th>Bucket</th><th>Value</th></tr></thead><tbody>
+<tr><td>success</td><td>28.00%</td></tr>
+<tr><td>collision_human</td><td>72.00%</td></tr>
+<tr><td>other_failure</td><td>0.00%</td></tr>
+</tbody></table>
+</div>
+
+<div class="card">
+  <h2>Min-Clearance (per run)</h2>
+  <svg class="svg" viewBox="0 0 400 160"><rect x="20" y="0" width="18" height="120" fill="#60a5fa" /><rect x="40" y="120" width="18" height="0" fill="#60a5fa" /><rect x="60" y="120" width="18" height="0" fill="#60a5fa" /><rect x="80" y="120" width="18" height="0" fill="#60a5fa" /><rect x="100" y="120" width="18" height="0" fill="#60a5fa" /><rect x="120" y="120" width="18" height="0" fill="#60a5fa" /><rect x="140" y="120" width="18" height="0" fill="#60a5fa" /><rect x="160" y="74" width="18" height="46" fill="#60a5fa" /><rect x="180" y="120" width="18" height="0" fill="#60a5fa" /><rect x="200" y="120" width="18" height="0" fill="#60a5fa" /><rect x="220" y="120" width="18" height="0" fill="#60a5fa" /><rect x="240" y="120" width="18" height="0" fill="#60a5fa" /><rect x="260" y="120" width="18" height="0" fill="#60a5fa" /><rect x="280" y="120" width="18" height="0" fill="#60a5fa" /><rect x="300" y="120" width="18" height="0" fill="#60a5fa" /><rect x="320" y="120" width="18" height="0" fill="#60a5fa" /><text x="20" y="134" font-size="12">0.0</text><text x="180.0" y="134" font-size="12" text-anchor="middle">1.0</text><text x="360" y="134" font-size="12" text-anchor="end">2.0</text></svg>
+</div>
+
+<div class="card">
+  <h2>Time-to-Goal (successes only)</h2>
+  <svg class="svg" viewBox="0 0 400 160"><rect x="20" y="120" width="18" height="0" fill="#f59e0b" /><rect x="40" y="0" width="18" height="120" fill="#f59e0b" /><rect x="60" y="120" width="18" height="0" fill="#f59e0b" /><rect x="80" y="120" width="18" height="0" fill="#f59e0b" /><rect x="100" y="120" width="18" height="0" fill="#f59e0b" /><rect x="120" y="120" width="18" height="0" fill="#f59e0b" /><rect x="140" y="120" width="18" height="0" fill="#f59e0b" /><rect x="160" y="120" width="18" height="0" fill="#f59e0b" /><rect x="180" y="120" width="18" height="0" fill="#f59e0b" /><rect x="200" y="120" width="18" height="0" fill="#f59e0b" /><rect x="220" y="120" width="18" height="0" fill="#f59e0b" /><rect x="240" y="120" width="18" height="0" fill="#f59e0b" /><rect x="260" y="120" width="18" height="0" fill="#f59e0b" /><rect x="280" y="120" width="18" height="0" fill="#f59e0b" /><rect x="300" y="120" width="18" height="0" fill="#f59e0b" /><rect x="320" y="120" width="18" height="0" fill="#f59e0b" /><text x="20" y="134" font-size="12">0.0</text><text x="180.0" y="134" font-size="12" text-anchor="middle">60.0</text><text x="360" y="134" font-size="12" text-anchor="end">120.0</text></svg>
+</div>
+
+<div class="card">
+  <h2>Calibration (stub)</h2>
+  <div class="kv">
+    <div>R² (speed profile)</div><div>NA</div>
+    <div>KL (obstacle range hist)</div><div>NA</div>
+    <div>ECE (failure prob)</div><div>NA</div>
+  </div>
+  <div class="small" style="margin-top:8px;">This is a V0 placeholder. Pair with a small real anchor log to compute metrics; auto-tuning loop lands in V0.1.</div>
+</div>
+
+<div class="card">
+  <h2>Sample Frames (failures preferred)</h2>
+  <div class="grid gallery">
+    <figure><img src="frames_sample/run_0001/000.png"/><figcaption class="small">run_0001: collision_human, min_clear=0.00, t_end=6.9s</figcaption></figure>
+<figure><img src="frames_sample/run_0002/000.png"/><figcaption class="small">run_0002: collision_human, min_clear=0.00, t_end=7.2s</figcaption></figure>
+<figure><img src="frames_sample/run_0004/000.png"/><figcaption class="small">run_0004: collision_human, min_clear=0.00, t_end=6.7s</figcaption></figure>
+<figure><img src="frames_sample/run_0005/000.png"/><figcaption class="small">run_0005: collision_human, min_clear=0.00, t_end=7.2s</figcaption></figure>
+<figure><img src="frames_sample/run_0006/000.png"/><figcaption class="small">run_0006: collision_human, min_clear=0.00, t_end=6.7s</figcaption></figure>
+<figure><img src="frames_sample/run_0007/000.png"/><figcaption class="small">run_0007: collision_human, min_clear=0.00, t_end=6.7s</figcaption></figure>
+<figure><img src="frames_sample/run_0010/000.png"/><figcaption class="small">run_0010: collision_human, min_clear=0.00, t_end=7.0s</figcaption></figure>
+<figure><img src="frames_sample/run_0012/000.png"/><figcaption class="small">run_0012: collision_human, min_clear=0.00, t_end=7.3s</figcaption></figure>
+  </div>
+</div>
+
+<footer>EdgeSim • offline HTML report • no external JS • v0</footer>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "runs": 50,
+  "successes": 14,
+  "failures": 36,
+  "avg_time": 9.195999999999998,
+  "avg_steps": 94
+}
