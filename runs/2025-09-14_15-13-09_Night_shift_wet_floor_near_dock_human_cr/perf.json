@@ -1,9 +1,0 @@
-{
-  "completed": 50,
-  "requested": 50,
-  "elapsed_sec": 2.938,
-  "sims_per_min": 1020.93,
-  "time_budget_min": null,
-  "auto_degraded": false,
-  "profile": "minimal"
-}

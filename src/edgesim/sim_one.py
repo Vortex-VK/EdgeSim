@@ -8,6 +8,7 @@ import time
 import numpy as np
 import pybullet as p
 
+from .planner import rasterize_occupancy, astar
 from .world import build_world, spawn_human
 from .sampling import should_save_frames  # outcome-aware shared budget
 
@@ -177,9 +178,6 @@ def run_one(
 		goal[1] = max(border, min(Ly - border, goal[1]))
 		p.resetBasePositionAndOrientation(amr, [start[0], start[1], radius * 0.5], p.getQuaternionFromEuler([0, 0, 0]))
 
-		# Simple two-waypoint path (start -> goal)
-		waypoints: List[Tuple[float, float]] = [(goal[0], goal[1])]
-
 		# Human hazard
 		use_human = bool(scn.get("hazards", {}).get("human"))
 		human_id: int | None = spawn_human() if use_human else None
@@ -237,6 +235,37 @@ def run_one(
 		for wid in wall_ids:
 			(a0, a1) = p.getAABB(wid)
 			static_aabbs.append((a0[0], a0[1], a1[0], a1[1]))
+		
+		# Simple two-waypoint path (start -> goal)
+		# A* on a coarse occupancy grid built from static AABBs
+		# 1) Build grid
+		grid, res = rasterize_occupancy((Lx, Ly), static_aabbs, res=0.25)
+
+		def _to_cell(px: float, py: float) -> tuple[int, int]:
+			ix = max(0, min(int(px / res), len(grid[0]) - 1))
+			iy = max(0, min(int(py / res), len(grid) - 1))
+			return ix, iy
+
+		def _to_world(ix: int, iy: int) -> tuple[float, float]:
+			return (ix * res, iy * res)
+
+		s_ix, s_iy = _to_cell(start[0], start[1])
+		g_ix, g_iy = _to_cell(goal[0], goal[1])
+		path_cells = astar(grid, (s_ix, s_iy), (g_ix, g_iy))
+
+		# 2) Convert to sparse world waypoints (skip close duplicates)
+		waypoints: List[Tuple[float, float]] = []
+		last = (-999, -999)
+		for (ix, iy) in path_cells:
+			wx, wy = _to_world(ix, iy)
+			if not waypoints or math.hypot(wx - last[0], wy - last[1]) > 0.5:
+				waypoints.append((wx, wy))
+				last = (wx, wy)
+
+		# Fallback: if A* failed, go straight to goal as before
+		if not waypoints:
+			waypoints = [(goal[0], goal[1])]
+
 
 		def _human_phase_str() -> str:
 			if fallen_human_id is not None:

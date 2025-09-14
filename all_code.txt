@@ -1,0 +1,2340 @@
+
+
+# ===== collect_code.py =====
+import os
+from pathlib import Path
+
+def collect_py_files(start_dir: str, out_file: str = "all_code.txt") -> None:
+    """
+    Recursively walk start_dir, collect contents of all .py files,
+    and write them into out_file with separators.
+    """
+    start_path = Path(start_dir).resolve()
+    out_path = Path(out_file).resolve()
+
+    with out_path.open("w", encoding="utf-8") as out:
+        for root, _, files in os.walk(start_path):
+            for fname in files:
+                if fname.endswith(".py") or fname.endswith(".toml"):
+                    fpath = Path(root) / fname
+                    try:
+                        text = fpath.read_text(encoding="utf-8")
+                    except Exception as e:
+                        print(f"Skipping {fpath}: {e}")
+                        continue
+                    out.write(f"\n\n# ===== {fpath.relative_to(start_path)} =====\n")
+                    out.write(text)
+    print(f"[OK] Collected .py files from {start_path} into {out_path}")
+
+if __name__ == "__main__":
+    # Change '.' to the starter folder path if needed
+    collect_py_files(".")
+
+
+# ===== pyproject.toml =====
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edgesim"
+version = "0.0.1"
+description = "Edge-Case Simulation & Synthetic Data for Warehouse AMRs (V0 CLI stub)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "EdgeSim" }]
+dependencies = [
+  "PyYAML>=6.0",
+  "numpy>=1.24",          # de-duped, keep one numpy line
+  "tqdm>=4.65",
+  "networkx>=3.2",
+  "matplotlib>=3.6",
+  "opencv-python>=4.8",
+  "pybullet>=3.2",
+  "imageio>=2.34.0",      
+]
+
+[project.scripts]
+edgesim = "edgesim.cli:main"
+edgesim-report = "edgesim.report_latest:main"   # <-- one-liner report builder
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["edgesim*"]
+
+
+# ===== src\edgesim\batch.py =====
+from __future__ import annotations
+from typing import Dict, Any, List
+from pathlib import Path
+import json
+import time
+import numpy as np
+
+from .scenario import Scenario
+from .sim_one import run_one  # your existing single-run
+# sim_one writes per-run CSV already; here we orchestrate many runs.
+
+def _mk_run_folder(root: Path, k: int) -> Path:
+    d = root / f"run_{k:04d}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def _seed_rng(master_seed: int, k: int) -> int:
+    # per-run seed determinism (stable across machines)
+    return int(np.random.SeedSequence([master_seed, k]).entropy % (2**31 - 1))
+
+def run_batch(scn: Dict[str, Any], out_dir: Path, runs: int = 100, master_seed: int = 12345,
+              profile: str = "minimal") -> Dict[str, Any]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    seeds_manifest: List[int] = []
+
+    t0 = time.time()
+    successes = 0
+    collisions = 0
+    times: List[float] = []
+    steps: List[int] = []
+
+    for k in range(runs):
+        run_dir = _mk_run_folder(out_dir, k)
+        seed_k = _seed_rng(master_seed, k)
+        seeds_manifest.append(seed_k)
+
+        # attach seed + profile to scenario
+        scn_local = dict(scn)
+        scn_local["profile"] = profile
+        scn_local["seed"] = seed_k
+
+        # single rollout
+        res = run_one(prompt=scn_local.get("prompt",""),
+                      scn=scn_local,
+                      out_dir=run_dir,
+                      gui=False, realtime=False)
+
+        successes += int(bool(res.get("success", False)))
+        # we can infer collisions by checking success==False and time < timeout, but you already log events in CSV
+        times.append(float(res.get("time", 0.0)))
+        steps.append(int(res.get("steps", 0)))
+
+    t1 = time.time()
+    summary = {
+        "runs": runs,
+        "successes": successes,
+        "failures": runs - successes,
+        "avg_time": (sum(times)/len(times)) if times else 0.0,
+        "avg_steps": (sum(steps)/len(steps)) if steps else 0,
+        "wallclock_s": round(t1 - t0, 3),
+        "profile": profile,
+    }
+
+    # Write seeds + summary
+    (out_dir / "seeds.json").write_text(json.dumps(seeds_manifest, indent=2))
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    return summary
+
+
+# ===== src\edgesim\cli.py =====
+from __future__ import annotations
+import argparse
+from pathlib import Path
+
+from .io_utils import RUNS_ROOT, ensure_dir, write_json, write_yaml, write_text
+from .parser import prompt_to_scenario
+from .utils import timestamp_slug, slugify, git_hash_fallback
+from . import __version__
+
+# Optional modules (present in your repo; guard just in case)
+try:
+	from .rollout import run_batch
+except Exception:
+	run_batch = None  # type: ignore
+
+try:
+	from .metrics import aggregate, write_summary
+except Exception:
+	aggregate = None  # type: ignore
+	write_summary = None  # type: ignore
+
+try:
+	from .reporter import write_report
+except Exception:
+	write_report = None  # type: ignore
+
+try:
+	from .coverage import build_coverage   # taxonomy coverage
+except Exception:
+	build_coverage = None  # type: ignore
+
+# HTML report generator (coverage + acceptance checklist + calibration stub)
+try:
+	from .report_html import generate_report
+except Exception:
+	generate_report = None  # type: ignore
+
+# Single-run sim
+from .sim_one import run_one
+
+
+def _make_run_dir(prompt: str, name: str | None) -> Path:
+	stamp = timestamp_slug()
+	label = slugify(name or prompt)
+	run_dir = RUNS_ROOT / f"{stamp}_{label}"
+	ensure_dir(run_dir)
+	return run_dir
+
+
+def _write_core_files(run_dir: Path, prompt: str, n_runs: int, seed_base: int, scn: dict) -> dict:
+	seeds = {"base_seed": seed_base, "seeds": [seed_base + i for i in range(n_runs)]}
+	manifest = {
+		"prompt": prompt,
+		"n_runs": n_runs,
+		"seed_base": seed_base,
+		"version": __version__,
+		"git": git_hash_fallback(),
+	}
+	write_yaml(run_dir / "scenario.yaml", scn)
+	write_json(run_dir / "seeds.json", seeds)
+	write_json(run_dir / "manifest.json", manifest)
+	return {"seeds": seeds, "manifest": manifest}
+
+
+def cmd_simulate(args: argparse.Namespace) -> int:
+	prompt: str = args.prompt
+	n_runs: int = int(args.runs)
+	seed_base: int = int(args.seed)
+	scn = prompt_to_scenario(prompt, n_runs=n_runs)
+	run_dir = _make_run_dir(prompt, args.name)
+	_write_core_files(run_dir, prompt, n_runs, seed_base, scn)
+	write_text(
+		run_dir / "RUN_README.md",
+		"""# EdgeSim Run (V0 Step 1)
+
+This folder was generated by `edgesim simulate`.
+
+**Includes:**
+- `scenario.yaml`
+- `seeds.json`
+- `manifest.json`
+"""
+	)
+	print(f"\n[EdgeSim] Created run @ {run_dir}\n- scenario.yaml\n- seeds.json\n- manifest.json\n")
+	return 0
+
+
+def cmd_run_batch(args: argparse.Namespace) -> int:
+	if run_batch is None:
+		raise SystemExit("Batch runner modules not available. Add rollout/metrics/reporter or skip this command.")
+
+	prompt: str = args.prompt
+	n_runs: int = int(args.runs)
+	seed_base: int = int(args.seed)
+	profile: str = args.profile
+
+	# Parse and prep
+	scn = prompt_to_scenario(prompt, n_runs=n_runs)
+	run_dir = _make_run_dir(prompt, args.name)
+	files = _write_core_files(run_dir, prompt, n_runs, seed_base, scn)
+	seeds = files["seeds"]["seeds"]
+
+	# Execute batch (writes per_run CSVs + summary.json inside rollout)
+	if hasattr(args, "time_budget_min") or hasattr(args, "auto_degrade"):
+		# New signature with guardrails
+		try:
+			run_batch(
+				prompt, scn, seeds, run_dir,
+				profile=profile,
+				time_budget_min=getattr(args, "time_budget_min", None),
+				auto_degrade=bool(getattr(args, "auto_degrade", False)),
+			)
+		except TypeError:
+			# Fallback to legacy signature if rollout doesn't accept new params
+			run_batch(prompt, scn, seeds, run_dir, profile=profile)
+	else:
+		run_batch(prompt, scn, seeds, run_dir, profile=profile)
+
+	# Coverage (taxonomy counters) → coverage.json
+	coverage = {}
+	if build_coverage is not None:
+		try:
+			coverage = build_coverage(run_dir / "per_run")
+		finally:
+			write_json(run_dir / "coverage.json", coverage)
+
+	# Aggregate summary (safe even if metrics module missing)
+	if aggregate is not None:
+		summary = aggregate(run_dir / "per_run")
+	else:
+		summary = {"runs": 0, "successes": 0, "failures": 0, "avg_time": 0.0, "avg_steps": 0}
+	if write_summary is not None:
+		write_summary(run_dir, summary)
+
+	# Legacy Markdown stub (keep for now)
+	if write_report is not None:
+		write_report(run_dir, prompt, files["manifest"], coverage, summary)
+
+	# HTML report (with coverage + acceptance checklist + calibration stub)
+	if generate_report is not None:
+		try:
+			out_html = generate_report(run_dir)
+			print(f"[EdgeSim] HTML report: {out_html}")
+		except Exception as e:
+			print(f"[EdgeSim][WARN] Failed to generate HTML report: {e}")
+
+	print(f"\n[EdgeSim] Batch done @ {run_dir}\n- per_run/*.csv\n- summary.json\n- coverage.json\n- report.md\n- report.html\n")
+	return 0
+
+
+def cmd_run_one(args: argparse.Namespace) -> int:
+	prompt: str = args.prompt
+	gui: bool = bool(args.gui)
+	realtime: bool = bool(args.realtime)
+	scn = prompt_to_scenario(prompt, n_runs=1)
+	run_dir = _make_run_dir(prompt, args.name)
+	_write_core_files(run_dir, prompt, 1, args.seed, scn)
+	out = run_one(prompt, scn, run_dir, dt=0.05, realtime=realtime, gui=gui)
+	print(f"\n[EdgeSim] Single rollout @ {run_dir}\n- success={out['success']} time={out['time']:.2f}s steps={out['steps']}\n- run_one.csv\n")
+	return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+	p = argparse.ArgumentParser(prog="edgesim", description="EdgeSim V0 CLI")
+	sub = p.add_subparsers(dest="command", required=True)
+
+	sp = sub.add_parser("simulate", help="Parse prompt → Scenario Graph & create run folder")
+	sp.add_argument("prompt", type=str)
+	sp.add_argument("--runs", type=int, default=100)
+	sp.add_argument("--seed", type=int, default=42)
+	sp.add_argument("--name", type=str, default=None)
+	sp.set_defaults(func=cmd_simulate)
+
+	sb = sub.add_parser("run-batch", help="Seeded batch → CSVs + summary + report")
+	sb.add_argument("prompt", type=str)
+	sb.add_argument("--runs", type=int, default=100)
+	sb.add_argument("--seed", type=int, default=42)
+	sb.add_argument("--name", type=str, default=None)
+	sb.add_argument("--profile", type=str, default="minimal", choices=["minimal", "robot", "full"])
+	# Perf guardrails
+	sb.add_argument("--time-budget-min", type=float, default=None,
+	                help="Soft wall-clock budget (minutes). If ETA exceeds and --auto-degrade is set, stop early.")
+	sb.add_argument("--auto-degrade", action="store_true",
+	                help="Stop early when the budget would be exceeded.")
+	sb.set_defaults(func=cmd_run_batch)
+
+	so = sub.add_parser("run-one", help="Run a single PyBullet rollout (V0)")
+	so.add_argument("prompt", type=str)
+	so.add_argument("--seed", type=int, default=42)
+	so.add_argument("--name", type=str, default=None)
+	so.add_argument("--gui", action="store_true", help="Open PyBullet GUI")
+	so.add_argument("--realtime", action="store_true", help="Sleep to realtime")
+	so.set_defaults(func=cmd_run_one)
+
+	return p
+
+
+def main() -> int:
+	parser = build_parser()
+	args = parser.parse_args()
+	return args.func(args)
+
+
+if __name__ == "__main__":
+	exit(main())
+
+
+# ===== src\edgesim\coverage.py =====
+from __future__ import annotations
+from pathlib import Path
+from typing import Dict, Any, List
+import csv
+import math
+
+def _band_clearance(c: float) -> str:
+    if c < 0.20: return "<0.20"
+    if c < 0.50: return "0.20–0.50"
+    return ">=0.50"
+
+def _update_count(d: Dict[str,int], k: str, v: int=1) -> None:
+    d[k] = d.get(k, 0) + v
+
+def _last_min_clearance(csv_path: Path) -> float:
+    # scan file once, track minimum across rows (column 6)
+    mn = math.inf
+    with csv_path.open("r", newline="", encoding="utf-8") as f:
+        r = csv.reader(f)
+        header = next(r, [])
+        # find index of min_clearance if header differs
+        try:
+            idx = header.index("min_clearance")
+        except ValueError:
+            idx = 6  # fallback to your original position
+        for row in r:
+            try:
+                mn = min(mn, float(row[idx]))
+            except Exception:
+                pass
+    return (mn if mn != math.inf else 1e9)
+
+def build_coverage(per_run_dir: Path) -> Dict[str, Any]:
+    """
+    Walk per_run/*/run_one.csv and compute simple coverage counts:
+      - traction: runs that ever entered wet
+      - human_phase participation
+      - clearance bands by run min
+      - outcomes: success vs. collision_human vs. other
+    """
+    per_run_dir = Path(per_run_dir)
+    runs = 0
+    counts = {
+        "traction": {"wet_encountered": 0, "dry_only": 0},
+        "human_phase": {"none": 0, "running": 0, "fallen": 0},
+        "clearance_bands": {"<0.20": 0, "0.20–0.50": 0, ">=0.50": 0},
+        "outcomes": {"success": 0, "collision_human": 0, "other_failure": 0},
+    }
+
+    for run_folder in sorted(per_run_dir.glob("run_*")):
+        csv_path = run_folder / "run_one.csv"
+        if not csv_path.exists():
+            continue
+        runs += 1
+
+        ever_wet = False
+        ever_running = False
+        ever_fallen = False
+        outcome = "success"  # default, may be overridden by events
+        min_clear = _last_min_clearance(csv_path)
+
+        with csv_path.open("r", newline="", encoding="utf-8") as f:
+            r = csv.reader(f)
+            header = next(r, [])
+            # figure out indices
+            idx_event = header.index("event") if "event" in header else 7
+            idx_in_wet = header.index("in_wet") if "in_wet" in header else None
+            idx_hphase = header.index("human_phase") if "human_phase" in header else None
+
+            for row in r:
+                # traction
+                if idx_in_wet is not None:
+                    try:
+                        if int(row[idx_in_wet]) == 1:
+                            ever_wet = True
+                        # else stays as observed
+                    except Exception:
+                        pass
+
+                # human phase
+                if idx_hphase is not None:
+                    hp = row[idx_hphase]
+                    if hp == "running": ever_running = True
+                    if hp == "fallen":  ever_fallen = True
+
+                # outcomes from events
+                ev = row[idx_event] if idx_event < len(row) else ""
+                if ev == "collision_human":
+                    outcome = "collision_human"
+                # (you also log "success" explicitly—if present it will be the last line and keep outcome)
+
+        # tally
+        _update_count(counts["traction"], "wet_encountered" if ever_wet else "dry_only")
+        if ever_fallen:
+            _update_count(counts["human_phase"], "fallen")
+        elif ever_running:
+            _update_count(counts["human_phase"], "running")
+        else:
+            _update_count(counts["human_phase"], "none")
+        _update_count(counts["clearance_bands"], _band_clearance(min_clear))
+        if outcome in counts["outcomes"]:
+            _update_count(counts["outcomes"], outcome)
+        else:
+            _update_count(counts["outcomes"], "other_failure")
+
+    # percentages
+    pct = lambda x: (x / runs * 100.0) if runs else 0.0
+    summary = {
+        "runs": runs,
+        "traction_pct": {k: round(pct(v), 2) for k, v in counts["traction"].items()},
+        "human_phase_pct": {k: round(pct(v), 2) for k, v in counts["human_phase"].items()},
+        "clearance_bands_pct": {k: round(pct(v), 2) for k, v in counts["clearance_bands"].items()},
+        "outcomes_pct": {k: round(pct(v), 2) for k, v in counts["outcomes"].items()},
+        "counts": counts,
+    }
+    return summary
+
+
+# ===== src\edgesim\io_utils.py =====
+## src/edgesim/io_utils.py
+from __future__ import annotations
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict
+import yaml
+
+
+RUNS_ROOT = Path("runs")
+
+
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def write_yaml(path: Path, data: Dict[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+
+
+def write_json(path: Path, data: Dict[str, Any] | list[Any]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+def write_text(path: Path, text: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+# ===== src\edgesim\metrics.py =====
+from __future__ import annotations
+from pathlib import Path
+from typing import Dict, Any, List
+import csv
+import json
+
+def _read_index(per_run_dir: Path) -> List[Dict[str, Any]]:
+	index = per_run_dir / "index.csv"
+	if not index.exists():
+		return []
+	out: List[Dict[str, Any]] = []
+	with open(index, "r", newline="", encoding="utf-8") as f:
+		for i, row in enumerate(csv.reader(f)):
+			if i == 0:  # header
+				continue
+			run_id, success, time_s, steps = row
+			out.append({"run_id": run_id, "success": (success.lower() == "true"), "time_s": float(time_s), "steps": int(steps)})
+	return out
+
+def aggregate(per_run_dir: Path) -> Dict[str, Any]:
+	rows = _read_index(per_run_dir)
+	if not rows:
+		return {"runs": 0, "successes": 0, "failures": 0, "avg_time": 0.0, "avg_steps": 0}
+	runs = len(rows)
+	successes = sum(1 for r in rows if r["success"])
+	failures = runs - successes
+	avg_time = sum(r["time_s"] for r in rows) / runs
+	avg_steps = int(round(sum(r["steps"] for r in rows) / runs))
+	return {"runs": runs, "successes": successes, "failures": failures, "avg_time": avg_time, "avg_steps": avg_steps}
+
+def write_summary(run_dir: Path, summary: Dict[str, Any]) -> None:
+	(run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+
+
+# ===== src\edgesim\parser.py =====
+from __future__ import annotations
+import re
+from typing import Any, Dict
+
+from .schema import new_scenario
+
+# Simple keyword map for V0 rule-based parsing
+KEYWORDS = {
+	"traction": ["wet", "slippery", "spill", "oil"],
+	"visibility": ["night", "dim", "dark", "low light", "reflective"],
+	"human": ["human", "picker", "worker", "crossing"],
+	"traffic": ["high pallet traffic", "rush", "busy", "heavy traffic"],
+	"overhang": ["overhang", "irregular load"],
+}
+
+def _has_any(text: str, words: list[str]) -> bool:
+	text_l = text.lower()
+	return any(w in text_l for w in words)
+
+def parse_numbers(text: str) -> Dict[str, float]:
+	"""
+	Tiny extractor for a few knobs:
+	- friction like "mu 0.35" or "friction 0.35"
+	- duration like "time limit 200" / "200s"
+	- human period like "every 30s" -> rate_per_min = 2.0
+	"""
+	text_l = text.lower()
+	out: Dict[str, float] = {}
+
+	# friction
+	m = re.search(r"(mu|friction)\s*([:=]?\s*)?(?P<val>0\.[0-9]+)", text_l)
+	if m:
+		out["mu"] = float(m.group("val"))
+
+	# duration seconds
+	m = re.search(r"(duration|time limit|limit)\s*([:=]?\s*)?(?P<sec>\d{2,4})\s*s?", text_l)
+	if m:
+		out["duration_s"] = float(m.group("sec"))
+
+	# human crossing period like "every 30s"
+	m = re.search(r"every\s*(?P<p>\d{1,4})\s*s", text_l)
+	if m:
+		period_s = float(m.group("p"))
+		if period_s > 0:
+			out["human_rate_per_min"] = 60.0 / period_s
+
+	return out
+
+def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
+	scn = new_scenario(n_runs)
+	text = prompt.lower()
+
+	# visibility
+	if _has_any(text, KEYWORDS["visibility"]):
+		scn["sensors"]["lighting_dim"] = True
+		scn["taxonomy"]["visibility"] = True
+
+	# traction (wet patch with default mu or parsed mu)
+	if _has_any(text, KEYWORDS["traction"]):
+		mu = parse_numbers(prompt).get("mu", 0.45)
+		# simple 2x3m patch near "dock" (heuristic)
+		patch = {"zone": [12.0, 2.0, 14.0, 5.0], "mu": float(mu)}
+		scn["hazards"]["traction"].append(patch)
+		scn["taxonomy"]["traction"] = True
+
+	# human crossing
+	if _has_any(text, KEYWORDS["human"]):
+		rate = parse_numbers(prompt).get("human_rate_per_min", 2.0)  # every 30s
+		scn["hazards"]["human"].append({
+			"path": "line",
+			"rate_per_min": float(rate),
+			"speed_mps": [0.8, 1.4],
+		})
+		scn["taxonomy"]["human_behavior"] = True
+
+	# traffic → clutter density
+	if _has_any(text, KEYWORDS["traffic"]):
+		scn["hazards"]["clutter"]["aisle_density"] = 0.25
+
+	# overhang
+	if _has_any(text, KEYWORDS["overhang"]):
+		scn["hazards"]["clutter"]["overhang_prob"] = 0.3
+
+	# duration override if present
+	nums = parse_numbers(prompt)
+	if "duration_s" in nums:
+		scn["runtime"]["duration_s"] = int(nums["duration_s"])  # type: ignore
+
+	return scn
+
+
+# ===== src\edgesim\planner.py =====
+from __future__ import annotations
+from typing import List, Tuple, Set
+import heapq
+import math
+
+Grid = List[List[int]]  # 0=free,1=blocked
+
+def _neighbors(x:int,y:int,w:int,h:int):
+	for dx,dy in [(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]:
+		nx,ny=x+dx,y+dy
+		if 0<=nx<w and 0<=ny<h:
+			yield nx,ny
+
+def astar(grid: Grid, start: Tuple[int,int], goal: Tuple[int,int]) -> List[Tuple[int,int]]:
+	w,h=len(grid[0]),len(grid)
+	def h_cost(a,b): return math.hypot(a[0]-b[0], a[1]-b[1])
+	openq=[(0,start)]
+	g={start:0.0}
+	parent={start:None}
+	closed:set[Tuple[int,int]]=set()
+
+	while openq:
+		_,cur=heapq.heappop(openq)
+		if cur in closed: continue
+		if cur==goal:
+			path=[]
+			while cur is not None:
+				path.append(cur)
+				cur=parent[cur]
+			return list(reversed(path))
+		closed.add(cur)
+		for nx,ny in _neighbors(cur[0],cur[1],w,h):
+			if grid[ny][nx]==1: continue
+			ng=g[cur]+h_cost(cur,(nx,ny))
+			if (nx,ny) not in g or ng<g[(nx,ny)]:
+				g[(nx,ny)]=ng
+				parent[(nx,ny)]=cur
+				f=ng+h_cost((nx,ny),goal)
+				heapq.heappush(openq,(f,(nx,ny)))
+	return []
+
+def rasterize_occupancy(map_size: Tuple[float,float], obstacles: List[Tuple[float,float,float,float]], res: float=0.2) -> tuple[Grid, float]:
+	"""Create a coarse occupancy grid from AABB obstacles (x0,y0,x1,y1)."""
+	W=int(map_size[0]/res)+1
+	H=int(map_size[1]/res)+1
+	grid=[[0 for _ in range(W)] for _ in range(H)]
+	for (x0,y0,x1,y1) in obstacles:
+		ix0,iy0=int(x0/res),int(y0/res)
+		ix1,iy1=int(x1/res),int(y1/res)
+		for j in range(max(0,iy0),min(H,iy1+1)):
+			for i in range(max(0,ix0),min(W,ix1+1)):
+				grid[j][i]=1
+	return grid, res
+
+
+# ===== src\edgesim\report.py =====
+from __future__ import annotations
+from pathlib import Path
+import json
+
+def write_markdown_report(batch_dir: Path, title: str = "EdgeSim – Coverage & Causality (V0 stub)") -> Path:
+    s = json.loads((batch_dir / "summary.json").read_text())
+    md = []
+    md.append(f"# {title}")
+    md.append("")
+    md.append(f"- **Runs**: {s['runs']}")
+    md.append(f"- **Successes**: {s['successes']}  • **Failures**: {s['failures']}")
+    md.append(f"- **Avg rollout time**: {s['avg_time']:.2f}s  • **Avg steps**: {s['avg_steps']}")
+    md.append(f"- **Batch wallclock**: {s['wallclock_s']:.2f}s  • **Profile**: `{s['profile']}`")
+    md.append("")
+    md.append("> V0 stub report. Next: taxonomy coverage, factor correlations, and failing frame thumbnails.")
+    out = batch_dir / "report.md"
+    out.write_text("\n".join(md))
+    return out
+
+
+# ===== src\edgesim\reporter.py =====
+from __future__ import annotations
+from pathlib import Path
+import json
+from .io_utils import write_text
+
+def write_report(run_dir: Path, prompt: str, manifest: dict, coverage: dict, summary: dict) -> Path:
+	md = []
+	md.append("# EdgeSim – Coverage & Causality (V0 stub)")
+	md.append("")
+	md.append(f"**Prompt:** {prompt}")
+	md.append("")
+	md.append("## Batch Summary")
+	md.append(f"- Runs: **{summary.get('runs', 0)}**")
+	md.append(f"- Successes: **{summary.get('successes', 0)}** · Failures: **{summary.get('failures', 0)}**")
+	md.append(f"- Avg rollout time: **{summary.get('avg_time', 0.0):.2f}s** · Avg steps: **{summary.get('avg_steps', 0)}**")
+	md.append(f"- Wallclock: **{summary.get('wallclock_s', 0.0):.2f}s** · Profile: `{summary.get('profile','minimal')}`")
+	md.append("")
+	md.append("## Coverage (stub)")
+	md.append("```json")
+	md.append(json.dumps(coverage or {}, indent=2))
+	md.append("```")
+	md.append("")
+	md.append("## Reproduce")
+	md.append(f"- Version: `{manifest.get('version','?')}`  · Git: `{manifest.get('git','?')}`")
+	md.append("- Re-run with the same `seeds.json` for identical results.")
+	out = run_dir / "report.md"
+	write_text(out, "\n".join(md))
+	return out
+
+
+# ===== src\edgesim\report_html.py =====
+from __future__ import annotations
+import json, csv, hashlib, math
+from pathlib import Path
+from typing import List, Dict, Tuple, Optional
+from datetime import datetime
+
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>EdgeSim Report — {title}</title>
+<style>
+body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; color: #111; }}
+h1 {{ margin: 0 0 8px 0; }}
+h2 {{ margin-top: 28px; }}
+.card {{ border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin: 12px 0; }}
+.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }}
+.small {{ color: #555; font-size: 12px; }}
+.badge {{ display:inline-block; padding:2px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:12px; }}
+.table {{ width: 100%; border-collapse: collapse; }}
+.table th, .table td {{ border-bottom: 1px solid #eee; padding: 8px; text-align: left; }}
+.code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; background: #f8fafc; padding: 2px 6px; border-radius: 6px; }}
+.svg {{ width: 100%; height: 160px; border: 1px solid #eee; border-radius: 8px; background: #fafafa; }}
+.gallery img {{ width: 100%; height: auto; border-radius: 8px; border:1px solid #eee; }}
+footer {{ margin-top: 24px; color:#666; font-size:12px; }}
+.kv {{ display:grid; grid-template-columns: 160px 1fr; gap:8px; }}
+.kv div:nth-child(odd) {{ color:#555; }}
+.tag {{ display:inline-block; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:999px; padding:2px 8px; margin:2px; font-size:12px; }}
+.acclist li {{ margin:6px 0; }}
+.pass {{ color:#065f46; }}
+.fail {{ color:#b91c1c; }}
+.warn {{ color:#92400e; }}
+</style>
+</head>
+<body>
+<h1>EdgeSim Report</h1>
+<div class="small">Scenario: <span class="code">{scenario_name}</span> • Runs: <b>{runs}</b> • Generated: {generated_at}</div>
+<div class="small">Manifest: per_run_digest <span class="code">{per_run_digest}</span> • scenario.yaml <span class="code">{scenario_sha}</span> • seeds.json <span class="code">{seeds_sha}</span> • {repro_badge}</div>
+
+<div class="card">
+  <h2>Acceptance Checklist</h2>
+  <ul class="acclist">
+    <li class="{chk_failrate_cls}">Failure rate ≥ 10% (stress): <b>{fail_rate:.2f}%</b></li>
+    <li class="{chk_repro_cls}">Reproducibility stamp present (CSV digest): <b>{per_run_digest_short}</b></li>
+    <li class="{chk_gap_cls}">Coverage shows at least one uncovered bucket (“gap”): <b>{gap_hint}</b></li>
+  </ul>
+  <div class="small">Run <span class="code">edgesim validate {title}</span> to see invariant checks in the console.</div>
+</div>
+
+<div class="card">
+  <h2>Outcomes</h2>
+  <div class="grid">
+    <div>
+      <div>Successes: <b>{success}</b></div>
+      <div>Collision (human): <b>{collision_human}</b></div>
+      <div>Other/Timeout: <b>{other}</b></div>
+    </div>
+    <div>
+      <svg class="svg" viewBox="0 0 400 160">{svg_outcomes}</svg>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Coverage (taxonomy)</h2>
+  {coverage_html}
+</div>
+
+<div class="card">
+  <h2>Min-Clearance (per run)</h2>
+  <svg class="svg" viewBox="0 0 400 160">{svg_clearance}</svg>
+</div>
+
+<div class="card">
+  <h2>Time-to-Goal (successes only)</h2>
+  <svg class="svg" viewBox="0 0 400 160">{svg_ttg}</svg>
+</div>
+
+<div class="card">
+  <h2>Calibration (stub)</h2>
+  <div class="kv">
+    <div>R² (speed profile)</div><div>{calib_r2}</div>
+    <div>KL (obstacle range hist)</div><div>{calib_kl}</div>
+    <div>ECE (failure prob)</div><div>{calib_ece}</div>
+  </div>
+  <div class="small" style="margin-top:8px;">This is a V0 placeholder. Pair with a small real anchor log to compute metrics; auto-tuning loop lands in V0.1.</div>
+</div>
+
+<div class="card">
+  <h2>Sample Frames (failures preferred)</h2>
+  <div class="grid gallery">
+    {gallery}
+  </div>
+</div>
+
+<footer>EdgeSim • offline HTML report • no external JS • v0</footer>
+</body>
+</html>
+"""
+
+def _sha256_file(path: Path) -> str:
+	h = hashlib.sha256()
+	h.update(path.read_bytes())
+	return h.hexdigest()
+
+def _digest_csvs(per_run_dir: Path) -> str:
+	h = hashlib.sha256()
+	for p in sorted(per_run_dir.rglob("*.csv")):
+		h.update(p.read_bytes())
+	return h.hexdigest()
+
+def _load_counts_and_metrics(batch_dir: Path) -> Tuple[int, int, int, List[float], List[float]]:
+	"""Return (success, coll_human, other, min_clearances, ttg_success)."""
+	per_run = batch_dir / "per_run"
+	success = coll_human = other = 0
+	mincls: List[float] = []
+	ttg: List[float] = []
+
+	for run_csv in sorted(per_run.glob("run_*/run_one.csv")):
+		with run_csv.open(newline="", encoding="utf-8") as f:
+			r = csv.DictReader(f)
+			last_t = 0.0
+			last_min = math.inf
+			end_event = ""
+			for row in r:
+				try:
+					t = float(row["t"])
+					last_t = t
+				except Exception:
+					pass
+				try:
+					mc = float(row["min_clearance"])
+					if mc < last_min:
+						last_min = mc
+				except Exception:
+					pass
+				ev = row.get("event","")
+				if ev:
+					end_event = ev
+			if last_min is math.inf:
+				last_min = float("nan")
+			mincls.append(last_min)
+			if end_event == "success":
+				success += 1
+				ttg.append(last_t)
+			elif end_event == "collision_human":
+				coll_human += 1
+			else:
+				other += 1
+	return success, coll_human, other, mincls, ttg
+
+def _svg_bar_chart(values: List[int], labels: List[str], colors: Optional[List[str]] = None, max_height: int = 120) -> str:
+	total = max(1, max(values))
+	w = 360; x0 = 20; y0 = 120
+	bar_w = int((w - x0 - 20) / max(1, len(values)))
+	parts = []
+	for i, v in enumerate(values):
+		hp = int(max_height * (v / total))
+		x = x0 + i * bar_w
+		y = y0 - hp
+		fill = colors[i] if colors and i < len(colors) else "#60a5fa"
+		parts.append(f'<rect x="{x}" y="{y}" width="{bar_w-8}" height="{hp}" fill="{fill}" />')
+		parts.append(f'<text x="{x + (bar_w-8)/2}" y="{y0 + 14}" font-size="12" text-anchor="middle">{labels[i]}</text>')
+	return "".join(parts)
+
+def _svg_hist(data: List[float], bins: int, low: float, high: float, color="#34d399", max_height: int = 120) -> str:
+	if not data:
+		return '<text x="200" y="80" text-anchor="middle" fill="#999">no data</text>'
+	step = (high - low) / bins if bins > 0 else 1.0
+	hist = [0] * bins
+	for v in data:
+		if math.isnan(v):
+			continue
+		k = int((v - low) / step)
+		if k < 0: k = 0
+		if k >= bins: k = bins - 1
+		hist[k] += 1
+	total = max(1, max(hist))
+	w = 360; x0 = 20; y0 = 120
+	bar_w = int((w - x0 - 20) / max(1, bins))
+	parts = []
+	for i, v in enumerate(hist):
+		hp = int(max_height * (v / total))
+		x = x0 + i * bar_w
+		y = y0 - hp
+		parts.append(f'<rect x="{x}" y="{y}" width="{bar_w-2}" height="{hp}" fill="{color}" />')
+	parts.append(f'<text x="{x0}" y="{y0 + 14}" font-size="12">{low:.1f}</text>')
+	parts.append(f'<text x="{x0 + (w-x0-20)/2}" y="{y0 + 14}" font-size="12" text-anchor="middle">{(low+high)/2:.1f}</text>')
+	parts.append(f'<text x="{w}" y="{y0 + 14}" font-size="12" text-anchor="end">{high:.1f}</text>')
+	return "".join(parts)
+
+def _pick_gallery(batch_dir: Path, prefer_failures: bool = True, limit: int = 8) -> List[Tuple[str, str]]:
+	per_run = batch_dir / "per_run"
+	frames = batch_dir / "frames_sample"
+	chosen: List[Tuple[str, str]] = []
+
+	outcomes: Dict[str, Tuple[str, float, float]] = {}
+	for run_csv in sorted(per_run.glob("run_*/run_one.csv")):
+		run_name = run_csv.parent.name
+		with run_csv.open(newline="", encoding="utf-8") as f:
+			r = csv.DictReader(f)
+			end_event = ""; last_min = math.inf; last_t = 0.0
+			for row in r:
+				ev = row.get("event", "")
+				if ev:
+					end_event = ev
+				try:
+					mc = float(row["min_clearance"])
+					if mc < last_min:
+						last_min = mc
+				except Exception:
+					pass
+				try:
+					last_t = float(row["t"])
+				except Exception:
+					pass
+			outcomes[run_name] = (end_event or "other", last_min if last_min < math.inf else float("nan"), last_t)
+
+	candidates: List[Tuple[str, str]] = []
+	if frames.exists():
+		for run_dir in sorted(frames.glob("run_*")):
+			run_name = run_dir.name
+			imgs = sorted(run_dir.glob("*.png"))
+			if not imgs:
+				continue
+			img_rel = f"frames_sample/{run_name}/{imgs[-1].name}"
+			ev, mclr, tend = outcomes.get(run_name, ("other", float("nan"), float("nan")))
+			caption = f"{run_name}: {ev}, min_clear={mclr:.2f}, t_end={tend:.1f}s"
+			candidates.append((caption, img_rel))
+
+	if prefer_failures:
+		for cap, rel in candidates:
+			if "collision_human" in cap and len(chosen) < limit:
+				chosen.append((cap, rel))
+	for cap, rel in candidates:
+		if len(chosen) >= limit:
+			break
+		if (cap, rel) not in chosen:
+			chosen.append((cap, rel))
+	return chosen[:limit]
+
+def _render_coverage_table(coverage: Dict[str, Dict[str, float] | Dict[str, int]]) -> str:
+	if not coverage:
+		return '<div class="small">No coverage computed. (Run built without coverage module or no per_run CSVs yet.)</div>'
+	def rows_of(key: str) -> List[Tuple[str, str]]:
+		sec = coverage.get(key, {})
+		if not isinstance(sec, dict):
+			return []
+		items = list(sec.items())
+		return [(k, f"{v:.2f}%") if isinstance(v, float) else (k, str(v)) for k, v in items]
+
+	def table_for(title: str, key: str) -> str:
+		rows = rows_of(key)
+		if not rows:
+			return ""
+		t = [f"<h3 style='margin:8px 0 6px 0;'>{title}</h3>",
+		     "<table class='table'><thead><tr><th>Bucket</th><th>Value</th></tr></thead><tbody>"]
+		for k, v in rows:
+			t.append(f"<tr><td>{k}</td><td>{v}</td></tr>")
+		t.append("</tbody></table>")
+		return "\n".join(t)
+
+	parts = []
+	parts.append(table_for("Traction (pct)", "traction_pct"))
+	parts.append(table_for("Human phase (pct)", "human_phase_pct"))
+	parts.append(table_for("Clearance bands (pct)", "clearance_bands_pct"))
+	parts.append(table_for("Outcomes (pct)", "outcomes_pct"))
+	parts.append(table_for("Traction (counts)", "traction"))
+	parts.append(table_for("Human phase (counts)", "human_phase"))
+	parts.append(table_for("Clearance bands (counts)", "clearance_bands"))
+	parts.append(table_for("Outcomes (counts)", "outcomes"))
+	return "\n".join(x for x in parts if x)
+
+def _any_coverage_gap(coverage: Dict[str, Dict[str, float] | Dict[str, int]]) -> Tuple[bool, str]:
+	"""
+	Heuristic: if any percentage block has a 0.00% bucket, consider that a 'gap'.
+	Returns (has_gap, hint).
+	"""
+	pct_keys = ["traction_pct","human_phase_pct","clearance_bands_pct","outcomes_pct"]
+	for key in pct_keys:
+		sec = coverage.get(key, {})
+		if isinstance(sec, dict):
+			for b, v in sec.items():
+				try:
+					if float(v) <= 1e-9:
+						return True, f"{key}:{b}=0%"
+				except Exception:
+					continue
+	return False, "none detected"
+
+def generate_report(batch_dir: Path) -> Path:
+	title = batch_dir.name
+	scenario_path = batch_dir / "scenario.yaml"
+	seeds_path = batch_dir / "seeds.json"
+	per_run_dir = batch_dir / "per_run"
+	summary_path = batch_dir / "summary.json"
+	coverage_path = batch_dir / "coverage.json"
+
+	per_run_digest = _digest_csvs(per_run_dir) if per_run_dir.exists() else "NA"
+	per_run_digest_short = per_run_digest[:12] + "…" if per_run_digest != "NA" else "NA"
+	scenario_sha = _sha256_file(scenario_path) if scenario_path.exists() else "NA"
+	seeds_sha = _sha256_file(seeds_path) if seeds_path.exists() else "NA"
+
+	manifest = {
+		"per_run_digest": per_run_digest,
+		"scenario_sha256": scenario_sha,
+		"seeds_sha256": seeds_sha,
+		"generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+	}
+	manifest_path = batch_dir / "manifest.json"
+	try:
+		if manifest_path.exists():
+			old = json.loads(manifest_path.read_text(encoding="utf-8"))
+			old.update(manifest)
+			manifest = old
+		manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+	except Exception:
+		pass
+
+	success, coll_human, other, mincls, ttg = _load_counts_and_metrics(batch_dir)
+	runs = success + coll_human + other
+
+	# Load coverage.json if present
+	coverage: Dict[str, Dict] = {}
+	if coverage_path.exists():
+		try:
+			coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+		except Exception:
+			coverage = {}
+	coverage_html = _render_coverage_table(coverage)
+
+	# Acceptance checklist computation
+	total = max(1, runs)
+	fail_rate = 100.0 * (coll_human + other) / total
+	chk_failrate_cls = "pass" if fail_rate >= 10.0 else "fail"
+	chk_repro_cls = "pass" if per_run_digest != "NA" else "fail"
+	has_gap, gap_hint = _any_coverage_gap(coverage)
+	chk_gap_cls = "pass" if has_gap else "warn"  # warn if no gap detected (not necessarily bad, but suggests low coverage variety)
+
+	# Calibration stub (NA until wired to anchors)
+	calib_r2 = "NA"
+	calib_kl = "NA"
+	calib_ece = "NA"
+
+	svg_outcomes = _svg_bar_chart([success, coll_human, other],
+	                              ["success","collision","other"],
+	                              colors=["#10b981","#ef4444","#9ca3af"])
+	svg_clearance = _svg_hist(mincls, bins=16, low=0.0, high=2.0, color="#60a5fa")
+	svg_ttg = _svg_hist(ttg, bins=16, low=0.0, high=120.0, color="#f59e0b")
+
+	gallery_items = []
+	for cap, rel in _pick_gallery(batch_dir, prefer_failures=True, limit=8):
+		gallery_items.append(f'<figure><img src="{rel}"/><figcaption class="small">{cap}</figcaption></figure>')
+	gallery_html = "\n".join(gallery_items) if gallery_items else '<div class="small">No sample frames available. Re-run with frames enabled.</div>'
+
+	repro_badge = '<span class="badge">Repro stamp ready</span>' if per_run_digest != "NA" else '<span class="badge" style="background:#fee2e2;color:#7f1d1d;">Repro stamp missing</span>'
+
+	html = HTML_TEMPLATE.format(
+		title=title,
+		scenario_name=title,
+		runs=runs,
+		generated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+		per_run_digest=per_run_digest,
+		per_run_digest_short=per_run_digest_short,
+		scenario_sha=scenario_sha,
+		seeds_sha=seeds_sha,
+		repro_badge=repro_badge,
+		success=success,
+		collision_human=coll_human,
+		other=other,
+		svg_outcomes=svg_outcomes,
+		svg_clearance=svg_clearance,
+		svg_ttg=svg_ttg,
+		coverage_html=coverage_html,
+		calib_r2=calib_r2,
+		calib_kl=calib_kl,
+		calib_ece=calib_ece,
+		chk_failrate_cls=chk_failrate_cls,
+		chk_repro_cls=chk_repro_cls,
+		chk_gap_cls=chk_gap_cls,
+		gap_hint=gap_hint,
+		fail_rate=fail_rate,
+		gallery=gallery_html,
+	)
+
+	out_path = batch_dir / "report.html"
+	out_path.write_text(html, encoding="utf-8")
+	return out_path
+
+def main():
+	import sys
+	if len(sys.argv) != 2:
+		print("Usage: python -m edgesim.report_html runs/<batch_dir>")
+		raise SystemExit(2)
+	batch_dir = Path(sys.argv[1]).resolve()
+	if not batch_dir.exists():
+		print(f"Batch dir not found: {batch_dir}")
+		raise SystemExit(2)
+	out = generate_report(batch_dir)
+	print(f"[OK] Wrote {out}")
+
+if __name__ == "__main__":
+	main()
+
+
+# ===== src\edgesim\report_latest.py =====
+from __future__ import annotations
+import os
+from pathlib import Path
+from typing import Optional
+from datetime import datetime
+
+from .report_html import generate_report
+
+def _most_recent_batch(runs_root: Path) -> Optional[Path]:
+    """
+    Return the most recently modified batch folder under `runs/`.
+    A "batch" is any directory directly under runs/ that contains a `per_run` subdir.
+    """
+    if not runs_root.exists():
+        return None
+    # collect candidates with mtime
+    candidates = []
+    for p in runs_root.iterdir():
+        if not p.is_dir():
+            continue
+        if (p / "per_run").is_dir():
+            try:
+                mtime = p.stat().st_mtime
+            except Exception:
+                mtime = 0.0
+            candidates.append((mtime, p))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+def main():
+    """
+    Usage:
+        edgesim-report                     # build report for the most recent batch in runs/
+        edgesim-report runs/<batch_dir>    # build report for a specific batch
+    """
+    import sys
+
+    if len(sys.argv) == 2:
+        # explicit batch dir
+        batch_dir = Path(sys.argv[1]).resolve()
+        if not batch_dir.exists():
+            print(f"[ERR] Batch dir not found: {batch_dir}")
+            raise SystemExit(2)
+    else:
+        # infer latest under runs/
+        runs_root = Path("runs").resolve()
+        batch_dir = _most_recent_batch(runs_root)
+        if batch_dir is None:
+            print(f"[ERR] No batches found under {runs_root}")
+            raise SystemExit(2)
+
+    out = generate_report(batch_dir)
+    print(f"[OK] Wrote {out}")
+    print(f"[INFO] Open this file in your browser: {out}")
+
+if __name__ == "__main__":
+    main()
+
+
+# ===== src\edgesim\rollout.py =====
+from __future__ import annotations
+from typing import Dict, Any, List, Optional
+from pathlib import Path
+import csv
+import json
+import time
+
+from .io_utils import ensure_dir, write_json
+from .sim_one import run_one
+
+def _per_run_dir(root: Path, k: int) -> Path:
+	rd = root / "per_run" / f"run_{k:04d}"
+	ensure_dir(rd)
+	return rd
+
+def _index_row(k: int, res: Dict[str, Any]) -> List[str]:
+	return [f"{k:04d}", str(bool(res.get("success", False))), f"{float(res.get('time', 0.0)):.3f}", str(int(res.get("steps", 0)))]
+
+def _eta_exceeds(elapsed_s: float, done: int, total: int, budget_min: Optional[float]) -> bool:
+	if not budget_min or budget_min <= 0 or done <= 0:
+		return False
+	runs_per_sec = done / max(1e-6, elapsed_s)
+	est_total_s = total / max(1e-6, runs_per_sec)
+	return est_total_s > budget_min * 60.0
+
+def run_batch(
+	prompt: str,
+	scn: Dict[str, Any],
+	seeds: List[int],
+	run_dir: Path,
+	profile: str = "minimal",
+	time_budget_min: Optional[float] = None,
+	auto_degrade: bool = False,
+	check_interval: int = 10,
+) -> Dict[str, Any]:
+	"""
+	Executes seeded rollouts:
+	- Writes per-run folders under run_dir/per_run/run_XXXX/
+	- Each run folder contains run_one.csv (from sim_one)
+	- Also writes per_run/index.csv (run_id, success, time, steps)
+	- Adds optional time budget guardrail with early stop ("auto-degrade").
+	Returns a lightweight batch summary and writes perf.json.
+	"""
+	t0 = time.perf_counter()
+	index_rows: List[List[str]] = [["run_id", "success", "time_s", "steps"]]
+
+	successes = 0
+	times: List[float] = []
+	steps: List[int] = []
+
+	completed = 0
+	total = len(seeds)
+	auto_degraded = False
+
+	for k, seed in enumerate(seeds):
+		prd = _per_run_dir(run_dir, k)
+		# Attach seed and profile to scenario copy
+		scn_local = dict(scn)
+		scn_local["seed"] = int(seed)
+		scn_local["profile"] = str(profile)
+
+		res = run_one(
+			prompt,
+			scn_local,
+			prd,
+			dt=float(scn_local.get("runtime", {}).get("dt", 0.05)),
+			realtime=False,
+			gui=False
+		)
+		index_rows.append(_index_row(k, res))
+
+		if res.get("success", False):
+			successes += 1
+		times.append(float(res.get("time", 0.0)))
+		steps.append(int(res.get("steps", 0)))
+		completed += 1
+
+		# Periodically check whether finishing all runs will exceed the budget
+		if check_interval and completed % check_interval == 0:
+			elapsed = time.perf_counter() - t0
+			if _eta_exceeds(elapsed, completed, total, time_budget_min):
+				if auto_degrade:
+					auto_degraded = True
+					break
+				# else continue to finish all runs
+
+	# Write per_run/index.csv
+	per_run = run_dir / "per_run"
+	ensure_dir(per_run)
+	with open(per_run / "index.csv", "w", newline="", encoding="utf-8") as f:
+		w = csv.writer(f)
+		w.writerows(index_rows)
+
+	elapsed = time.perf_counter() - t0
+	sims_per_min = (completed / max(1e-6, elapsed)) * 60.0
+
+	# Summary reflects *completed* runs (important if degraded)
+	summary = {
+		"runs": completed,
+		"requested": total,
+		"successes": successes,
+		"failures": completed - successes,
+		"avg_time": (sum(times) / len(times)) if times else 0.0,
+		"avg_steps": int(round(sum(steps) / len(steps))) if steps else 0,
+		"profile": profile,
+		"wallclock_s": round(elapsed, 3),
+		"auto_degraded": bool(auto_degraded),
+	}
+	write_json(run_dir / "summary.json", summary)
+
+	# perf.json for the report / debugging
+	perf = {
+		"completed": completed,
+		"requested": total,
+		"elapsed_sec": round(elapsed, 3),
+		"sims_per_min": round(sims_per_min, 2),
+		"time_budget_min": time_budget_min,
+		"auto_degraded": bool(auto_degraded),
+		"profile": profile,
+	}
+	write_json(run_dir / "perf.json", perf)
+
+	return summary
+
+
+# ===== src\edgesim\sampling.py =====
+from __future__ import annotations
+from pathlib import Path
+import json
+from typing import Tuple
+
+BUDGET_FILE = "_frame_budget.json"
+
+def _load_budget(root: Path) -> dict:
+    f = root / "frames_sample" / BUDGET_FILE
+    if f.exists():
+        return json.loads(f.read_text(encoding="utf-8"))
+    return {"fail_left": 10, "succ_left": 10}
+
+def _save_budget(root: Path, budget: dict) -> None:
+    d = root / "frames_sample"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / BUDGET_FILE).write_text(json.dumps(budget, indent=2), encoding="utf-8")
+
+def should_save_frames(run_root: Path, outcome: str) -> Tuple[bool, Path]:
+    """
+    outcome ∈ {"success", "collision_human", "other"}
+    Returns (save?, frames_root_dir).
+    """
+    budget = _load_budget(run_root)
+    if outcome == "success":
+        if budget.get("succ_left", 0) > 0:
+            budget["succ_left"] -= 1
+            _save_budget(run_root, budget)
+            return True, run_root / "frames_sample"
+        return False, run_root / "frames_sample"
+    # treat all non-success as a "failure" for sampling purposes
+    if budget.get("fail_left", 0) > 0:
+        budget["fail_left"] -= 1
+        _save_budget(run_root, budget)
+        return True, run_root / "frames_sample"
+    return False, run_root / "frames_sample"
+
+def set_initial_budget(run_root: Path, k_fail: int = 10, k_succ: int = 10) -> None:
+    _save_budget(run_root, {"fail_left": int(k_fail), "succ_left": int(k_succ)})
+
+
+# ===== src\edgesim\scenario.py =====
+from __future__ import annotations
+from dataclasses import dataclass, field, asdict
+from typing import Any, Dict, List, Tuple
+import json
+import re
+
+# ---------- Schema & Defaults ----------
+
+@dataclass
+class RuntimeCfg:
+    duration_s: float = 90.0
+    dt: float = 0.05
+
+@dataclass
+class LayoutCfg:
+    map_size_m: Tuple[float, float] = (20.0, 12.0)   # Lx, Ly
+    start: Tuple[float, float] = (2.0, 2.0)
+    goal: Tuple[float, float] = (18.0, 10.0)
+    walls: List[Dict[str, Any]] = field(default_factory=list)
+
+@dataclass
+class AgentCfg:
+    name: str = "amr_0"
+    radius_m: float = 0.4
+
+@dataclass
+class HazardHumanCfg:
+    duration_s: float = 6.0            # normal walk
+    duration_s_running: float = 2.5    # running (late)
+
+@dataclass
+class HazardTractionPatch:
+    zone: Tuple[float, float, float, float]  # x0,y0,x1,y1
+    mu: float = 0.45
+
+@dataclass
+class HazardsCfg:
+    human: List[HazardHumanCfg] = field(default_factory=lambda: [HazardHumanCfg()])
+    traction: List[HazardTractionPatch] = field(default_factory=list)
+
+@dataclass
+class Scenario:
+    prompt: str
+    runtime: RuntimeCfg = field(default_factory=RuntimeCfg)
+    layout: LayoutCfg = field(default_factory=LayoutCfg)
+    agents: List[AgentCfg] = field(default_factory=lambda: [AgentCfg()])
+    hazards: HazardsCfg = field(default_factory=HazardsCfg)
+    profile: str = "minimal"  # minimal|robot|full
+
+    def to_dict(self) -> Dict[str, Any]:
+        def _cv(o):
+            if hasattr(o, "__dict__"):
+                return {k: _cv(v) for k, v in o.__dict__.items()}
+            if isinstance(o, (list, tuple)):
+                return [ _cv(x) for x in o ]
+            return o
+        return _cv(self)
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
+
+# ---------- Very small rule-based English → Scenario ----------
+
+_WET_RE = re.compile(r"(wet|slippery)\s+(floor|zone|patch)(?:\s+near\s+(?:x\s*=\s*(\d+(?:\.\d+)?)|y\s*=\s*(\d+(?:\.\d+)?)))?", re.I)
+_HUMAN_RE = re.compile(r"(human|pedestrian)\s+(cross|crossing|runner|running)", re.I)
+_SIZE_RE = re.compile(r"(map|area)\s*(?:size)?\s*(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*m", re.I)
+_START_RE = re.compile(r"start\s*\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\)", re.I)
+_GOAL_RE  = re.compile(r"goal\s*\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\)", re.I)
+
+def parse_prompt_to_scenario(prompt: str) -> Scenario:
+    scn = Scenario(prompt=prompt)
+
+    # map size
+    m = _SIZE_RE.search(prompt)
+    if m:
+        Lx = float(m.group(2)); Ly = float(m.group(3))
+        scn.layout.map_size_m = (Lx, Ly)
+
+    # start/goal
+    m = _START_RE.search(prompt)
+    if m:
+        scn.layout.start = (float(m.group(1)), float(m.group(2)))
+    m = _GOAL_RE.search(prompt)
+    if m:
+        scn.layout.goal = (float(m.group(1)), float(m.group(2)))
+
+    # wet patch (default: centered band across Y midline)
+    if _WET_RE.search(prompt):
+        Lx, Ly = scn.layout.map_size_m
+        band_w = 3.0
+        band_h = 1.2
+        cx = Lx * 0.5
+        y0 = max(0.6, Ly * 0.5 - band_h/2)
+        y1 = min(Ly - 0.6, Ly * 0.5 + band_h/2)
+        scn.hazards.traction.append(HazardTractionPatch(
+            zone=(cx - band_w/2, y0, cx + band_w/2, y1),
+            mu=0.35
+        ))
+
+    # human crosser / runner
+    if _HUMAN_RE.search(prompt):
+        scn.hazards.human = [HazardHumanCfg()]  # defaults ok
+
+    # profile flag
+    if "robot profile" in prompt.lower():
+        scn.profile = "robot"
+    elif "full profile" in prompt.lower():
+        scn.profile = "full"
+
+    return scn
+
+
+# ===== src\edgesim\schema.py =====
+## src/edgesim/schema.py
+from __future__ import annotations
+from typing import Any, Dict, List
+
+
+# Minimal Scenario Graph (V0) — plain dicts to keep it simple
+
+
+def default_layout() -> Dict[str, Any]:
+    return {
+        "map_size_m": [20.0, 20.0],
+        "aisles": [
+            {"name": "A1", "rect": [2.0, 1.0, 16.0, 3.0]},
+            {"name": "A2", "rect": [2.0, 8.0, 16.0, 10.0]},
+        ],
+    "walls": [
+        {"poly": [[0, 0], [20, 0], [20, 20], [0, 20]]}
+    ],
+    "start": [1.0, 1.0],
+    "goal": [19.0, 19.0],
+}
+
+
+def default_agent() -> Dict[str, Any]:
+    return {
+        "id": "amr_0",
+        "type": "AMR",
+        "radius_m": 0.4,
+        "max_speed_mps": 1.2,
+        "controller": {
+            "planner": "astar_grid",
+            "follower": "pid_waypoint",
+        },
+}
+
+
+
+def default_sensors() -> Dict[str, Any]:
+    return {
+        "camera_noise": 0.0, # flag/range for later
+        "detection_dropout": 0.0,
+        "latency_ms": 0,
+        "lighting_dim": False,
+    }
+
+
+def empty_hazards() -> Dict[str, Any]:
+    return {
+        "traction": [], # list of {zone: [x0,y0,x1,y1], mu}
+        "human": [], # list of {path: "line"|"waypoints", rate_per_min: float, speed_mps: [min,max]}
+        "clutter": {"aisle_density": 0.0, "overhang_prob": 0.0},
+    }
+
+
+def default_runtime(n_runs: int) -> Dict[str, Any]:
+    return {
+        "duration_s": 120,
+        "dt": 0.1,
+        "N_runs": n_runs,
+    }
+
+
+def new_scenario(n_runs: int = 100) -> Dict[str, Any]:
+    return {
+        "layout": default_layout(),
+        "agents": [default_agent()],
+        "hazards": empty_hazards(),
+        "sensors": default_sensors(),
+        "runtime": default_runtime(n_runs),
+        "taxonomy": { # for coverage counting later
+            "visibility": False,
+            "traction": False,
+            "localization": False,
+            "human_behavior": False,
+        },
+    }
+
+# ===== src\edgesim\sim_one.py =====
+from __future__ import annotations
+from typing import Dict, Any, List, Tuple
+from pathlib import Path
+import csv
+import math
+import time
+
+import numpy as np
+import pybullet as p
+
+from .world import build_world, spawn_human
+from .sampling import should_save_frames  # outcome-aware shared budget
+
+
+# ---------- small I/O helpers ----------
+
+def _write_csv(path: Path, header: List[str], rows: List[List[float | str]]) -> None:
+	path.parent.mkdir(parents=True, exist_ok=True)
+	with path.open("w", newline="", encoding="utf-8") as f:
+		w = csv.writer(f)
+		w.writerow(header)
+		w.writerows(rows)
+
+
+# ---------- geometry & controls ----------
+
+def _spawn_disc(radius: float = 0.4, height: float = 0.2, mass: float = 20.0, color=(0.9, 0.3, 0.3, 1.0)) -> int:
+	"""Simple cylindrical AMR body (disc)."""
+	vis = p.createVisualShape(p.GEOM_CYLINDER, radius=radius, length=height, rgbaColor=color)
+	col = p.createCollisionShape(p.GEOM_CYLINDER, radius=radius, height=height)
+	body = p.createMultiBody(
+		baseMass=mass,
+		baseCollisionShapeIndex=col,
+		baseVisualShapeIndex=vis,
+		basePosition=[1.0, 1.0, height / 2.0],
+	)
+	# Wheel-ish friction; sliding still possible on wet patches
+	p.changeDynamics(body, -1, lateralFriction=0.8)
+	return body
+
+
+def _spawn_wet_patch(x0: float, y0: float, x1: float, y1: float, mu: float = 0.35, rgba=(0.2, 0.6, 1.0, 0.35)) -> int:
+	"""Create a thin low-friction slab over the plane."""
+	cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+	hx, hy = max(0.01, (x1 - x0) / 2.0), max(0.01, (y1 - y0) / 2.0)
+	vis = p.createVisualShape(p.GEOM_BOX, halfExtents=[hx, hy, 0.001], rgbaColor=rgba)
+	col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[hx, hy, 0.001])
+	bid = p.createMultiBody(
+		baseMass=0,
+		baseCollisionShapeIndex=col,
+		baseVisualShapeIndex=vis,
+		basePosition=[cx, cy, 0.001],
+	)
+	p.changeDynamics(bid, -1, lateralFriction=float(mu))
+	return bid
+
+
+def _aabb_distance_point(aabb: Tuple[float, float, float, float], x: float, y: float) -> float:
+	"""Distance from 2D point to AABB (0 if inside)."""
+	x0, y0, x1, y1 = aabb
+	dx = 0.0 if x0 <= x <= x1 else (x0 - x if x < x0 else x - x1)
+	dy = 0.0 if y0 <= y <= y1 else (y0 - y if y < y0 else y - y1)
+	return math.hypot(dx, dy)
+
+
+def _clearance_to_aabbs(x: float, y: float, aabbs: List[Tuple[float, float, float, float]]) -> float:
+	if not aabbs:
+		return 10.0
+	return min(_aabb_distance_point(a, x, y) for a in aabbs)
+
+
+def _pid_follow(current_xy: Tuple[float, float], target_xy: Tuple[float, float], prev_err: np.ndarray,
+                kp: float = 1.2, kd: float = 0.4, dt: float = 0.05) -> Tuple[np.ndarray, np.ndarray]:
+	err = np.array([target_xy[0] - current_xy[0], target_xy[1] - current_xy[1]], dtype=float)
+	derr = (err - prev_err) / max(1e-6, dt)
+	ctrl = kp * err + kd * derr  # velocity-like vector in XY
+	return ctrl, err
+
+
+def _pt_in_aabb(x: float, y: float, aabb: Tuple[float, float, float, float] | None) -> bool:
+	if aabb is None:
+		return False
+	x0, y0, x1, y1 = aabb
+	return (x0 <= x <= x1) and (y0 <= y <= y1)
+
+
+# ---------- simple frame capture (TinyRenderer works headless) ----------
+
+def _capture_frame(batch_root: Path, run_dir_name: str, cam_conf: Dict[str, Any], width: int = 640, height: int = 480, idx: int = 0) -> None:
+	view_m = p.computeViewMatrix(
+		cameraEyePosition=[cam_conf["cx"], cam_conf["cy"], cam_conf["cz"]],
+		cameraTargetPosition=[cam_conf["tx"], cam_conf["ty"], 0.0],
+		cameraUpVector=[0.0, 1.0, 0.0],
+	)
+	proj_m = p.computeProjectionMatrixFOV(fov=cam_conf["fov_deg"], aspect=width/height, nearVal=0.01, farVal=100.0)
+	_, _, px, _, _ = p.getCameraImage(width, height, view_m, proj_m, renderer=p.ER_TINY_RENDERER)
+
+	img = np.reshape(np.array(px, dtype=np.uint8), (height, width, 4))[:, :, :3]  # drop alpha
+	out_dir = batch_root / "frames_sample" / run_dir_name
+	out_dir.mkdir(parents=True, exist_ok=True)
+	out_path = out_dir / f"{idx:03d}.png"
+
+	# Try pybullet writer; fallback to imageio if available
+	try:
+		p.writeImageFile(str(out_path), img)  # type: ignore[attr-defined]
+	except Exception:
+		try:
+			import imageio.v2 as imageio
+			imageio.imwrite(out_path, img)
+		except Exception:
+			# Last resort: silently skip
+			return
+
+
+# ---------- main single-run ----------
+
+def run_one(
+	prompt: str,
+	scn: Dict[str, Any],
+	out_dir: Path,
+	dt: float = 0.05,
+	realtime: bool = False,
+	gui: bool = False,
+) -> Dict[str, Any]:
+	"""
+	Single rollout (V0) with outcome-aware frame sampling:
+	- Build world (plane, walls, traction/wet patches)
+	- AMR: kinematic disc with PID XY follower + yaw PD
+	- Human: late-start crosser; may slip on wet band and become a fallen obstacle
+	- Proximity brake attempts to avoid human (slow/stop)
+	- CSV: min_clearance, in_wet, human_phase, events (success/collision/contacts)
+	- Frames: capture ONE terminal frame iff shared batch budget allows (sampling.py)
+	"""
+	# Allow scenario dt override
+	if "runtime" in scn and "dt" in scn["runtime"]:
+		try:
+			dt = float(scn["runtime"]["dt"])
+		except Exception:
+			pass
+
+	# Build world
+	env = build_world(scn, use_gui=gui)
+	client_id = env["client"]  # for safe teardown later
+	try:
+		Lx, Ly = env["bounds"]
+		plane_id = env["plane_id"]
+		wall_ids = list(env.get("walls", []))
+		patch_ids = list(env.get("patches", []))
+		ignored_for_collision = {plane_id, *patch_ids}
+
+		if gui:
+			p.resetDebugVisualizerCamera(
+				cameraDistance=10.0,
+				cameraYaw=45.0,
+				cameraPitch=-35.0,
+				cameraTargetPosition=[0.5 * Lx, 0.5 * Ly, 0.0],
+			)
+
+		# Randomize traction μ for configured patches (seeded)
+		seed_val = int(scn.get("seed", 0))
+		rng = np.random.default_rng(seed_val)
+		wet_mu = float(rng.uniform(0.35, 0.60))
+		for bid in patch_ids:
+			p.changeDynamics(bid, -1, lateralFriction=wet_mu)
+
+		# Robot (disc)
+		radius = float(scn.get("agents", [{}])[0].get("radius_m", 0.4))
+		amr = _spawn_disc(radius=radius)
+
+		# Start & goal
+		border = 0.6
+		start = list(map(float, scn.get("layout", {}).get("start", [border, border])))
+		goal = list(map(float, scn.get("layout", {}).get("goal", [Lx - border, Ly - border])))
+		start[0] = max(border, min(Lx - border, start[0]))
+		start[1] = max(border, min(Ly - border, start[1]))
+		goal[0] = max(border, min(Lx - border, goal[0]))
+		goal[1] = max(border, min(Ly - border, goal[1]))
+		p.resetBasePositionAndOrientation(amr, [start[0], start[1], radius * 0.5], p.getQuaternionFromEuler([0, 0, 0]))
+
+		# Simple two-waypoint path (start -> goal)
+		waypoints: List[Tuple[float, float]] = [(goal[0], goal[1])]
+
+		# Human hazard
+		use_human = bool(scn.get("hazards", {}).get("human"))
+		human_id: int | None = spawn_human() if use_human else None
+		fallen_human_id: int | None = None
+
+		if human_id is not None:
+			# Defaults, overridable by scenario.hazards.human[0]
+			cfg = (scn.get("hazards", {}).get("human") or [{}])[0]
+			cross_x = float(cfg.get("cross_x", 0.5 * Lx))
+			crossing_duration = float(cfg.get("duration_s_running", 2.5))  # fast runner
+			p_slip = float(cfg.get("p_slip", 0.7))
+			trigger_mu = float(cfg.get("trigger_mu", 1.2))
+			trigger_sigma = float(cfg.get("trigger_sigma", 0.4))
+			trigger_distance = float(max(0.3, rng.normal(trigger_mu, trigger_sigma)))
+
+			# Wet band for crossing area
+			wet_band_h = 1.2
+			wet_y0 = max(border, 0.5 * Ly - 0.5 * wet_band_h)
+			wet_y1 = min(Ly - border, 0.5 * wet_band_h + 0.5 * Ly)
+			wet_id = _spawn_wet_patch(cross_x - 1.5, wet_y0, cross_x + 1.5, wet_y1, mu=0.32)
+			patch_ids.append(wet_id)
+			ignored_for_collision.add(wet_id)
+			wet_band_aabb: Tuple[float, float, float, float] = (cross_x - 1.5, wet_y0, cross_x + 1.5, wet_y1)
+		else:
+			cross_x = 0.5 * Lx
+			crossing_duration = 0.0
+			p_slip = 0.0
+			trigger_distance = 9999.0
+			wet_band_aabb = None  # type: ignore
+
+		# Human state
+		crossing_active = False
+		crossing_started_at = 0.0
+		slipped = False
+
+		# Logging setup
+		out_dir.mkdir(parents=True, exist_ok=True)
+		rows: List[List[float | str]] = []
+		header = [
+			"t", "x", "y", "yaw", "v_cmd", "w_cmd",
+			"min_clearance", "event", "event_detail",
+			"in_wet", "human_phase", "near_stop"
+		]
+
+		# Loop state
+		t = 0.0
+		timeout = float(scn.get("runtime", {}).get("duration_s", 90.0))
+		min_clear = 10.0
+		prev_err = np.array([0.0, 0.0])
+		wp_idx = 0
+		success = False
+
+		# Precompute static AABBs for walls (for simple clearance metric)
+		static_aabbs: List[Tuple[float, float, float, float]] = []
+		for wid in wall_ids:
+			(a0, a1) = p.getAABB(wid)
+			static_aabbs.append((a0[0], a0[1], a1[0], a1[1]))
+
+		def _human_phase_str() -> str:
+			if fallen_human_id is not None:
+				return "fallen"
+			if crossing_active:
+				return "running"
+			return "none"
+
+		def _compute_in_wet(xr: float, yr: float) -> bool:
+			# scene-configured traction patches
+			for patch in scn.get("hazards", {}).get("traction", []):
+				x0, y0, x1, y1 = patch["zone"]
+				if _pt_in_aabb(xr, yr, (float(x0), float(y0), float(x1), float(y1))):
+					return True
+			# ad-hoc crossing band
+			if _pt_in_aabb(xr, yr, wet_band_aabb):
+				return True
+			return False
+
+		# Camera config for terminal snapshots
+		run_dir_name = out_dir.name  # 'run_0007'
+		batch_root = out_dir.parent.parent  # .../runs/<batch>/  -> has 'per_run'
+		cam_conf = {
+			"cx": 0.5 * Lx,
+			"cy": 0.5 * Ly,
+			"cz": max(Lx, Ly) * 0.9 + 5.0,  # high enough for top-down
+			"tx": 0.5 * Lx,
+			"ty": 0.5 * Ly,
+			"fov_deg": 30.0,
+		}
+
+		stop_until = 0.0  # proximity brake hold timer
+
+		# Main loop
+		while t < timeout:
+			# Robot pose
+			pos, orn = p.getBasePositionAndOrientation(amr)
+			x, y, _ = pos
+			yaw = p.getEulerFromQuaternion(orn)[2]
+
+			# Goal waypoint
+			target = waypoints[min(wp_idx, len(waypoints) - 1)]
+
+			# PID XY -> desired linear speed; PD on yaw
+			ctrl, prev_err = _pid_follow((x, y), target, prev_err, dt=dt)
+			desired_yaw = math.atan2(target[1] - y, target[0] - x)
+			yaw_err = (desired_yaw - yaw + math.pi) % (2 * math.pi) - math.pi
+			w_cmd = max(-1.5, min(1.5, 1.2 * yaw_err))
+			v_cmd = float(np.linalg.norm(ctrl))
+			v_cmd = max(0.0, min(1.8, v_cmd))
+
+			# --- Proximity brake vs human (front arc only) ---
+			STOP_DIST = 1.2
+			SLOW_DIST = 3.0
+			STOP_HOLD = 0.8
+			h_pos = None
+			if use_human:
+				if fallen_human_id is not None:
+					h_pos = p.getBasePositionAndOrientation(fallen_human_id)[0]
+				elif human_id is not None:
+					h_pos = p.getBasePositionAndOrientation(human_id)[0]
+
+			if h_pos is not None:
+				hx, hy, _hz = h_pos
+				d = math.hypot(hx - x, hy - y)
+				# front arc check
+				ang_to_h = math.atan2(hy - y, hx - x)
+				rel = (ang_to_h - yaw + math.pi) % (2 * math.pi) - math.pi
+				in_front = abs(rel) < (math.pi / 2.0)
+
+				if in_front and d < STOP_DIST:
+					stop_until = max(stop_until, t + STOP_HOLD)
+
+				if t < stop_until:
+					v_cmd = 0.0
+				elif in_front and d < SLOW_DIST:
+					v_cmd = min(v_cmd, 0.6)
+
+			# ---- Human crossing logic ----
+			if use_human and human_id is not None and fallen_human_id is None:
+				# Trigger crossing when robot is close to the crossing x-line
+				if not crossing_active and abs(x - cross_x) < trigger_distance:
+					crossing_active = True
+					crossing_started_at = t
+					# place human at bottom edge facing +Y
+					start_y = border
+					p.resetBasePositionAndOrientation(
+						human_id, [cross_x, start_y, 1.05], p.getQuaternionFromEuler([0, 0, 0])
+					)
+
+				if crossing_active:
+					progress = min(1.0, (t - crossing_started_at) / max(1e-6, crossing_duration))
+					yh = (1.0 - progress) * border + progress * (Ly - border)
+					p.resetBasePositionAndOrientation(human_id, [cross_x, yh, 1.05], p.getQuaternionFromEuler([0, 0, 0]))
+
+					# Slip when entering wet band (once)
+					if not slipped and _pt_in_aabb(cross_x, yh, wet_band_aabb) and rng.random() < p_slip:
+						slipped = True
+						# convert to fallen obstacle
+						p.resetBasePositionAndOrientation(
+							human_id, [cross_x, yh, 0.25], p.getQuaternionFromEuler([math.pi / 2.0, 0.0, 0.0])
+						)
+						fallen_human_id = human_id
+						human_id = None  # no longer running
+						rows.append([t, x, y, yaw, v_cmd, w_cmd, min_clear,
+						             "slip", f"{cross_x:.2f},{yh:.2f}", int(_compute_in_wet(x, y)),
+						             "fallen", int(v_cmd < 0.2)])
+
+					# Finished crossing without falling
+					if human_id is not None and yh >= (Ly - border - 1e-3):
+						crossing_active = False  # exited scene
+
+			# Kinematic integrate robot motion
+			new_yaw = yaw + w_cmd * dt
+			new_x = x + (v_cmd * math.cos(new_yaw)) * dt
+			new_y = y + (v_cmd * math.sin(new_yaw)) * dt
+			# Clamp to bounds (keep within warehouse)
+			new_x = max(border, min(Lx - border, new_x))
+			new_y = max(border, min(Ly - border, new_y))
+			p.resetBasePositionAndOrientation(amr, [new_x, new_y, radius * 0.5], p.getQuaternionFromEuler([0, 0, new_yaw]))
+
+			# Waypoint arrival
+			if math.hypot(target[0] - new_x, target[1] - new_y) < 0.5:
+				wp_idx += 1
+				if wp_idx >= len(waypoints):
+					success = True
+					in_wet = int(_compute_in_wet(new_x, new_y))
+					rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd, min_clear,
+					             "success", "", in_wet, _human_phase_str(), int(v_cmd < 0.2)])
+					# Terminal snapshot (subject to shared budget)
+					save, _frames_root = should_save_frames(batch_root, "success")
+					if save:
+						_capture_frame(batch_root, run_dir_name, cam_conf, idx=0)
+					break
+
+			# Clearance vs. static geometry (walls)
+			clearance = _clearance_to_aabbs(new_x, new_y, static_aabbs)
+			min_clear = min(min_clear, clearance)
+
+			# Contacts: only consider collisions with human/fallen human for outcome
+			raw_contacts = p.getContactPoints(bodyA=amr)
+			human_contact = False
+			nonhuman_contact_count = 0
+			for cp in raw_contacts:
+				bodyA = cp[1]; bodyB = cp[2]
+				if amr not in (bodyA, bodyB):
+					continue
+				other = bodyB if bodyA == amr else bodyA
+				if other in ignored_for_collision:
+					continue
+				if other == fallen_human_id or other == human_id:
+					human_contact = True
+					break
+				nonhuman_contact_count += 1
+
+			if human_contact:
+				in_wet = int(_compute_in_wet(new_x, new_y))
+				rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd, 0.0,
+				             "collision_human", "1", in_wet, _human_phase_str(), int(v_cmd < 0.2)])
+				# Terminal snapshot (subject to shared budget)
+				save, _frames_root = should_save_frames(batch_root, "collision_human")
+				if save:
+					_capture_frame(batch_root, run_dir_name, cam_conf, idx=0)
+				break
+			elif nonhuman_contact_count > 0:
+				# Non-human contacts are informative but do not terminate the run
+				in_wet = int(_compute_in_wet(new_x, new_y))
+				rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd, min_clear,
+				             "contact_nonhuman", str(nonhuman_contact_count), in_wet, _human_phase_str(), int(v_cmd < 0.2)])
+
+			# Regular log row
+			in_wet = int(_compute_in_wet(new_x, new_y))
+			rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd, min_clear,
+			             "", "", in_wet, _human_phase_str(), int(v_cmd < 0.2)])
+
+			# Step physics & time
+			p.stepSimulation()
+			if realtime:
+				time.sleep(dt)
+			t += dt
+
+		# Write CSV
+		_write_csv(out_dir / "run_one.csv", header, rows)
+
+		return {"success": success, "time": t, "steps": len(rows)}
+
+	finally:
+		# Always disconnect this Bullet client so batches don't leak handles
+		try:
+			p.disconnect(client_id)
+		except Exception:
+			pass
+
+
+# ===== src\edgesim\utils.py =====
+## src/edgesim/utils.py
+from __future__ import annotations
+import subprocess
+import datetime as _dt
+import re
+
+
+def timestamp_slug() -> str:
+# e.g., 2025-09-12_20-00-00
+    return _dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+
+def git_hash_fallback() -> str:
+    try:
+        return (
+        subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL)
+        .decode()
+        .strip()
+        )
+    except Exception:
+        return "nogit"
+
+
+def slugify(text: str, max_len: int = 40) -> str:
+    text = re.sub(r"[^a-zA-Z0-9\-\_\s]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = text.replace(" ", "_")
+    return text[:max_len] or "run"
+
+
+# ===== src\edgesim\world.py =====
+from __future__ import annotations
+from typing import Dict, Any, Tuple, List
+import pybullet as p
+import pybullet_data
+
+def _mk_box(half_extents, rgba=(0.8,0.8,0.8,1.0)):
+	vis = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=rgba)
+	col = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
+	return vis, col
+
+def build_world(scn: Dict[str, Any], use_gui: bool = False) -> Dict[str, Any]:
+	"""Create a simple 2.5D warehouse scene.
+	- Base floor (dry friction)
+	- Walls as thin boxes
+	- Aisles (visual only)
+	- Optional 'wet patch' slab with low friction in each traction zone
+	Returns IDs and helpful info.
+	"""
+	client = p.connect(p.GUI if use_gui else p.DIRECT)
+	p.resetSimulation()
+	p.setAdditionalSearchPath(pybullet_data.getDataPath())
+	p.setGravity(0, 0, -9.81)
+
+	# Ground plane (visual + collision)
+	plane_id = p.loadURDF("plane.urdf")
+	# Dry friction on plane
+	p.changeDynamics(plane_id, -1, lateralFriction=0.9, rollingFriction=0.0, spinningFriction=0.0)
+
+	# World bounds & walls (very thin tall boxes)
+	layout = scn["layout"]
+	walls = []
+	for wall in layout.get("walls", []):
+		# (Placeholder if you later want arbitrary walls from 'wall')
+		pass
+
+	# A couple of perimeter walls to keep the robot in-bounds
+	Lx, Ly = layout["map_size_m"]
+	H = 0.5
+	# left
+	vis,col = _mk_box([0.05, Ly/2, H], rgba=(0.2,0.2,0.2,1))
+	w0 = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col, baseVisualShapeIndex=vis,
+	                       basePosition=[0.0, Ly/2, H])
+	# right
+	vis,col = _mk_box([0.05, Ly/2, H], rgba=(0.2,0.2,0.2,1))
+	w1 = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col, baseVisualShapeIndex=vis,
+	                       basePosition=[Lx, Ly/2, H])
+	# bottom
+	vis,col = _mk_box([Lx/2, 0.05, H], rgba=(0.2,0.2,0.2,1))
+	w2 = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col, baseVisualShapeIndex=vis,
+	                       basePosition=[Lx/2, 0.0, H])
+	# top
+	vis,col = _mk_box([Lx/2, 0.05, H], rgba=(0.2,0.2,0.2,1))
+	w3 = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col, baseVisualShapeIndex=vis,
+	                       basePosition=[Lx/2, Ly, H])
+	walls = [w0,w1,w2,w3]
+
+	# Wet patches: thin slabs with low friction over the plane
+	patch_bodies: List[int] = []
+	for patch in scn["hazards"].get("traction", []):
+		x0,y0,x1,y1 = patch["zone"]
+		cx, cy = (x0+x1)/2.0, (y0+y1)/2.0
+		hx, hy = max(0.01,(x1-x0)/2.0), max(0.01,(y1-y0)/2.0)
+		vis,col = _mk_box([hx, hy, 0.001], rgba=(0.2,0.6,1.0,0.35))  # light blue transparent
+		bid = p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col, baseVisualShapeIndex=vis,
+		                        basePosition=[cx, cy, 0.001])
+		p.changeDynamics(bid, -1, lateralFriction=float(patch.get("mu", 0.45)))
+		patch_bodies.append(bid)
+
+	return {
+		"client": client,
+		"plane_id": plane_id,
+		"walls": walls,
+		"patches": patch_bodies,
+		"bounds": (Lx, Ly),
+	}
+
+def spawn_human(radius: float = 0.25, length: float = 1.6, rgba=(0.2, 0.8, 0.2, 1.0)):
+	"""Create a kinematic human as a vertical capsule. Returns body id."""
+	col = p.createCollisionShape(p.GEOM_CAPSULE, radius=radius, height=length)
+	vis = p.createVisualShape(p.GEOM_CAPSULE, radius=radius, length=length, rgbaColor=rgba)
+	# Center of a Z-capsule is at z = radius + length/2 when touching the ground plane at z=0
+	z_center = float(radius + 0.5 * length)  # 0.25 + 0.8 = 1.05 for defaults
+	bid = p.createMultiBody(
+		baseMass=0.0,  # kinematic
+		baseCollisionShapeIndex=col,
+		baseVisualShapeIndex=vis,
+		basePosition=[-10.0, -10.0, z_center],  # start off-stage but at correct height
+	)
+	return bid
+
+
+# ===== src\edgesim\__init__.py =====
+## src/edgesim/__init__.py
+__all__ = ["__version__"]
+__version__ = "0.0.1"
+
+# ===== src\edgesim\__main__.py =====
+from .cli import main
+
+if __name__ == "__main__":
+	main()
+
+
+# ===== tests\validate_batch.py =====
+#!/usr/bin/env python3
+from __future__ import annotations
+import sys, csv, json, hashlib, os, math
+from pathlib import Path
+from typing import List, Dict, Tuple
+
+EXPECTED_HEADER = ["t","x","y","yaw","v_cmd","w_cmd","min_clearance","event","event_detail","in_wet","human_phase","near_stop"]
+
+def die(msg: str, code: int = 2):
+	print(f"[FAIL] {msg}")
+	sys.exit(code)
+
+def warn(msg: str):
+	print(f"[WARN] {msg}")
+
+def ok(msg: str):
+	print(f"[OK] {msg}")
+
+def has_files(run_dir: Path) -> None:
+	required = ["scenario.yaml", "seeds.json", "summary.json", "report.md", "per_run"]
+	for name in required:
+		if not (run_dir / name).exists():
+			die(f"Missing required artifact: {name}")
+	ok("All required top-level artifacts present")
+
+def read_csv_rows(path: Path) -> Tuple[List[str], List[List[str]]]:
+	with path.open(newline="", encoding="utf-8") as f:
+		r = csv.reader(f)
+		try:
+			header = next(r)
+		except StopIteration:
+			return [], []
+		rows = [row for row in r]
+	return header, rows
+
+def float_or_nan(s: str) -> float:
+	try:
+		return float(s)
+	except Exception:
+		return float("nan")
+
+def check_csv_invariants(csv_path: Path) -> Dict[str, int | float | bool]:
+	hdr, rows = read_csv_rows(csv_path)
+	if hdr != EXPECTED_HEADER:
+		die(f"{csv_path}: Unexpected header.\nExpected: {EXPECTED_HEADER}\nGot:      {hdr}")
+
+	if not rows:
+		die(f"{csv_path}: No rows found")
+
+	# Column indices
+	col = {name:i for i, name in enumerate(hdr)}
+	last_t = -1.0
+	last_min = float("inf")
+	seen_success = False
+	seen_collision_human = False
+	seen_slip = 0
+	seen_fallen = False
+	near_stop_count = 0
+
+	for r_i, r in enumerate(rows):
+		# monotone time
+		t = float_or_nan(r[col["t"]]); 
+		if math.isnan(t): die(f"{csv_path}: row {r_i} has non-float t")
+		if t < last_t - 1e-9:
+			die(f"{csv_path}: time not non-decreasing at row {r_i} ({t} < {last_t})")
+		last_t = t
+
+		# min_clearance monotone non-increasing
+		mc = float_or_nan(r[col["min_clearance"]])
+		if math.isnan(mc): die(f"{csv_path}: row {r_i} has non-float min_clearance")
+		if mc > last_min + 1e-6:
+			die(f"{csv_path}: min_clearance increased at row {r_i} ({mc} > {last_min})")
+		last_min = min(last_min, mc)
+
+		# human phase semantics:
+		phase = r[col["human_phase"]]
+		if phase not in ("none","running","fallen"):
+			die(f"{csv_path}: row {r_i} has invalid human_phase '{phase}'")
+
+		# Once fallen is observed, it must remain fallen for the rest of the run
+		if seen_fallen and phase != "fallen":
+			die(f"{csv_path}: human_phase left 'fallen' at row {r_i} (got '{phase}')")
+		if phase == "fallen":
+			seen_fallen = True
+
+		# events semantics
+		event = r[col["event"]]
+		if event == "success":
+			seen_success = True
+			# success should be terminal (no rows after with events)
+			if r_i != len(rows) - 1:
+				die(f"{csv_path}: 'success' not terminal (rows continue after success)")
+		elif event == "collision_human":
+			seen_collision_human = True
+			if phase not in ("running","fallen"):
+				die(f"{csv_path}: collision_human without human present (phase={phase})")
+		elif event == "slip":
+			seen_slip += 1
+
+		# near_stop accounting
+		try:
+			near_stop_val = int(r[col["near_stop"]])
+			if near_stop_val not in (0,1): 
+				die(f"{csv_path}: near_stop not 0/1 at row {r_i}")
+			near_stop_count += 1 if near_stop_val == 1 else 0
+		except Exception:
+			die(f"{csv_path}: near_stop not int at row {r_i}")
+
+	# only one slip per run (by design)
+	if seen_slip > 1:
+		die(f"{csv_path}: more than one 'slip' event ({seen_slip})")
+
+	return {
+		"success": 1 if seen_success else 0,
+		"collision_human": 1 if seen_collision_human else 0,
+		"near_stop_rows": near_stop_count,
+	}
+
+def digest_dir(per_run_dir: Path) -> str:
+	h = hashlib.sha256()
+	for p in sorted(per_run_dir.rglob("*.csv")):
+		h.update(p.read_bytes())
+	return h.hexdigest()
+
+def load_summary(path: Path) -> Dict:
+	try:
+		return json.loads(path.read_text(encoding="utf-8"))
+	except Exception:
+		die(f"Failed to load {path}")
+
+def validate_batch(run_dir: Path) -> Dict[str, int]:
+	has_files(run_dir)
+	per_run = run_dir / "per_run"
+	if not per_run.exists():
+		die("per_run directory missing")
+
+	csvs = sorted(per_run.glob("run_*/run_one.csv"))
+	if not csvs:
+		die("No run_* CSVs found under per_run")
+
+	count_success = 0
+	count_coll_h = 0
+	count_runs = 0
+	with_near_stops = 0
+
+	for c in csvs:
+		stats = check_csv_invariants(c)
+		count_success += int(stats["success"])
+		count_coll_h += int(stats["collision_human"])
+		with_near_stops += 1 if int(stats["near_stop_rows"]) > 0 else 0
+		count_runs += 1
+
+	ok(f"Checked {count_runs} runs for schema + invariants")
+
+	# Aggregate plausibility (loose, but catches “all-success” bugs)
+	if count_success == 0 or count_coll_h == 0:
+		warn(f"Aggregate outcomes are one-sided (success={count_success}, collision_human={count_coll_h}).")
+	else:
+		ok(f"Aggregate outcomes show mix (success={count_success}, collision_human={count_coll_h})")
+
+	# Acceptance: failure rate >= 10% for stress prompt
+	fail_rate = (count_coll_h / max(1, count_runs))
+	if fail_rate < 0.10:
+		warn(f"Failure rate {fail_rate:.2%} < 10% target for stress scenario")
+	else:
+		ok(f"Failure rate {fail_rate:.2%} meets ≥10% target (stress scenario)")
+
+	if with_near_stops == 0:
+		warn("No near_stop rows observed—proximity brake may not be triggering")
+	else:
+		ok(f"near_stop observed in {with_near_stops}/{count_runs} runs")
+
+	return {
+		"runs": count_runs,
+		"success": count_success,
+		"collision_human": count_coll_h,
+	}
+
+def compare_batches(dir1: Path, dir2: Path) -> None:
+	d1 = digest_dir(dir1 / "per_run")
+	d2 = digest_dir(dir2 / "per_run")
+	if d1 == d2:
+		ok("Determinism: per_run CSV digests MATCH (identical)")
+	else:
+		warn("Determinism: per_run CSV digests DIFFER (seeds or nondeterminism differ)")
+	s1 = load_summary(dir1 / "summary.json")
+	s2 = load_summary(dir2 / "summary.json")
+	if s1.get("counts") == s2.get("counts") or s1.get("outcomes_pct") == s2.get("outcomes_pct"):
+		ok("Coarse summaries match")
+	else:
+		warn("Coarse summaries differ (expected if seeds changed)")
+
+def main():
+	if len(sys.argv) < 2:
+		print("Usage: python tests/validate_batch.py runs/<batch_dir> [runs/<second_batch_dir_for_compare>]")
+		sys.exit(1)
+	run_dir = Path(sys.argv[1]).resolve()
+	if not run_dir.exists():
+		die(f"Batch dir not found: {run_dir}")
+	stats = validate_batch(run_dir)
+
+	if len(sys.argv) >= 3:
+		run_dir2 = Path(sys.argv[2]).resolve()
+		if not run_dir2.exists():
+			die(f"Second batch dir not found: {run_dir2}")
+		compare_batches(run_dir, run_dir2)
+
+	ok("Validation finished")
+
+if __name__ == "__main__":
+	main()

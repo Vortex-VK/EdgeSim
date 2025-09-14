@@ -5,6 +5,7 @@ import csv
 import json
 import time
 
+from .sampling import set_initial_budget
 from .io_utils import ensure_dir, write_json
 from .sim_one import run_one
 
@@ -51,6 +52,7 @@ def run_batch(
 	completed = 0
 	total = len(seeds)
 	auto_degraded = False
+	set_initial_budget(run_dir, k_fail=10, k_succ=10)
 
 	for k, seed in enumerate(seeds):
 		prd = _per_run_dir(run_dir, k)

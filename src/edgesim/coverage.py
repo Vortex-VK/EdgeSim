@@ -56,7 +56,7 @@ def build_coverage(per_run_dir: Path) -> Dict[str, Any]:
         ever_wet = False
         ever_running = False
         ever_fallen = False
-        outcome = "success"  # default, may be overridden by events
+        outcome = "other"  # default, may be overridden by events
         min_clear = _last_min_clearance(csv_path)
 
         with csv_path.open("r", newline="", encoding="utf-8") as f:
@@ -87,6 +87,8 @@ def build_coverage(per_run_dir: Path) -> Dict[str, Any]:
                 ev = row[idx_event] if idx_event < len(row) else ""
                 if ev == "collision_human":
                     outcome = "collision_human"
+                elif ev == "success":
+                    outcome = "success"
                 # (you also log "success" explicitly—if present it will be the last line and keep outcome)
 
         # tally

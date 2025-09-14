@@ -11,13 +11,13 @@ requires-python = ">=3.10"
 authors = [{ name = "EdgeSim" }]
 dependencies = [
   "PyYAML>=6.0",
-  "numpy>=1.24",          # de-duped, keep one numpy line
+  "numpy>=1.24",
   "tqdm>=4.65",
   "networkx>=3.2",
   "matplotlib>=3.6",
   "opencv-python>=4.8",
   "pybullet>=3.2",
-  "imageio>=2.34.0",      
+  "imageio>=2.34.0",
 ]
 
 [project.scripts]
