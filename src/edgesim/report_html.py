@@ -38,6 +38,12 @@ footer {{ margin-top: 24px; color:#666; font-size:12px; }}
 <div class="small">Manifest: per_run_digest <span class="code">{per_run_digest}</span> • scenario.yaml <span class="code">{scenario_sha}</span> • seeds.json <span class="code">{seeds_sha}</span> • {repro_badge}</div>
 
 <div class="card">
+  <h2>Context Summary</h2>
+  <div class="small">Schema validation: <b>{schema_status}</b>{schema_hint}</div>
+  {context_html}
+</div>
+
+<div class="card">
   <h2>Acceptance Checklist</h2>
   <ul class="acclist">
     <li class="{chk_failrate_cls}">Failure rate ≥ 10% (stress): <b>{fail_rate:.2f}%</b></li>
@@ -99,314 +105,395 @@ footer {{ margin-top: 24px; color:#666; font-size:12px; }}
 """
 
 def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    h.update(path.read_bytes())
-    return h.hexdigest()
+	h = hashlib.sha256()
+	h.update(path.read_bytes())
+	return h.hexdigest()
 
 def _digest_csvs(per_run_dir: Path) -> str:
-    h = hashlib.sha256()
-    for p in sorted(per_run_dir.rglob("*.csv")):
-        h.update(p.read_bytes())
-    return h.hexdigest()
+	h = hashlib.sha256()
+	for p in sorted(per_run_dir.rglob("*.csv")):
+		h.update(p.read_bytes())
+	return h.hexdigest()
 
 def _parse_min_clearance(row: Dict[str, str]) -> float | None:
-    """
-    Prefer new fields, fall back to legacy.
-    """
-    for k in ("min_clearance_geom", "min_clearance_lidar", "min_clearance"):
-        if k in row and row[k] != "":
-            try:
-                return float(row[k])
-            except Exception:
-                return None
-    return None
+	"""
+	Prefer new fields, fall back to legacy.
+	"""
+	for k in ("min_clearance_geom", "min_clearance_lidar", "min_clearance"):
+		if k in row and row[k] != "":
+			try:
+				return float(row[k])
+			except Exception:
+				return None
+	return None
 
 def _load_counts_and_metrics(batch_dir: Path) -> Tuple[int, int, int, List[float], List[float]]:
-    """Return (success, coll_human, other, min_clearances, ttg_success)."""
-    per_run = batch_dir / "per_run"
-    success = coll_human = other = 0
-    mincls: List[float] = []
-    ttg: List[float] = []
+	"""Return (success, coll_human, other, min_clearances, ttg_success)."""
+	per_run = batch_dir / "per_run"
+	success = coll_human = other = 0
+	mincls: List[float] = []
+	ttg: List[float] = []
 
-    for run_csv in sorted(per_run.glob("run_*/run_one.csv")):
-        with run_csv.open(newline="", encoding="utf-8") as f:
-            r = csv.DictReader(f)
-            last_t = 0.0
-            last_min = math.inf
-            end_event = ""
-            for row in r:
-                # time
-                try:
-                    t = float(row.get("t", "") or "0")
-                    last_t = t
-                except Exception:
-                    pass
-                # min-clearance
-                mc = _parse_min_clearance(row)
-                if mc is not None and mc < last_min:
-                    last_min = mc
-                # terminal event
-                ev = row.get("event", "")
-                if ev:
-                    end_event = ev
-            if last_min is math.inf:
-                last_min = float("nan")
-            mincls.append(last_min)
-            if end_event == "success":
-                success += 1
-                ttg.append(last_t)
-            elif end_event == "collision_human":
-                coll_human += 1
-            else:
-                other += 1
-    return success, coll_human, other, mincls, ttg
+	for run_csv in sorted(per_run.glob("run_*/run_one.csv")):
+		with run_csv.open(newline="", encoding="utf-8") as f:
+			r = csv.DictReader(f)
+			last_t = 0.0
+			last_min = math.inf
+			end_event = ""
+			for row in r:
+				# time
+				try:
+					t = float(row.get("t", "") or "0")
+					last_t = t
+				except Exception:
+					pass
+				# min-clearance
+				mc = _parse_min_clearance(row)
+				if mc is not None and mc < last_min:
+					last_min = mc
+				# terminal event
+				ev = row.get("event", "")
+				if ev:
+					end_event = ev
+			if last_min is math.inf:
+				last_min = float("nan")
+			mincls.append(last_min)
+			if end_event == "success":
+				success += 1
+				ttg.append(last_t)
+			elif end_event == "collision_human":
+				coll_human += 1
+			else:
+				other += 1
+	return success, coll_human, other, mincls, ttg
 
 def _svg_bar_chart(values: List[int], labels: List[str], colors: Optional[List[str]] = None, max_height: int = 120) -> str:
-    total = max(1, max(values))
-    w = 360; x0 = 20; y0 = 120
-    bar_w = int((w - x0 - 20) / max(1, len(values)))
-    parts = []
-    for i, v in enumerate(values):
-        hp = int(max_height * (v / total))
-        x = x0 + i * bar_w
-        y = y0 - hp
-        fill = colors[i] if colors and i < len(colors) else "#60a5fa"
-        parts.append(f'<rect x="{x}" y="{y}" width="{bar_w-8}" height="{hp}" fill="{fill}" />')
-        parts.append(f'<text x="{x + (bar_w-8)/2}" y="{y0 + 14}" font-size="12" text-anchor="middle">{labels[i]}</text>')
-    return "".join(parts)
+	total = max(1, max(values))
+	w = 360; x0 = 20; y0 = 120
+	bar_w = int((w - x0 - 20) / max(1, len(values)))
+	parts = []
+	for i, v in enumerate(values):
+		hp = int(max_height * (v / total))
+		x = x0 + i * bar_w
+		y = y0 - hp
+		fill = colors[i] if colors and i < len(colors) else "#60a5fa"
+		parts.append(f'<rect x="{x}" y="{y}" width="{bar_w-8}" height="{hp}" fill="{fill}" />')
+		parts.append(f'<text x="{x + (bar_w-8)/2}" y="{y0 + 14}" font-size="12" text-anchor="middle">{labels[i]}</text>')
+	return "".join(parts)
 
 def _svg_hist(data: List[float], bins: int, low: float, high: float, color="#34d399", max_height: int = 120) -> str:
-    if not data:
-        return '<text x="200" y="80" text-anchor="middle" fill="#999">no data</text>'
-    step = (high - low) / bins if bins > 0 else 1.0
-    hist = [0] * bins
-    for v in data:
-        if math.isnan(v):
-            continue
-        k = int((v - low) / step)
-        if k < 0: k = 0
-        if k >= bins: k = bins - 1
-        hist[k] += 1
-    total = max(1, max(hist))
-    w = 360; x0 = 20; y0 = 120
-    bar_w = int((w - x0 - 20) / max(1, bins))
-    parts = []
-    for i, v in enumerate(hist):
-        hp = int(max_height * (v / total))
-        x = x0 + i * bar_w
-        y = y0 - hp
-        parts.append(f'<rect x="{x}" y="{y}" width="{bar_w-2}" height="{hp}" fill="{color}" />')
-    parts.append(f'<text x="{x0}" y="{y0 + 14}" font-size="12">{low:.1f}</text>')
-    parts.append(f'<text x="{x0 + (w-x0-20)/2}" y="{y0 + 14}" font-size="12" text-anchor="middle">{(low+high)/2:.1f}</text>')
-    parts.append(f'<text x="{w}" y="{y0 + 14}" font-size="12" text-anchor="end">{high:.1f}</text>')
-    return "".join(parts)
+	if not data:
+		return '<text x="200" y="80" text-anchor="middle" fill="#999">no data</text>'
+	step = (high - low) / bins if bins > 0 else 1.0
+	hist = [0] * bins
+	for v in data:
+		if math.isnan(v):
+			continue
+		k = int((v - low) / step)
+		if k < 0: k = 0
+		if k >= bins: k = bins - 1
+		hist[k] += 1
+	total = max(1, max(hist))
+	w = 360; x0 = 20; y0 = 120
+	bar_w = int((w - x0 - 20) / max(1, bins))
+	parts = []
+	for i, v in enumerate(hist):
+		hp = int(max_height * (v / total))
+		x = x0 + i * bar_w
+		y = y0 - hp
+		parts.append(f'<rect x="{x}" y="{y}" width="{bar_w-2}" height="{hp}" fill="{color}" />')
+	parts.append(f'<text x="{x0}" y="{y0 + 14}" font-size="12">{low:.1f}</text>')
+	parts.append(f'<text x="{x0 + (w-x0-20)/2}" y="{y0 + 14}" font-size="12" text-anchor="middle">{(low+high)/2:.1f}</text>')
+	parts.append(f'<text x="{w}" y="{y0 + 14}" font-size="12" text-anchor="end">{high:.1f}</text>')
+	return "".join(parts)
 
 def _pick_gallery(batch_dir: Path, prefer_failures: bool = True, limit: int = 8) -> List[Tuple[str, str]]:
-    per_run = batch_dir / "per_run"
-    frames = batch_dir / "frames_sample"
-    chosen: List[Tuple[str, str]] = []
+	per_run = batch_dir / "per_run"
+	frames = batch_dir / "frames_sample"
+	chosen: List[Tuple[str, str]] = []
 
-    outcomes: Dict[str, Tuple[str, float, float]] = {}
-    for run_csv in sorted(per_run.glob("run_*/run_one.csv")):
-        run_name = run_csv.parent.name
-        with run_csv.open(newline="", encoding="utf-8") as f:
-            r = csv.DictReader(f)
-            end_event = ""; last_min = math.inf; last_t = 0.0
-            for row in r:
-                ev = row.get("event", "")
-                if ev:
-                    end_event = ev
-                mc = _parse_min_clearance(row)
-                if mc is not None and mc < last_min:
-                    last_min = mc
-                try:
-                    last_t = float(row.get("t", "") or "0")
-                except Exception:
-                    pass
-            outcomes[run_name] = (end_event or "other", last_min if last_min < math.inf else float("nan"), last_t)
+	outcomes: Dict[str, Tuple[str, float, float]] = {}
+	for run_csv in sorted(per_run.glob("run_*/run_one.csv")):
+		run_name = run_csv.parent.name
+		with run_csv.open(newline="", encoding="utf-8") as f:
+			r = csv.DictReader(f)
+			end_event = ""; last_min = math.inf; last_t = 0.0
+			for row in r:
+				ev = row.get("event", "")
+				if ev:
+					end_event = ev
+				mc = _parse_min_clearance(row)
+				if mc is not None and mc < last_min:
+					last_min = mc
+				try:
+					last_t = float(row.get("t", "") or "0")
+				except Exception:
+					pass
+			outcomes[run_name] = (end_event or "other", last_min if last_min < math.inf else float("nan"), last_t)
 
-    candidates: List[Tuple[str, str]] = []
-    if frames.exists():
-        for run_dir in sorted(frames.glob("run_*")):
-            run_name = run_dir.name
-            imgs = sorted(run_dir.glob("*.png"))
-            if not imgs:
-                continue
-            img_rel = f"frames_sample/{run_name}/{imgs[-1].name}"
-            ev, mclr, tend = outcomes.get(run_name, ("other", float("nan"), float("nan")))
-            caption = f"{run_name}: {ev}, min_clear={mclr:.2f}, t_end={tend:.1f}s"
-            candidates.append((caption, img_rel))
+	candidates: List[Tuple[str, str]] = []
+	if frames.exists():
+		for run_dir in sorted(frames.glob("run_*")):
+			run_name = run_dir.name
+			imgs = sorted(run_dir.glob("*.png"))
+			if not imgs:
+				continue
+			img_rel = f"frames_sample/{run_name}/{imgs[-1].name}"
+			ev, mclr, tend = outcomes.get(run_name, ("other", float("nan"), float("nan")))
+			caption = f"{run_name}: {ev}, min_clear={mclr:.2f}, t_end={tend:.1f}s"
+			candidates.append((caption, img_rel))
 
-    if prefer_failures:
-        for cap, rel in candidates:
-            if "collision_human" in cap and len(chosen) < limit:
-                chosen.append((cap, rel))
-    for cap, rel in candidates:
-        if len(chosen) >= limit:
-            break
-        if (cap, rel) not in chosen:
-            chosen.append((cap, rel))
-    return chosen[:limit]
+	if prefer_failures:
+		for cap, rel in candidates:
+			if "collision_human" in cap and len(chosen) < limit:
+				chosen.append((cap, rel))
+	for cap, rel in candidates:
+		if len(chosen) >= limit:
+			break
+		if (cap, rel) not in chosen:
+			chosen.append((cap, rel))
+	return chosen[:limit]
 
 def _render_coverage_table(coverage: Dict[str, Dict[str, float] | Dict[str, int]]) -> str:
-    if not coverage:
-        return '<div class="small">No coverage computed. (Run built without coverage module or no per_run CSVs yet.)</div>'
-    def rows_of(key: str) -> List[Tuple[str, str]]:
-        sec = coverage.get(key, {})
-        if not isinstance(sec, dict):
-            return []
-        items = list(sec.items())
-        return [(k, f"{v:.2f}%") if isinstance(v, float) else (k, str(v)) for k, v in items]
+	if not coverage:
+		return '<div class="small">No coverage computed. (Run built without coverage module or no per_run CSVs yet.)</div>'
+	def rows_of(key: str) -> List[Tuple[str, str]]:
+		sec = coverage.get(key, {})
+		if not isinstance(sec, dict):
+			return []
+		items = list(sec.items())
+		return [(k, f"{v:.2f}%") if isinstance(v, float) else (k, str(v)) for k, v in items]
 
-    def table_for(title: str, key: str) -> str:
-        rows = rows_of(key)
-        if not rows:
-            return ""
-        t = [f"<h3 style='margin:8px 0 6px 0;'>{title}</h3>",
-             "<table class='table'><thead><tr><th>Bucket</th><th>Value</th></tr></thead><tbody>"]
-        for k, v in rows:
-            t.append(f"<tr><td>{k}</td><td>{v}</td></tr>")
-        t.append("</tbody></table>")
-        return "\n".join(t)
+	def table_for(title: str, key: str) -> str:
+		rows = rows_of(key)
+		if not rows:
+			return ""
+		t = [f"<h3 style='margin:8px 0 6px 0;'>{title}</h3>",
+		     "<table class='table'><thead><tr><th>Bucket</th><th>Value</th></tr></thead><tbody>"]
+		for k, v in rows:
+			t.append(f"<tr><td>{k}</td><td>{v}</td></tr>")
+		t.append("</tbody></table>")
+		return "\n".join(t)
 
-    parts = []
-    parts.append(table_for("Traction (pct)", "traction_pct"))
-    parts.append(table_for("Human phase (pct)", "human_phase_pct"))
-    parts.append(table_for("Clearance bands (pct)", "clearance_bands_pct"))
-    parts.append(table_for("Outcomes (pct)", "outcomes_pct"))
-    parts.append(table_for("Traction (counts)", "traction"))
-    parts.append(table_for("Human phase (counts)", "human_phase"))
-    parts.append(table_for("Clearance bands (counts)", "clearance_bands"))
-    parts.append(table_for("Outcomes (counts)", "outcomes"))
-    return "\n".join(x for x in parts if x)
+	parts = []
+	parts.append(table_for("Traction (pct)", "traction_pct"))
+	parts.append(table_for("Human phase (pct)", "human_phase_pct"))
+	parts.append(table_for("Clearance bands (pct)", "clearance_bands_pct"))
+	parts.append(table_for("Outcomes (pct)", "outcomes_pct"))
+	parts.append(table_for("Traction (counts)", "traction"))
+	parts.append(table_for("Human phase (counts)", "human_phase"))
+	parts.append(table_for("Clearance bands (counts)", "clearance_bands"))
+	parts.append(table_for("Outcomes (counts)", "outcomes"))
+	return "\n".join(x for x in parts if x)
 
 def _any_coverage_gap(coverage: Dict[str, Dict[str, float] | Dict[str, int]]) -> Tuple[bool, str]:
-    """
-    Heuristic: if any percentage block has a 0.00% bucket, consider that a 'gap'.
-    Returns (has_gap, hint).
-    """
-    pct_keys = ["traction_pct","human_phase_pct","clearance_bands_pct","outcomes_pct"]
-    for key in pct_keys:
-        sec = coverage.get(key, {})
-        if isinstance(sec, dict):
-            for b, v in sec.items():
-                try:
-                    if float(v) <= 1e-9:
-                        return True, f"{key}:{b}=0%"
-                except Exception:
-                    continue
-    return False, "none detected"
+	"""
+	Heuristic: if any percentage block has a 0.00% bucket, consider that a 'gap'.
+	Returns (has_gap, hint).
+	"""
+	pct_keys = ["traction_pct","human_phase_pct","clearance_bands_pct","outcomes_pct"]
+	for key in pct_keys:
+		sec = coverage.get(key, {})
+		if isinstance(sec, dict):
+			for b, v in sec.items():
+				try:
+					if float(v) <= 1e-9:
+						return True, f"{key}:{b}=0%"
+				except Exception:
+					continue
+	return False, "none detected"
+
+def _render_context(summary: Dict[str, object]) -> str:
+	if not summary:
+		return '<div class="small">No context summary available. (Missing validation.json or older pipeline.)</div>'
+	def li(k, v):
+		return f"<li><b>{k}:</b> {v}</li>"
+	m = summary.get("map", {}) if isinstance(summary.get("map"), dict) else {}
+	r = summary.get("runtime", {}) if isinstance(summary.get("runtime"), dict) else {}
+	h = summary.get("hazards", {}) if isinstance(summary.get("hazards"), dict) else {}
+	tx = summary.get("flags", {}) if isinstance(summary.get("flags"), dict) else {}
+	if isinstance(tx, dict):
+		tx = tx.get("taxonomy", {}) or {}
+
+	parts = ['<div class="grid">']
+	# Map
+	parts.append('<div><h3>Map</h3><ul>')
+	parts.append(li("size_m", m.get("size_m")))
+	parts.append(li("start", m.get("start")))
+	parts.append(li("goal",  m.get("goal")))
+	parts.append('</ul></div>')
+	# Hazards
+	parts.append('<div><h3>Hazards</h3>')
+	tr = h.get("traction_patches", []) if isinstance(h, dict) else []
+	if isinstance(tr, list) and tr:
+		parts.append("<div><b>Traction patches:</b><ul>")
+		for i, p in enumerate(tr):
+			try:
+				zone = p.get("zone")
+				mu = float(p.get("mu"))
+				parts.append(f"<li>#{i+1} zone={zone} mu={mu:.2f}</li>")
+			except Exception:
+				continue
+		parts.append("</ul></div>")
+	hu = h.get("human", []) if isinstance(h, dict) else []
+	if isinstance(hu, list) and hu:
+		parts.append("<div><b>Human crossers:</b><ul>")
+		for i, hh in enumerate(hu):
+			path = hh.get("path", "line")
+			rpm = hh.get("rate_per_min", "default")
+			spd = hh.get("speed_mps", [0.8, 1.4])
+			parts.append(f"<li>#{i+1} path={path} rate_per_min={rpm} speed_mps={spd}</li>")
+		parts.append("</ul></div>")
+	if (not tr) and (not hu):
+		parts.append('<div class="small">None</div>')
+	parts.append('</div>')
+	# Runtime + taxonomy
+	parts.append('<div><h3>Runtime</h3><ul>')
+	parts.append(li("duration_s", r.get("duration_s")))
+	parts.append(li("dt", r.get("dt")))
+	parts.append('</ul><h3>Flags</h3><div>')
+	if isinstance(tx, dict) and tx:
+		parts.append(''.join(f'<span class="tag">{k}={v}</span>' for k, v in tx.items()))
+	else:
+		parts.append('<div class="small">No taxonomy flags.</div>')
+	parts.append('</div></div>')
+	parts.append('</div>')
+	return ''.join(parts)
 
 def generate_report(batch_dir: Path) -> Path:
-    title = batch_dir.name
-    scenario_path = batch_dir / "scenario.yaml"
-    seeds_path = batch_dir / "seeds.json"
-    per_run_dir = batch_dir / "per_run"
-    summary_path = batch_dir / "summary.json"
-    coverage_path = batch_dir / "coverage.json"
+	title = batch_dir.name
+	scenario_path = batch_dir / "scenario.yaml"
+	seeds_path = batch_dir / "seeds.json"
+	per_run_dir = batch_dir / "per_run"
+	coverage_path = batch_dir / "coverage.json"
+	validation_path = batch_dir / "validation.json"
 
-    per_run_digest = _digest_csvs(per_run_dir) if per_run_dir.exists() else "NA"
-    per_run_digest_short = per_run_digest[:12] + "…" if per_run_digest != "NA" else "NA"
-    scenario_sha = _sha256_file(scenario_path) if scenario_path.exists() else "NA"
-    seeds_sha = _sha256_file(seeds_path) if seeds_path.exists() else "NA"
+	per_run_digest = _digest_csvs(per_run_dir) if per_run_dir.exists() else "NA"
+	per_run_digest_short = per_run_digest[:12] + "…" if per_run_digest != "NA" else "NA"
+	scenario_sha = _sha256_file(scenario_path) if scenario_path.exists() else "NA"
+	seeds_sha = _sha256_file(seeds_path) if seeds_path.exists() else "NA"
 
-    manifest = {
-        "per_run_digest": per_run_digest,
-        "scenario_sha256": scenario_sha,
-        "seeds_sha256": seeds_sha,
-        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-    }
-    manifest_path = batch_dir / "manifest.json"
-    try:
-        if manifest_path.exists():
-            old = json.loads(manifest_path.read_text(encoding="utf-8"))
-            old.update(manifest)
-            manifest = old
-        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+	# manifest.json best-effort update
+	manifest = {
+		"per_run_digest": per_run_digest,
+		"scenario_sha256": scenario_sha,
+		"seeds_sha256": seeds_sha,
+		"generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+	}
+	manifest_path = batch_dir / "manifest.json"
+	try:
+		if manifest_path.exists():
+			old = json.loads(manifest_path.read_text(encoding="utf-8"))
+			old.update(manifest)
+			manifest = old
+		manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+	except Exception:
+		pass
 
-    success, coll_human, other, mincls, ttg = _load_counts_and_metrics(batch_dir)
-    runs = success + coll_human + other
+	success, coll_human, other, mincls, ttg = _load_counts_and_metrics(batch_dir)
+	runs = success + coll_human + other
 
-    # Load coverage.json if present
-    coverage: Dict[str, Dict] = {}
-    if coverage_path.exists():
-        try:
-            coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
-        except Exception:
-            coverage = {}
-    coverage_html = _render_coverage_table(coverage)
+	# coverage.json (optional)
+	coverage: Dict[str, Dict] = {}
+	if coverage_path.exists():
+		try:
+			coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+		except Exception:
+			coverage = {}
+	coverage_html = _render_coverage_table(coverage)
 
-    # Acceptance checklist computation
-    total = max(1, runs)
-    fail_rate = 100.0 * (coll_human + other) / total
-    chk_failrate_cls = "pass" if fail_rate >= 10.0 else "fail"
-    chk_repro_cls = "pass" if per_run_digest != "NA" else "fail"
-    has_gap, gap_hint = _any_coverage_gap(coverage)
-    chk_gap_cls = "pass" if has_gap else "warn"
+	# validation.json (optional)
+	schema_status = "unknown"
+	schema_hint = ""
+	context_summary: Dict[str, object] = {}
+	if validation_path.exists():
+		try:
+			v = json.loads(validation_path.read_text(encoding="utf-8"))
+			ok = bool(v.get("ok", False))
+			errs = v.get("errors", []) or []
+			context_summary = v.get("context_summary", {}) or {}
+			schema_status = "PASS" if ok else "FAIL"
+			if not ok and errs:
+				schema_hint = " — " + "; ".join(errs[:3]) + (" …" if len(errs) > 3 else "")
+		except Exception:
+			schema_status = "unreadable"
 
-    # Calibration stub (NA until wired to anchors)
-    calib_r2 = "NA"
-    calib_kl = "NA"
-    calib_ece = "NA"
+	context_html = _render_context(context_summary)
 
-    svg_outcomes = _svg_bar_chart([success, coll_human, other],
-                                  ["success","collision","other"],
-                                  colors=["#10b981","#ef4444","#9ca3af"])
-    svg_clearance = _svg_hist(mincls, bins=16, low=0.0, high=2.0, color="#60a5fa")
-    svg_ttg = _svg_hist(ttg, bins=16, low=0.0, high=120.0, color="#f59e0b")
+	# Acceptance checklist computation
+	total = max(1, runs)
+	fail_rate = 100.0 * (coll_human + other) / total
+	chk_failrate_cls = "pass" if fail_rate >= 10.0 else "fail"
+	chk_repro_cls = "pass" if per_run_digest != "NA" else "fail"
+	has_gap, gap_hint = _any_coverage_gap(coverage)
+	chk_gap_cls = "pass" if has_gap else "warn"
 
-    gallery_items = []
-    for cap, rel in _pick_gallery(batch_dir, prefer_failures=True, limit=8):
-        gallery_items.append(f'<figure><img src="{rel}"/><figcaption class="small">{cap}</figcaption></figure>')
-    gallery_html = "\n".join(gallery_items) if gallery_items else '<div class="small">No sample frames available. Re-run with frames enabled.</div>'
+	# Calibration stub (NA until wired to anchors)
+	calib_r2 = "NA"
+	calib_kl = "NA"
+	calib_ece = "NA"
 
-    repro_badge = '<span class="badge">Repro stamp ready</span>' if per_run_digest != "NA" else '<span class="badge" style="background:#fee2e2;color:#7f1d1d;">Repro stamp missing</span>'
+	svg_outcomes = _svg_bar_chart([success, coll_human, other],
+	                              ["success","collision","other"],
+	                              colors=["#10b981","#ef4444","#9ca3af"])
+	svg_clearance = _svg_hist(mincls, bins=16, low=0.0, high=2.0, color="#60a5fa")
+	svg_ttg = _svg_hist(ttg, bins=16, low=0.0, high=120.0, color="#f59e0b")
 
-    html = HTML_TEMPLATE.format(
-        title=title,
-        scenario_name=title,
-        runs=runs,
-        generated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-        per_run_digest=per_run_digest,
-        per_run_digest_short=per_run_digest_short,
-        scenario_sha=scenario_sha,
-        seeds_sha=seeds_sha,
-        repro_badge=repro_badge,
-        success=success,
-        collision_human=coll_human,
-        other=other,
-        svg_outcomes=svg_outcomes,
-        svg_clearance=svg_clearance,
-        svg_ttg=svg_ttg,
-        coverage_html=coverage_html,
-        calib_r2=calib_r2,
-        calib_kl=calib_kl,
-        calib_ece=calib_ece,
-        chk_failrate_cls=chk_failrate_cls,
-        chk_repro_cls=chk_repro_cls,
-        chk_gap_cls=chk_gap_cls,
-        gap_hint=gap_hint,
-        fail_rate=fail_rate,
-        gallery=gallery_html,
-    )
+	gallery_items = []
+	for cap, rel in _pick_gallery(batch_dir, prefer_failures=True, limit=8):
+		gallery_items.append(f'<figure><img src="{rel}"/><figcaption class="small">{cap}</figcaption></figure>')
+	gallery_html = "\n".join(gallery_items) if gallery_items else '<div class="small">No sample frames available. Re-run with frames enabled.</div>'
 
-    out_path = batch_dir / "report.html"
-    out_path.write_text(html, encoding="utf-8")
-    return out_path
+	repro_badge = '<span class="badge">Repro stamp ready</span>' if per_run_digest != "NA" else '<span class="badge" style="background:#fee2e2;color:#7f1d1d;">Repro stamp missing</span>'
+
+	html = HTML_TEMPLATE.format(
+		title=title,
+		scenario_name=title,
+		runs=runs,
+		generated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+		per_run_digest=per_run_digest,
+		per_run_digest_short=per_run_digest_short,
+		scenario_sha=scenario_sha,
+		seeds_sha=seeds_sha,
+		repro_badge=repro_badge,
+		# context block:
+		schema_status=schema_status,
+		schema_hint=("" if not schema_hint else f"<span class='small'> {schema_hint}</span>"),
+		context_html=context_html,
+		# charts & sections:
+		success=success,
+		collision_human=coll_human,
+		other=other,
+		svg_outcomes=svg_outcomes,
+		svg_clearance=svg_clearance,
+		svg_ttg=svg_ttg,
+		coverage_html=coverage_html,
+		calib_r2=calib_r2,
+		calib_kl=calib_kl,
+		calib_ece=calib_ece,
+		chk_failrate_cls=chk_failrate_cls,
+		chk_repro_cls=chk_repro_cls,
+		chk_gap_cls=chk_gap_cls,
+		gap_hint=gap_hint,
+		fail_rate=fail_rate,
+		gallery=gallery_html,
+	)
+
+	out_path = batch_dir / "report.html"
+	out_path.write_text(html, encoding="utf-8")
+	return out_path
 
 def main():
-    import sys
-    if len(sys.argv) != 2:
-        print("Usage: python -m edgesim.report_html runs/<batch_dir>")
-        raise SystemExit(2)
-    batch_dir = Path(sys.argv[1]).resolve()
-    if not batch_dir.exists():
-        print(f"Batch dir not found: {batch_dir}")
-        raise SystemExit(2)
-    out = generate_report(batch_dir)
-    print(f"[OK] Wrote {out}")
+	import sys
+	if len(sys.argv) != 2:
+		print("Usage: python -m edgesim.report_html runs/<batch_dir>")
+		raise SystemExit(2)
+	batch_dir = Path(sys.argv[1]).resolve()
+	if not batch_dir.exists():
+		print(f"Batch dir not found: {batch_dir}")
+		raise SystemExit(2)
+	out = generate_report(batch_dir)
+	print(f"[OK] Wrote {out}")
 
 if __name__ == "__main__":
-    main()
+	main()
