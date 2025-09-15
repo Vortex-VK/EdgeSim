@@ -13,16 +13,22 @@ def _update_count(d: Dict[str,int], k: str, v: int=1) -> None:
     d[k] = d.get(k, 0) + v
 
 def _last_min_clearance(csv_path: Path) -> float:
-    # scan file once, track minimum across rows (column 6)
+    """
+    Scan file once, track minimum across rows.
+    Prefer new fields: min_clearance_geom, then min_clearance_lidar,
+    then fall back to legacy 'min_clearance' or column index 6.
+    """
     mn = math.inf
     with csv_path.open("r", newline="", encoding="utf-8") as f:
         r = csv.reader(f)
         header = next(r, [])
-        # find index of min_clearance if header differs
-        try:
-            idx = header.index("min_clearance")
-        except ValueError:
-            idx = 6  # fallback to your original position
+        idx = None
+        for name in ("min_clearance_geom", "min_clearance_lidar", "min_clearance"):
+            if name in header:
+                idx = header.index(name)
+                break
+        if idx is None:
+            idx = 6  # legacy positional fallback
         for row in r:
             try:
                 mn = min(mn, float(row[idx]))
@@ -63,22 +69,21 @@ def build_coverage(per_run_dir: Path) -> Dict[str, Any]:
             r = csv.reader(f)
             header = next(r, [])
             # figure out indices
-            idx_event = header.index("event") if "event" in header else 7
+            idx_event = header.index("event") if "event" in header else 8  # shifted with new header
             idx_in_wet = header.index("in_wet") if "in_wet" in header else None
             idx_hphase = header.index("human_phase") if "human_phase" in header else None
 
             for row in r:
                 # traction
-                if idx_in_wet is not None:
+                if idx_in_wet is not None and idx_in_wet < len(row):
                     try:
                         if int(row[idx_in_wet]) == 1:
                             ever_wet = True
-                        # else stays as observed
                     except Exception:
                         pass
 
                 # human phase
-                if idx_hphase is not None:
+                if idx_hphase is not None and idx_hphase < len(row):
                     hp = row[idx_hphase]
                     if hp == "running": ever_running = True
                     if hp == "fallen":  ever_fallen = True
@@ -89,7 +94,8 @@ def build_coverage(per_run_dir: Path) -> Dict[str, Any]:
                     outcome = "collision_human"
                 elif ev == "success":
                     outcome = "success"
-                # (you also log "success" explicitly—if present it will be the last line and keep outcome)
+                elif ev == "other":
+                    outcome = "other"
 
         # tally
         _update_count(counts["traction"], "wet_encountered" if ever_wet else "dry_only")
