@@ -1,7 +1,18 @@
+# EdgeSim V0 — sim_one.py (full)
+# Changes vs your last version:
+# - Waypoints use CELL CENTERS to avoid illegal targets along borders.
+# - Stall detector: if no goal-distance improvement for STALL_GRACE sec -> _replan("stall", ...).
+# - Human fallback: if no crossing by 5s, start 1 crossing so taxonomy isn't empty (then same slip/fall logic).
+# - Safe inits for v_cmd, w_cmd, min_clear_geom to avoid unbound variables in early logs.
+# - Portable LiDAR: rayTestBatch without collisionFilterMask (Windows overflow fix) + per-ray fallback.
+# - Realistic sensors (Step 3): LiDAR 360@10 Hz with 1–2% dropout, Gaussian noise; latency-jitter queue (0–50ms);
+#   odometry with drift (bias + noise). We log min_clearance_lidar and min_clearance_geom.
+# - CSV columns match spec: t,x,y,yaw,v_cmd,w_cmd,min_clearance_lidar,min_clearance_geom,event,event_detail,in_wet,human_phase,near_stop
+
 from __future__ import annotations
 from typing import Dict, Any, List, Tuple
 from pathlib import Path
-import csv, math, time
+import csv, math, time, random
 
 import numpy as np
 import pybullet as p
@@ -104,7 +115,8 @@ def _to_cell(px: float, py: float, res: float, grid: List[List[int]]) -> tuple[i
 	return ix, iy
 
 def _to_world(ix: int, iy: int, res: float) -> tuple[float, float]:
-	return (ix * res, iy * res)
+	# Center of cell (prevents waypoints at border clamp)
+	return ((ix + 0.5) * res, (iy + 0.5) * res)
 
 def _cells_to_waypoints(path_cells: List[Tuple[int,int]], res: float, min_gap: float = 0.5) -> List[Tuple[float,float]]:
 	waypoints: List[Tuple[float,float]] = []
@@ -127,6 +139,91 @@ def _fallen_human_aabb(hid: int | None) -> Tuple[float,float,float,float] | None
 		return (a0[0], a0[1], a1[0], a1[1])
 	except Exception:
 		return None
+
+# ---------- Sensors (LiDAR, Odom, latency jitter) ----------
+
+class _LidarSim:
+	def __init__(self, beams: int = 360, hz: float = 10.0, max_range: float = 8.0,
+	             dropout_pct_range=(0.01, 0.02), noise_sigma: float = 0.02,
+	             jitter_ms_max: int = 50):
+		self.beams = int(beams)
+		self.hz = float(hz)
+		self.dt = 1.0 / max(1e-6, self.hz)
+		self.max_range = float(max_range)
+		self.dropout_low, self.dropout_high = float(dropout_pct_range[0]), float(dropout_pct_range[1])
+		self.noise_sigma = float(noise_sigma)
+		self.next_update_t = 0.0
+		self.angles = np.linspace(-math.pi, math.pi, self.beams, endpoint=False)
+		self._rng = np.random.default_rng()
+		# latency jitter queue (timestamps when readings become available)
+		self._queue: List[Tuple[float, np.ndarray]] = []
+		self._jitter_s = float(jitter_ms_max) / 1000.0
+
+	def maybe_update(self, t: float, x: float, y: float, yaw: float, sensor_z: float, ignore_ids: set[int]) -> None:
+		if t < self.next_update_t:
+			return
+		self.next_update_t = t + self.dt
+
+		# Ray origins/ends for all beams
+		cos_yaw, sin_yaw = math.cos(yaw), math.sin(yaw)
+		dir_x = np.cos(self.angles); dir_y = np.sin(self.angles)
+		rot_x = cos_yaw * dir_x - sin_yaw * dir_y
+		rot_y = sin_yaw * dir_x + cos_yaw * dir_y
+
+		origins = [[x, y, sensor_z]] * self.beams
+		ends = [[x + float(rx) * self.max_range, y + float(ry) * self.max_range, sensor_z] for rx, ry in zip(rot_x, rot_y)]
+
+		# Portable batch rays
+		try:
+			results = p.rayTestBatch(origins, ends)
+		except TypeError:
+			results = []
+			for ro, re in zip(origins, ends):
+				r = p.rayTest(ro, re)
+				results.append(r[0] if r else (-1, -1, 1.0, [0, 0, 0]))
+
+		dists = np.empty(self.beams, dtype=float)
+		for i, r in enumerate(results):
+			hit_uid = r[0]
+			hit_frac = r[2]
+			if hit_uid in ignore_ids or hit_uid == -1:
+				d = self.max_range
+			else:
+				d = float(hit_frac) * self.max_range
+			dists[i] = d
+
+		# Apply dropout & Gaussian noise
+		dropout_pct = float(self._rng.uniform(self.dropout_low, self.dropout_high))
+		if dropout_pct > 0.0:
+			k = max(1, int(round(dropout_pct * self.beams)))
+			idx = self._rng.choice(self.beams, size=k, replace=False)
+			dists[idx] = self.max_range
+		if self.noise_sigma > 0:
+			dists = np.clip(dists + self._rng.normal(0.0, self.noise_sigma, size=self.beams), 0.0, self.max_range)
+
+		# Push to latency queue with jitter
+		avail_t = t + float(self._rng.uniform(0.0, self._jitter_s))
+		self._queue.append((avail_t, dists))
+
+	def try_pop_ready(self, t: float) -> np.ndarray | None:
+		if not self._queue:
+			return None
+		# pop left-most ready sample
+		self._queue.sort(key=lambda x: x[0])
+		if self._queue[0][0] <= t:
+			return self._queue.pop(0)[1]
+		return None
+
+class _OdomSim:
+	def __init__(self, bias_v: float = 0.02, bias_w: float = 0.01, noise_v: float = 0.02, noise_w: float = 0.01):
+		self.bias_v = float(bias_v); self.bias_w = float(bias_w)
+		self.noise_v = float(noise_v); self.noise_w = float(noise_w)
+		self.rng = np.random.default_rng()
+
+	def apply(self, v_cmd: float, w_cmd: float) -> Tuple[float, float]:
+		v = v_cmd * (1.0 + self.bias_v) + float(self.rng.normal(0.0, self.noise_v))
+		w = w_cmd * (1.0 + self.bias_w) + float(self.rng.normal(0.0, self.noise_w))
+		return v, w
 
 # ---------- main single-run ----------
 
@@ -225,7 +322,7 @@ def run_one(
 		rows: List[List[float | str]] = []
 		header = [
 			"t", "x", "y", "yaw", "v_cmd", "w_cmd",
-			"min_clearance_geom", "min_clearance",
+			"min_clearance_lidar", "min_clearance_geom",
 			"event", "event_detail", "in_wet", "human_phase", "near_stop"
 		]
 
@@ -293,11 +390,13 @@ def run_one(
 		timeout = float(scn.get("runtime", {}).get("duration_s", 90.0))
 		min_clear_legacy = 10.0
 		min_clear_geom = 10.0
+		v_cmd = 0.0
+		w_cmd = 0.0
 
-		# Replan triggers
-		MINCLR_THRESH = float(scn.get("planner", {}).get("minclr_replan_m", 0.35))
-		MINCLR_GRACE = float(scn.get("planner", {}).get("minclr_grace_s", 0.6))
-		minclr_below_since = None  # type: float | None
+		# Stall detection toward goal
+		best_goal_dist = float("inf")
+		last_progress_at = 0.0
+		STALL_GRACE = float(scn.get("planner", {}).get("stall_grace_s", 3.0))
 
 		def _human_phase_str() -> str:
 			if fallen_human_id is not None:
@@ -348,9 +447,16 @@ def run_one(
 				waypoints = new_wps
 				wp_idx = 0
 				rows.append([t, cur_x, cur_y, yaw, v_cmd, w_cmd,
-							 min_clear_geom, min_clear_legacy,
+							 min_clear_lidar if 'min_clear_lidar' in locals() else 10.0, min_clear_geom,
 							 "replan", reason, int(_compute_in_wet(cur_x, cur_y)),
 							 _human_phase_str(), int(v_cmd < 0.2)])
+
+		# Sensors
+		lidar_hz = float(((scn.get("sensors", {}) or {}).get("lidar", {}) or {}).get("hz", 10.0))
+		lidar = _LidarSim(beams=360, hz=lidar_hz, max_range=8.0, dropout_pct_range=(0.01, 0.02), noise_sigma=0.02, jitter_ms_max=50)
+		odom = _OdomSim(bias_v=0.02, bias_w=0.01, noise_v=0.02, noise_w=0.01)
+		sensor_z = radius * 0.9
+		min_clear_lidar = 10.0
 
 		# Main loop
 		while t < timeout:
@@ -393,8 +499,15 @@ def run_one(
 				elif in_front and d < SLOW_DIST:
 					v_cmd = min(v_cmd, 0.6)
 
-			# Human crossing logic
+			# Human crossing logic (fallback + distance trigger)
 			if use_human and human_id is not None and fallen_human_id is None:
+				# Fallback trigger at 5s
+				if (not crossing_active) and (t >= 5.0):
+					crossing_active = True
+					crossing_started_at = t
+					start_y = border
+					p.resetBasePositionAndOrientation(human_id, [cross_x, start_y, 1.05], p.getQuaternionFromEuler([0, 0, 0]))
+
 				if not crossing_active and abs(x - cross_x) < trigger_distance:
 					crossing_active = True
 					crossing_started_at = t
@@ -412,7 +525,7 @@ def run_one(
 						fallen_human_id = human_id
 						human_id = None
 						rows.append([t, x, y, yaw, v_cmd, w_cmd,
-									min_clear_geom, min_clear_legacy,
+									min_clear_lidar, min_clear_geom,
 									"slip", f"{cross_x:.2f},{yh:.2f}", int(_compute_in_wet(x, y)),
 									"fallen", int(v_cmd < 0.2)])
 						# immediate replan on fallen hazard
@@ -421,10 +534,25 @@ def run_one(
 					if human_id is not None and yh >= (Ly - border - 1e-3):
 						crossing_active = False
 
+			# Sensors update
+			lidar_ignore = ignored_for_collision | {amr}
+			if human_id is not None:
+				lidar_ignore.add(human_id)
+			if fallen_human_id is not None:
+				lidar_ignore.add(fallen_human_id)
+
+			lidar.maybe_update(t, x, y, yaw, sensor_z, lidar_ignore)
+			lr = lidar.try_pop_ready(t)
+			if lr is not None:
+				min_clear_lidar = float(np.min(lr))
+
+			# Use odometry drifted cmd for integration (simple)
+			ov, ow = odom.apply(v_cmd, w_cmd)
+
 			# Integrate motion
-			new_yaw = yaw + w_cmd * dt
-			new_x = x + (v_cmd * math.cos(new_yaw)) * dt
-			new_y = y + (v_cmd * math.sin(new_yaw)) * dt
+			new_yaw = yaw + ow * dt
+			new_x = x + (ov * math.cos(new_yaw)) * dt
+			new_y = y + (ov * math.sin(new_yaw)) * dt
 			new_x = max(border, min(Lx - border, new_x))
 			new_y = max(border, min(Ly - border, new_y))
 			p.resetBasePositionAndOrientation(amr, [new_x, new_y, radius * 0.5], p.getQuaternionFromEuler([0, 0, new_yaw]))
@@ -436,27 +564,36 @@ def run_one(
 					success = True
 					in_wet = int(_compute_in_wet(new_x, new_y))
 					rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd,
-								min_clear_geom, min_clear_legacy,
+								min_clear_lidar, min_clear_geom,
 								"success", "", in_wet, _human_phase_str(), int(v_cmd < 0.2)])
 					save, _ = should_save_frames(batch_root, "success")
 					if save: _capture_frame(batch_root, run_dir_name, cam_conf, idx=0)
 					break
 
-			# Clearance metrics
+			# Clearance metrics (geom)
 			cur_geom = _min_clear_geom(new_x, new_y, new_y)
 			min_clear_geom = min(min_clear_geom, cur_geom)
-			cur_legacy = _clearance_to_aabbs(new_x, new_y, static_aabbs)
-			min_clear_legacy = min(min_clear_legacy, cur_legacy)
 
-			# Low-clearance replan (grace)
+			# Stall detection & replan
+			goal_dist = math.hypot(goal[0] - new_x, goal[1] - new_y)
+			if goal_dist < (best_goal_dist - 0.1):
+				best_goal_dist = goal_dist
+				last_progress_at = t
+			elif (t - last_progress_at) >= STALL_GRACE:
+				_replan("stall", new_x, new_y)
+				last_progress_at = t
+
+			# Low-clearance legacy (kept; optional minclr triggers if configured)
+			MINCLR_THRESH = float(scn.get("planner", {}).get("minclr_replan_m", 0.35))
+			MINCLR_GRACE = float(scn.get("planner", {}).get("minclr_grace_s", 0.6))
 			if cur_geom < MINCLR_THRESH:
-				if minclr_below_since is None:
+				if 'minclr_below_since' not in locals() or minclr_below_since is None:
 					minclr_below_since = t
 				elif (t - minclr_below_since) >= MINCLR_GRACE:
 					_replan("low_clearance", new_x, new_y)
 					minclr_below_since = None
 			else:
-				minclr_below_since = None
+				minclr_below_since = None  # type: ignore
 
 			# Contacts & terminal outcomes
 			raw_contacts = p.getContactPoints(bodyA=amr)
@@ -477,7 +614,7 @@ def run_one(
 			if human_contact:
 				in_wet = int(_compute_in_wet(new_x, new_y))
 				rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd,
-							0.0, 0.0,
+							min_clear_lidar, min_clear_geom,
 							"collision_human", "1", in_wet, _human_phase_str(), int(v_cmd < 0.2)])
 				save, _ = should_save_frames(batch_root, "collision_human")
 				if save: _capture_frame(batch_root, run_dir_name, cam_conf, idx=0)
@@ -485,19 +622,26 @@ def run_one(
 			elif nonhuman_contact_count > 0:
 				in_wet = int(_compute_in_wet(new_x, new_y))
 				rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd,
-							min_clear_geom, min_clear_legacy,
+							min_clear_lidar, min_clear_geom,
 							"contact_nonhuman", str(nonhuman_contact_count), in_wet, _human_phase_str(), int(v_cmd < 0.2)])
 
 			# Regular log row
 			in_wet = int(_compute_in_wet(new_x, new_y))
 			rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd,
-						min_clear_geom, min_clear_legacy,
+						min_clear_lidar, min_clear_geom,
 						"", "", in_wet, _human_phase_str(), int(v_cmd < 0.2)])
 
 			# Step sim
 			p.stepSimulation()
 			if realtime: time.sleep(dt)
 			t += dt
+
+		# If we exited by timeout, write a terminal row if not already written
+		if not success and (not rows or (rows and not rows[-1][8])):
+			in_wet = int(_compute_in_wet(new_x, new_y))
+			rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd,
+						min_clear_lidar, min_clear_geom,
+						"other", "timeout", in_wet, _human_phase_str(), int(v_cmd < 0.2)])
 
 		# Write CSV
 		_write_csv(out_dir / "run_one.csv", header, rows)

@@ -23,13 +23,17 @@ h2 {{ margin-top: 28px; }}
 .svg {{ width: 100%; height: 160px; border: 1px solid #eee; border-radius: 8px; background: #fafafa; }}
 .gallery img {{ width: 100%; height: auto; border-radius: 8px; border:1px solid #eee; }}
 footer {{ margin-top: 24px; color:#666; font-size:12px; }}
-.kv {{ display:grid; grid-template-columns: 160px 1fr; gap:8px; }}
+.kv {{ display:grid; grid-template-columns: 180px 1fr; gap:8px; }}
 .kv div:nth-child(odd) {{ color:#555; }}
 .tag {{ display:inline-block; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:999px; padding:2px 8px; margin:2px; font-size:12px; }}
 .acclist li {{ margin:6px 0; }}
 .pass {{ color:#065f46; }}
 .fail {{ color:#b91c1c; }}
 .warn {{ color:#92400e; }}
+.m_ok {{ color:#065f46; font-weight:600; }}
+.m_mid {{ color:#92400e; font-weight:600; }}
+.m_bad {{ color:#b91c1c; font-weight:600; }}
+.legend span {{ display:inline-block; margin-right:10px; font-size:12px; }}
 </style>
 </head>
 <body>
@@ -83,13 +87,18 @@ footer {{ margin-top: 24px; color:#666; font-size:12px; }}
 </div>
 
 <div class="card">
-  <h2>Calibration (stub)</h2>
-  <div class="kv">
+  <h2>Calibration</h2>
+  <div class="legend small">
+    <span><b>R²</b> (↑ good): green ≥ 0.90, yellow 0.70–0.90, red &lt; 0.70</span>
+    <span><b>KL</b> (↓ good): green ≤ 0.05, yellow 0.05–0.15, red &gt; 0.15</span>
+    <span><b>ECE</b> (↓ good): green ≤ 0.02, yellow 0.02–0.06, red &gt; 0.06</span>
+  </div>
+  <div class="kv" style="margin-top:8px;">
     <div>R² (speed profile)</div><div>{calib_r2}</div>
     <div>KL (obstacle range hist)</div><div>{calib_kl}</div>
     <div>ECE (failure prob)</div><div>{calib_ece}</div>
   </div>
-  <div class="small" style="margin-top:8px;">This is a V0 placeholder. Pair with a small real anchor log to compute metrics; auto-tuning loop lands in V0.1.</div>
+  <div class="small" style="margin-top:8px;">Provide anchors via <span class="code">edgesim calibrate --anchors anchors.csv --site my_site --run runs/…</span> to populate this section.</div>
 </div>
 
 <div class="card">
@@ -116,9 +125,6 @@ def _digest_csvs(per_run_dir: Path) -> str:
 	return h.hexdigest()
 
 def _parse_min_clearance(row: Dict[str, str]) -> float | None:
-	"""
-	Prefer new fields, fall back to legacy.
-	"""
 	for k in ("min_clearance_geom", "min_clearance_lidar", "min_clearance"):
 		if k in row and row[k] != "":
 			try:
@@ -128,7 +134,6 @@ def _parse_min_clearance(row: Dict[str, str]) -> float | None:
 	return None
 
 def _load_counts_and_metrics(batch_dir: Path) -> Tuple[int, int, int, List[float], List[float]]:
-	"""Return (success, coll_human, other, min_clearances, ttg_success)."""
 	per_run = batch_dir / "per_run"
 	success = coll_human = other = 0
 	mincls: List[float] = []
@@ -141,17 +146,14 @@ def _load_counts_and_metrics(batch_dir: Path) -> Tuple[int, int, int, List[float
 			last_min = math.inf
 			end_event = ""
 			for row in r:
-				# time
 				try:
 					t = float(row.get("t", "") or "0")
 					last_t = t
 				except Exception:
 					pass
-				# min-clearance
 				mc = _parse_min_clearance(row)
 				if mc is not None and mc < last_min:
 					last_min = mc
-				# terminal event
 				ev = row.get("event", "")
 				if ev:
 					end_event = ev
@@ -287,10 +289,6 @@ def _render_coverage_table(coverage: Dict[str, Dict[str, float] | Dict[str, int]
 	return "\n".join(x for x in parts if x)
 
 def _any_coverage_gap(coverage: Dict[str, Dict[str, float] | Dict[str, int]]) -> Tuple[bool, str]:
-	"""
-	Heuristic: if any percentage block has a 0.00% bucket, consider that a 'gap'.
-	Returns (has_gap, hint).
-	"""
 	pct_keys = ["traction_pct","human_phase_pct","clearance_bands_pct","outcomes_pct"]
 	for key in pct_keys:
 		sec = coverage.get(key, {})
@@ -327,10 +325,10 @@ def _render_context(summary: Dict[str, object]) -> str:
 	tr = h.get("traction_patches", []) if isinstance(h, dict) else []
 	if isinstance(tr, list) and tr:
 		parts.append("<div><b>Traction patches:</b><ul>")
-		for i, p in enumerate(tr):
+		for i, pz in enumerate(tr):
 			try:
-				zone = p.get("zone")
-				mu = float(p.get("mu"))
+				zone = pz.get("zone")
+				mu = float(pz.get("mu"))
 				parts.append(f"<li>#{i+1} zone={zone} mu={mu:.2f}</li>")
 			except Exception:
 				continue
@@ -359,6 +357,18 @@ def _render_context(summary: Dict[str, object]) -> str:
 	parts.append('</div></div>')
 	parts.append('</div>')
 	return ''.join(parts)
+
+def _badge_for(metric: str, val: float) -> str:
+	if metric == "r2":
+		if not (val == val): return '<span class="small">NA</span>'
+		cls = "m_ok" if val >= 0.90 else ("m_mid" if val >= 0.70 else "m_bad")
+		return f'<span class="{cls}">{val:.3f}</span>'
+	if metric in ("kl","ece"):
+		if not (val == val): return '<span class="small">NA</span>'
+		thr = (0.05, 0.15) if metric == "kl" else (0.02, 0.06)
+		cls = "m_ok" if val <= thr[0] else ("m_mid" if val <= thr[1] else "m_bad")
+		return f'<span class="{cls}">{val:.3f}</span>'
+	return '<span class="small">NA</span>'
 
 def generate_report(batch_dir: Path) -> Path:
 	title = batch_dir.name
@@ -428,10 +438,19 @@ def generate_report(batch_dir: Path) -> Path:
 	has_gap, gap_hint = _any_coverage_gap(coverage)
 	chk_gap_cls = "pass" if has_gap else "warn"
 
-	# Calibration stub (NA until wired to anchors)
-	calib_r2 = "NA"
-	calib_kl = "NA"
-	calib_ece = "NA"
+	# Calibration metrics (new)
+	calib_r2 = '<span class="small">NA</span>'
+	calib_kl = '<span class="small">NA</span>'
+	calib_ece = '<span class="small">NA</span>'
+	cal_path = batch_dir / "calibration.json"
+	if cal_path.exists():
+		try:
+			cal = json.loads(cal_path.read_text(encoding="utf-8"))
+			if "r2" in cal:  calib_r2  = _badge_for("r2",  float(cal["r2"]))
+			if "kl" in cal:  calib_kl  = _badge_for("kl",  float(cal["kl"]))
+			if "ece" in cal: calib_ece = _badge_for("ece", float(cal["ece"]))
+		except Exception:
+			pass
 
 	svg_outcomes = _svg_bar_chart([success, coll_human, other],
 	                              ["success","collision","other"],
