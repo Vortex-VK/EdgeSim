@@ -1,0 +1,45 @@
+{
+  "site": "EdgeCases",
+  "metrics": { "r2": 0.65, "kl": 0.01, "ece": 0.03 },
+  "tuned": {
+    "lidar":   { "noise_sigma": 0.03, "dropout": 0.02, "latency_ms_max": 80 },
+    "odom":    { "bias_v": 0.02, "bias_w": 0.02 },
+
+    "traction": { "mu_wet_min": 0.30, "mu_wet_max": 0.45 },
+
+    "human": {
+      "slip_prob": 0.50,
+      "slip_min_exposure_s": 0.30,
+      "replan_on_fall_p": 0.35,
+      "fall_duration_s": 8.0
+    },
+
+    "brake": { "stop_dist_m": 0.80, "slow_dist_m": 1.90, "stop_hold_s": 0.70 },
+
+    "ensure_wet_corridor_pct": 0.70,
+    "ensure_wet_corridor_width_m": 1.20,
+
+    "injectors": {
+      "lidar_blackout": {
+        "p": 0.60,
+        "cx": 10.0, "cy": 10.0, "trigger_radius": 2.5,
+        "duration_s": 5.5, "sector_deg": 80.0, "sector_offset_deg": 15.0
+      },
+      "falling_object": {
+        "p": 0.70,
+        "drop_x": 8.0, "drop_y": 10.0, "drop_z": 3.8,
+        "half_extents": [0.25, 0.25, 0.25],
+        "mass": 2.0, "restitution": 0.2, "lateral_mu": 0.6,
+        "shatter_on_impact": true,
+        "puddle_mu": 0.26,
+        "puddle_half": [2.0, 1.0]
+      },
+      "thrown_object": {
+        "p": 0.50,
+        "origin": [6.0, 3.0], "target": [6.0, 17.0],
+        "z0": 1.2, "speed_mps": 6.0, "radius": 0.12,
+        "mass": 0.5, "restitution": 0.3, "launch_within_r": 4.0
+      }
+    }
+  }
+}

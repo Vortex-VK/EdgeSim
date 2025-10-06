@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, json, hashlib
+import argparse, json, hashlib, os
 from pathlib import Path
 
 from .io_utils import RUNS_ROOT, ensure_dir, write_json, write_yaml, write_text
@@ -14,11 +14,13 @@ except Exception:
     run_batch = None  # type: ignore
 
 try:
-    from .metrics import aggregate, write_summary, calibrate_from_anchors
+    from .metrics import aggregate, write_summary, calibrate_from_anchors, write_site_profile, write_calibration_json
 except Exception:
     aggregate = None  # type: ignore
     write_summary = None  # type: ignore
     calibrate_from_anchors = None  # type: ignore
+    write_site_profile = None  # type: ignore
+    write_calibration_json = None  # type: ignore
 
 try:
     from .reporter import write_report
@@ -102,6 +104,10 @@ def cmd_run_batch(args: argparse.Namespace) -> int:
     seed_base: int = int(args.seed)
     profile: str = args.profile
 
+    # If user specified a site profile, propagate via env so deep code can pick it up
+    if getattr(args, "site", None):
+        os.environ["EDGESIM_SITE"] = str(args.site)
+
     # Parse and prep
     scn = prompt_to_scenario(prompt, n_runs=n_runs)
     run_dir = _make_run_dir(prompt, args.name)
@@ -154,6 +160,11 @@ def cmd_run_one(args: argparse.Namespace) -> int:
     prompt: str = args.prompt
     gui: bool = bool(args.gui)
     realtime: bool = bool(args.realtime)
+
+    # Pass site via env if provided
+    if getattr(args, "site", None):
+        os.environ["EDGESIM_SITE"] = str(args.site)
+
     scn = prompt_to_scenario(prompt, n_runs=1)
     run_dir = _make_run_dir(prompt, args.name)
     _write_core_files(run_dir, prompt, 1, args.seed, scn)
@@ -221,31 +232,98 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
         raise SystemExit(f"anchors CSV not found: {anchors_path}")
 
     site: str = args.site
-    site_profiles = RUNS_ROOT.parent / "site_profiles"
+    site_profiles = (RUNS_ROOT.parent / "site_profiles").resolve()
     ensure_dir(site_profiles)
 
     metrics = calibrate_from_anchors(anchors_path)
-    site_obj = {"site": site, "anchors": str(anchors_path), "metrics": metrics}
-
-    # write site profile
-    site_profiles.mkdir(parents=True, exist_ok=True)
-    site_path = site_profiles / f"{site}.json"
-    write_json(site_path, site_obj)
+    # write site profile (with tuned defaults derived from metrics)
+    site_path = write_site_profile(site, metrics, anchors_path=anchors_path) if write_site_profile else (site_profiles / f"{site}.json")
 
     # optionally mirror into a batch dir so the report can render it
+    batch_dir: Path | None = None
     if args.run is not None:
         batch_dir = Path(args.run).resolve()
         if not batch_dir.exists():
             raise SystemExit(f"--run path not found: {batch_dir}")
-        write_json(batch_dir / "calibration.json", metrics)
+        if write_calibration_json:
+            write_calibration_json(batch_dir, site, anchors_path, metrics)
+        else:
+            write_json(batch_dir / "calibration.json", {"site": site, "anchors": str(anchors_path), "metrics": metrics})
 
     print(f"[EdgeSim] Calibrated site '{site}':")
     print(json.dumps(metrics, indent=2))
     print(f"- wrote {site_path}")
-    if args.run is not None:
+    if batch_dir is not None:
         print(f"- wrote {batch_dir / 'calibration.json'} (report will display metrics)")
 
     return 0
+
+def cmd_assert_stress(args: argparse.Namespace) -> int:
+    """
+    Gate an edge-case batch by coverage/outcome targets.
+    Returns 0 on pass, 2 on failure (so CI can fail the job).
+    """
+    batch = Path(args.run).resolve()
+    cov_path = batch / "coverage.json"
+    sum_path = batch / "summary.json"
+
+    if not cov_path.exists():
+        raise SystemExit(f"coverage.json not found in {batch}")
+    if not sum_path.exists():
+        raise SystemExit(f"summary.json not found in {batch}")
+
+    try:
+        cov = json.loads(cov_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise SystemExit(f"coverage.json unreadable: {e}")
+    try:
+        summ = json.loads(sum_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise SystemExit(f"summary.json unreadable: {e}")
+
+    # Helpers to safely extract % buckets across possible coverage schemas
+    def _pct(container: dict, *keys: str, default: float = 0.0) -> float:
+        d = container
+        for k in keys:
+            if not isinstance(d, dict): return default
+            d = d.get(k, {})
+        if isinstance(d, (int, float)): return float(d)
+        return default
+
+    # Common shapes (your build_coverage likely uses these names)
+    human_fallen = _pct(cov, "human_phase_pct", "fallen", default=_pct(cov, "human_phase", "fallen", default=0.0))
+    wet_enc     = _pct(cov, "traction_pct", "wet_encountered", default=_pct(cov, "traction", "wet_encountered", default=0.0))
+    tight_pct   = _pct(cov, "clearance_bands_pct", "<0.20", default=_pct(cov, "clearance_bands", "<0.20", default=0.0))
+    coll_pct    = _pct(cov, "outcomes_pct", "collision_human", default=_pct(cov, "outcomes", "collision_human", default=0.0))
+    succ_pct    = _pct(cov, "outcomes_pct", "success", default=_pct(cov, "outcomes", "success", default=0.0))
+
+    # Allow overrides via CLI
+    fallen_min   = float(args.fallen_min)
+    wet_min      = float(args.wet_min)
+    tight_min    = float(args.tight_min)
+    collision_min= float(args.collision_min)
+    success_max  = float(args.success_max)
+
+    ok = True
+    checks = []
+
+    def check(cond: bool, label: str, got: float, target: str):
+        nonlocal ok
+        ok = ok and cond
+        checks.append((cond, f"{label}: {got:.1f}% {target}"))
+
+    check(human_fallen >= fallen_min,     "fallen",          human_fallen,  f"≥ {fallen_min:.1f}%")
+    check(wet_enc      >= wet_min,        "wet_encountered", wet_enc,       f"≥ {wet_min:.1f}%")
+    check(tight_pct    >= tight_min,      "clearance<0.20",  tight_pct,     f"≥ {tight_min:.1f}%")
+    check(coll_pct     >= collision_min,  "collision_human", coll_pct,      f"≥ {collision_min:.1f}%")
+    check(succ_pct     <= success_max,    "success",         succ_pct,      f"≤ {success_max:.1f}%")
+
+    print("[edgesim assert-stress]")
+    print(f"- runs: {summ.get('runs','?')}, successes: {summ.get('successes','?')}, failures: {summ.get('failures','?')}")
+    for cond, msg in checks:
+        print(f"- {'PASS' if cond else 'FAIL'}: {msg}")
+
+    return 0 if ok else 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -265,6 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("--seed", type=int, default=42)
     sb.add_argument("--name", type=str, default=None)
     sb.add_argument("--profile", type=str, default="minimal", choices=["minimal", "robot", "full"])
+    sb.add_argument("--site", type=str, default=None, help="Site profile slug (loads site_profiles/<site>.json via EDGESIM_SITE)")
     sb.add_argument("--time-budget-min", type=float, default=None,
                     help="Soft wall-clock budget (minutes). If ETA exceeds and --auto-degrade is set, stop early.")
     sb.add_argument("--auto-degrade", action="store_true",
@@ -277,6 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
     so.add_argument("--name", type=str, default=None)
     so.add_argument("--gui", action="store_true", help="Open PyBullet GUI")
     so.add_argument("--realtime", action="store_true", help="Sleep to realtime")
+    so.add_argument("--site", type=str, default=None, help="Site profile slug (loads site_profiles/<site>.json via EDGESIM_SITE)")
     so.set_defaults(func=cmd_run_one)
 
     sv = sub.add_parser("verify", help="Verify reproducibility digests for a finished batch")
@@ -289,6 +369,15 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--site", required=True, help="Site slug (filename for site_profiles/<site>.json)")
     sc.add_argument("--run", default=None, help="Optional runs/<batch_dir> to also write calibration.json for the report")
     sc.set_defaults(func=cmd_calibrate)
+
+    ss = sub.add_parser("assert-stress", help="Assert an edge-case batch hits target coverage/outcomes")
+    ss.add_argument("--run", required=True, help="Path to runs/<batch_dir>")
+    ss.add_argument("--fallen-min", type=float, default=50.0, help="Min %% of runs with human phase=fallen")
+    ss.add_argument("--wet-min", type=float, default=70.0, help="Min %% of runs that encountered wet traction")
+    ss.add_argument("--tight-min", type=float, default=40.0, help="Min %% with clearance < 0.20 m")
+    ss.add_argument("--collision-min", type=float, default=20.0, help="Min %% with collision_human outcome")
+    ss.add_argument("--success-max", type=float, default=60.0, help="Max %% success allowed")
+    ss.set_defaults(func=cmd_assert_stress)
 
     return p
 
