@@ -9,8 +9,45 @@ def _is_rect(v: Any) -> bool:
 		return False
 	return all(isinstance(x, (int, float)) for x in v)
 
+def _is_vec2(v: Any) -> bool:
+	return isinstance(v, (list, tuple)) and len(v) == 2 and all(isinstance(x, _Number) for x in v)
+
 def _err(errors: List[str], msg: str) -> None:
 	errors.append(msg)
+
+def _validate_zone_list(errors: List[str], rows: Any, ctx: str) -> List[Dict[str, Any]]:
+	if rows is None:
+		return []
+	if not isinstance(rows, list):
+		_err(errors, f"{ctx} must be a list.")
+		return []
+	out: List[Dict[str, Any]] = []
+	for i, row in enumerate(rows):
+		if not isinstance(row, dict):
+			_err(errors, f"{ctx}[{i}] must be a dict.")
+			continue
+		zone = row.get("zone")
+		if not _is_rect(zone):
+			_err(errors, f"{ctx}[{i}].zone must be [x0,y0,x1,y1].")
+		out.append(row)
+	return out
+
+def _validate_aabb_list(errors: List[str], rows: Any, ctx: str, key: str = "aabb") -> List[Dict[str, Any]]:
+	if rows is None:
+		return []
+	if not isinstance(rows, list):
+		_err(errors, f"{ctx} must be a list.")
+		return []
+	out: List[Dict[str, Any]] = []
+	for i, row in enumerate(rows):
+		if not isinstance(row, dict):
+			_err(errors, f"{ctx}[{i}] must be a dict.")
+			continue
+		aabb = row.get(key)
+		if not _is_rect(aabb):
+			_err(errors, f"{ctx}[{i}].{key} must be [x0,y0,x1,y1].")
+		out.append(row)
+	return out
 
 def validate_scenario(scn: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, Any]]:
 	errors: List[str] = []
@@ -32,6 +69,18 @@ def validate_scenario(scn: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, A
 		_err(errors, "layout.start must be [x, y].")
 	if (not isinstance(goal, (list, tuple))) or len(goal) != 2:
 		_err(errors, "layout.goal must be [x, y].")
+
+	floor_surfaces = _validate_zone_list(errors, layout.get("floor_surfaces", []), "layout.floor_surfaces")
+	transition_zones = _validate_zone_list(errors, layout.get("transition_zones", []), "layout.transition_zones")
+	safety_zones_layout = _validate_zone_list(errors, layout.get("safety_zones", []), "layout.safety_zones")
+
+	geometry = layout.get("geometry", {})
+	if geometry and not isinstance(geometry, dict):
+		_err(errors, "layout.geometry must be a dict if present.")
+	else:
+		_validate_aabb_list(errors, geometry.get("racking", []), "layout.geometry.racking")
+		_validate_aabb_list(errors, geometry.get("open_storage", []), "layout.geometry.open_storage")
+		_validate_aabb_list(errors, geometry.get("endcaps", []), "layout.geometry.endcaps")
 
 	# agents
 	agents = scn.get("agents", [])
@@ -77,10 +126,39 @@ def validate_scenario(scn: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, A
 			if (not isinstance(sp, (list, tuple))) or len(sp) != 2 or not all(isinstance(x, _Number) for x in sp):
 				_err(errors, f"hazards.human[{i}].speed_mps must be [min,max].")
 
+	vehicles = hz.get("vehicles", [])
+	if vehicles is not None:
+		if not isinstance(vehicles, list):
+			_err(errors, "hazards.vehicles must be a list.")
+		else:
+			for i, veh in enumerate(vehicles):
+				if not isinstance(veh, dict):
+					_err(errors, f"hazards.vehicles[{i}] must be a dict.")
+					continue
+				path = veh.get("path", [])
+				if path and (not isinstance(path, list) or any(not _is_vec2(pt) for pt in path)):
+					_err(errors, f"hazards.vehicles[{i}].path must be [[x,y], ...].")
+
+	floor_events = _validate_zone_list(errors, hz.get("floor_events", []), "hazards.floor_events")
+	haz_safety = _validate_zone_list(errors, hz.get("safety_zones", []), "hazards.safety_zones")
+
 	# taxonomy (optional but helpful)
 	tax = scn.get("taxonomy", {})
 	if not isinstance(tax, dict):
 		_err(errors, "taxonomy must be a dict if present.")
+
+	environment = scn.get("environment", {})
+	if environment and not isinstance(environment, dict):
+		_err(errors, "environment must be a dict if present.")
+	battery = (environment or {}).get("battery", {})
+	if battery and not isinstance(battery, dict):
+		_err(errors, "environment.battery must be a dict if present.")
+	else:
+		if battery:
+			for field in ("initial_pct", "low_pct_behavior", "voltage_sag_pct"):
+				val = battery.get(field)
+				if val is not None and not isinstance(val, _Number):
+					_err(errors, f"environment.battery.{field} must be numeric.")
 
 	# Build a small human-readable summary for the report
 	summary = {
@@ -98,9 +176,22 @@ def validate_scenario(scn: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, A
 				}
 				for h in human if isinstance(h, dict)
 			],
+			"vehicles": [
+				{"id": v.get("id"), "type": v.get("type"), "path_len": len(v.get("path", []) or [])}
+				for v in vehicles if isinstance(v, dict)
+			] if isinstance(vehicles, list) else [],
+			"floor_events": [
+				{"type": evt.get("type"), "zone": list(evt.get("zone", []))}
+				for evt in floor_events if isinstance(evt, dict)
+			],
 		},
 		"runtime": {"duration_s": float(dur), "dt": float(dt)},
-		"flags": {"taxonomy": tax},
+		"flags": {"taxonomy": tax, "safety_zones": len(safety_zones_layout) + len(haz_safety)},
+		"layout": {
+			"floor_surfaces": [{"id": fs.get("id"), "type": fs.get("type")} for fs in floor_surfaces],
+			"transition_zones": [{"id": tz.get("id"), "type": tz.get("type")} for tz in transition_zones],
+		},
+		"environment": environment or {},
 	}
 
 	ok = len(errors) == 0

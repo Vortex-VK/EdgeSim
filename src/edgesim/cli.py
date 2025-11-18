@@ -160,6 +160,8 @@ def cmd_run_one(args: argparse.Namespace) -> int:
     prompt: str = args.prompt
     gui: bool = bool(args.gui)
     realtime: bool = bool(args.realtime)
+    dt: float = float(args.dt)
+    slowmo: float = float(args.slowmo)
 
     # Pass site via env if provided
     if getattr(args, "site", None):
@@ -168,7 +170,7 @@ def cmd_run_one(args: argparse.Namespace) -> int:
     scn = prompt_to_scenario(prompt, n_runs=1)
     run_dir = _make_run_dir(prompt, args.name)
     _write_core_files(run_dir, prompt, 1, args.seed, scn)
-    out = run_one(prompt, scn, run_dir, dt=0.05, realtime=realtime, gui=gui)
+    out = run_one(prompt, scn, run_dir, dt=dt, realtime=realtime, gui=gui, sleep_scale=slowmo)
     print(f"\n[EdgeSim] Single rollout @ {run_dir}\n- success={out['success']} time={out['time']:.2f}s steps={out['steps']}\n- run_one.csv\n")
     return 0
 
@@ -356,6 +358,8 @@ def build_parser() -> argparse.ArgumentParser:
     so.add_argument("--name", type=str, default=None)
     so.add_argument("--gui", action="store_true", help="Open PyBullet GUI")
     so.add_argument("--realtime", action="store_true", help="Sleep to realtime")
+    so.add_argument("--dt", type=float, default=0.05, help="Integrator timestep (seconds)")
+    so.add_argument("--slowmo", type=float, default=1.0, help="Slow-motion multiplier for realtime sleep (requires --realtime)")
     so.add_argument("--site", type=str, default=None, help="Site profile slug (loads site_profiles/<site>.json via EDGESIM_SITE)")
     so.set_defaults(func=cmd_run_one)
 

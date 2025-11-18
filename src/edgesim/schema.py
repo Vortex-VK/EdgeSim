@@ -5,6 +5,66 @@ from typing import Any, Dict, List
 # Minimal Scenario Graph (V0) — plain dicts to keep it simple
 
 
+def default_geometry() -> Dict[str, Any]:
+	return {
+		"aisles": [],
+		"junctions": [],
+		"blind_corners": [],
+		"racking": [],
+		"open_storage": [],
+		"endcaps": [],
+	}
+
+
+def default_floor_surfaces() -> List[Dict[str, Any]]:
+	return [
+		{"id": "base_floor", "type": "dry", "zone": [0.0, 0.0, 20.0, 20.0], "mu": 0.85, "brake_scale": 1.0, "slip_boost": 0.0, "imu_vibe_g": 0.2},
+	]
+
+
+def default_transition_zones() -> List[Dict[str, Any]]:
+	return []
+
+
+def default_static_obstacles() -> List[Dict[str, Any]]:
+	return []
+
+
+def default_safety_zones() -> List[Dict[str, Any]]:
+	return []
+
+
+def default_environment() -> Dict[str, Any]:
+	return {
+		"ambient_light": "day_cycle",
+		"night_mode": False,
+		"hvac_airflow_mps": 0.6,
+		"debris_bias": "toward_dock",
+		"noise_reflection_coef": 0.4,
+		"time_of_day": "afternoon",
+		"battery": {
+			"initial_pct": 0.85,
+			"low_pct_behavior": 0.25,
+			"voltage_sag_pct": 0.05,
+		},
+		"charging_docks": [
+			{"id": "Charge_North", "zone": [1.0, 18.0, 3.0, 19.5]},
+		],
+		"conveyors": [
+			{"id": "Conveyor_A", "aabb": [4.0, 5.0, 8.0, 6.0], "direction": "east", "speed_mps": 0.5},
+		],
+	}
+
+
+def default_vehicle_roster() -> List[Dict[str, Any]]:
+	return [
+		{"id": "Forklift_01", "type": "forklift", "path": [[4.0, 4.0], [4.0, 16.0]], "speed_mps": 1.2, "fork_height_m": 0.2, "reflective": True},
+		{"id": "Forklift_02", "type": "forklift", "path": [[15.5, 4.0], [15.5, 16.0]], "speed_mps": 1.0, "fork_height_m": 1.2, "carrying_pallet": True},
+		{"id": "PalletJack_01", "type": "pallet_jack", "path": [[8.5, 2.0], [12.0, 2.0]], "speed_mps": 0.9},
+		{"id": "Tugger_Train", "type": "tugger_train", "path": [[10.0, 6.0], [10.0, 14.0]], "speed_mps": 1.4, "length_m": 2.5},
+	]
+
+
 def default_layout() -> Dict[str, Any]:
 	return {
 		"map_size_m": [20.0, 20.0],
@@ -15,8 +75,13 @@ def default_layout() -> Dict[str, Any]:
 		"walls": [
 			{"poly": [[0, 0], [20, 0], [20, 20], [0, 20]]}
 		],
-		"start": [1.0, 1.0],
-		"goal": [19.0, 19.0],
+		"start": [2.0, 10.0],
+		"goal": [18.0, 10.0],
+		"geometry": default_geometry(),
+		"floor_surfaces": default_floor_surfaces(),
+		"transition_zones": default_transition_zones(),
+		"static_obstacles": default_static_obstacles(),
+		"safety_zones": default_safety_zones(),
 	}
 
 
@@ -55,6 +120,12 @@ def empty_hazards() -> Dict[str, Any]:
 	return {
 		"traction": [],   # list of {zone: [x0,y0,x1,y1], mu}
 		"human": [],      # list of {path: "line"|"waypoints", rate_per_min: float, speed_mps: [min,max]}
+		"vehicles": [],
+		"object_events": [],   # falling items, rolling cylinders, etc.
+		"floor_events": [],    # spills forming in runtime
+		"sensor_events": [],   # extra sensor perturbations
+		"transition_zones": [],# runtime modifications to transition state
+		"safety_zones": [],    # emergency stop regions / one-way overrides
 		"clutter": {
 			"aisle_density": 0.0,
 			"overhang_prob": 0.0,
@@ -84,6 +155,7 @@ def new_scenario(n_runs: int = 100) -> Dict[str, Any]:
 		"hazards": empty_hazards(),
 		"sensors": default_sensors(),
 		"runtime": default_runtime(n_runs),
+		"environment": default_environment(),
 		"taxonomy": {  # for coverage counting later
 			"visibility": False,
 			"traction": False,
