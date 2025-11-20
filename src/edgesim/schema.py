@@ -30,30 +30,9 @@ def default_static_obstacles() -> List[Dict[str, Any]]:
 	return []
 
 
-def default_safety_zones() -> List[Dict[str, Any]]:
-	return []
-
-
 def default_environment() -> Dict[str, Any]:
-	return {
-		"ambient_light": "day_cycle",
-		"night_mode": False,
-		"hvac_airflow_mps": 0.6,
-		"debris_bias": "toward_dock",
-		"noise_reflection_coef": 0.4,
-		"time_of_day": "afternoon",
-		"battery": {
-			"initial_pct": 0.85,
-			"low_pct_behavior": 0.25,
-			"voltage_sag_pct": 0.05,
-		},
-		"charging_docks": [
-			{"id": "Charge_North", "zone": [1.0, 18.0, 3.0, 19.5]},
-		],
-		"conveyors": [
-			{"id": "Conveyor_A", "aabb": [4.0, 5.0, 8.0, 6.0], "direction": "east", "speed_mps": 0.5},
-		],
-	}
+	"""Environment-wide knobs (kept minimal for the core sim)."""
+	return {}
 
 
 def default_vehicle_roster() -> List[Dict[str, Any]]:
@@ -81,7 +60,6 @@ def default_layout() -> Dict[str, Any]:
 		"floor_surfaces": default_floor_surfaces(),
 		"transition_zones": default_transition_zones(),
 		"static_obstacles": default_static_obstacles(),
-		"safety_zones": default_safety_zones(),
 	}
 
 
@@ -91,28 +69,19 @@ def default_agent() -> Dict[str, Any]:
 		"type": "AMR",
 		"radius_m": 0.4,
 		"max_speed_mps": 1.2,
-		"controller": {
-			"planner": "astar_grid",
-			"follower": "pid_waypoint",
-		},
 	}
 
 
 def default_sensors() -> Dict[str, Any]:
-	"""
-	Default sensor configuration.
-
-	We keep it minimal but add a 'lidar' sub-dict so the parser/scenario
-	can tweak the lidar update rate if needed.
-	"""
 	return {
-		"camera_noise": 0.0,   # flag/range for later
-		"detection_dropout": 0.0,
-		"latency_ms": 0,
-		"lighting_dim": False,
 		"lidar": {
 			"hz": 10.0,
+			"max_range_m": 8.0,
+			"noise_sigma": 0.02,
+			"dropout_pct": 0.01,
 		},
+		"imu": {"noise_std": 0.01},
+		"odom": {"bias_v": 0.02, "bias_w": 0.01},
 	}
 
 
@@ -121,15 +90,7 @@ def empty_hazards() -> Dict[str, Any]:
 		"traction": [],   # list of {zone: [x0,y0,x1,y1], mu}
 		"human": [],      # list of {path: "line"|"waypoints", rate_per_min: float, speed_mps: [min,max]}
 		"vehicles": [],
-		"object_events": [],   # falling items, rolling cylinders, etc.
 		"floor_events": [],    # spills forming in runtime
-		"sensor_events": [],   # extra sensor perturbations
-		"transition_zones": [],# runtime modifications to transition state
-		"safety_zones": [],    # emergency stop regions / one-way overrides
-		"clutter": {
-			"aisle_density": 0.0,
-			"overhang_prob": 0.0,
-		},
 	}
 
 

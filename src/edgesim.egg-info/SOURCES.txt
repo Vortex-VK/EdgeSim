@@ -8,13 +8,11 @@ src/edgesim/coverage.py
 src/edgesim/io_utils.py
 src/edgesim/metrics.py
 src/edgesim/parser.py
-src/edgesim/planner.py
 src/edgesim/report.py
 src/edgesim/report_html.py
 src/edgesim/report_latest.py
 src/edgesim/reporter.py
 src/edgesim/rollout.py
-src/edgesim/sampling.py
 src/edgesim/scenario.py
 src/edgesim/schema.py
 src/edgesim/sim_one.py

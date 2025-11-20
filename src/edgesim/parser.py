@@ -200,7 +200,7 @@ def _apply_t_intersection_layout(scn: Dict[str, Any]) -> None:
 	hazards["human"] = [
 		{
 			"path": "waypoints",
-			"waypoints": [[10.0, 3.0], [10.0, 9.0]],
+			"waypoints": [[4.0, 9.5], [10.0, 9.5]],
 			"group_size": 1,
 			"speed_mps": [0.7, 1.0],
 			"motion_patterns": ["hesitation", "emerge_from_occlusion", "start_stop"],
@@ -208,7 +208,7 @@ def _apply_t_intersection_layout(scn: Dict[str, Any]) -> None:
 		},
 		{
 			"path": "waypoints",
-			"waypoints": [[10.0, 15.5], [10.0, 11.0]],
+			"waypoints": [[16.0, 9.8], [10.0, 9.8]],
 			"group_size": 1,
 			"speed_mps": [0.7, 1.2],
 			"motion_patterns": ["hesitation", "emerge_from_occlusion", "start_stop"],

@@ -72,7 +72,6 @@ def validate_scenario(scn: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, A
 
 	floor_surfaces = _validate_zone_list(errors, layout.get("floor_surfaces", []), "layout.floor_surfaces")
 	transition_zones = _validate_zone_list(errors, layout.get("transition_zones", []), "layout.transition_zones")
-	safety_zones_layout = _validate_zone_list(errors, layout.get("safety_zones", []), "layout.safety_zones")
 
 	geometry = layout.get("geometry", {})
 	if geometry and not isinstance(geometry, dict):
@@ -140,7 +139,6 @@ def validate_scenario(scn: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, A
 					_err(errors, f"hazards.vehicles[{i}].path must be [[x,y], ...].")
 
 	floor_events = _validate_zone_list(errors, hz.get("floor_events", []), "hazards.floor_events")
-	haz_safety = _validate_zone_list(errors, hz.get("safety_zones", []), "hazards.safety_zones")
 
 	# taxonomy (optional but helpful)
 	tax = scn.get("taxonomy", {})
@@ -150,15 +148,6 @@ def validate_scenario(scn: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, A
 	environment = scn.get("environment", {})
 	if environment and not isinstance(environment, dict):
 		_err(errors, "environment must be a dict if present.")
-	battery = (environment or {}).get("battery", {})
-	if battery and not isinstance(battery, dict):
-		_err(errors, "environment.battery must be a dict if present.")
-	else:
-		if battery:
-			for field in ("initial_pct", "low_pct_behavior", "voltage_sag_pct"):
-				val = battery.get(field)
-				if val is not None and not isinstance(val, _Number):
-					_err(errors, f"environment.battery.{field} must be numeric.")
 
 	# Build a small human-readable summary for the report
 	summary = {
@@ -186,7 +175,7 @@ def validate_scenario(scn: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, A
 			],
 		},
 		"runtime": {"duration_s": float(dur), "dt": float(dt)},
-		"flags": {"taxonomy": tax, "safety_zones": len(safety_zones_layout) + len(haz_safety)},
+		"flags": {"taxonomy": tax},
 		"layout": {
 			"floor_surfaces": [{"id": fs.get("id"), "type": fs.get("type")} for fs in floor_surfaces],
 			"transition_zones": [{"id": tz.get("id"), "type": tz.get("type")} for tz in transition_zones],

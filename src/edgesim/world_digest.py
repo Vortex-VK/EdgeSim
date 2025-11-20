@@ -20,6 +20,7 @@ def build_world_digest(
 	vehicles: List[Dict[str, Any]] | None = None,
 	safety_zones: List[Dict[str, Any]] | None = None,
 	environment: Dict[str, Any] | None = None,
+	aisles: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
 	def _pack_zone_list(rows: List[Dict[str, Any]] | None, key: str = "zone") -> List[Dict[str, Any]]:
 		out: List[Dict[str, Any]] = []
@@ -85,6 +86,7 @@ def build_world_digest(
 		"static_obstacles": _pack_aabb_list(static_objects),
 		"vehicles": _pack_vehicle_list(vehicles),
 		"safety_zones": _pack_zone_list(safety_zones),
+		"aisles": _pack_zone_list(aisles),
 		"environment": environment or {},
 	}
 

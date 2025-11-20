@@ -6,8 +6,6 @@ import json
 import os
 import time
 import copy
-
-from .sampling import set_initial_budget
 from .io_utils import ensure_dir, write_json
 from .sim_one import run_one
 
@@ -98,8 +96,6 @@ def run_batch(
 
 	completed = 0
 	total = len(seeds)
-	set_initial_budget(run_dir, k_fail=10, k_succ=10)
-
 	# Track original knobs so we can compute caps proportionally
 	orig_duration_s = _extract_duration_s(scn, default=90.0)
 	orig_lidar_hz = _extract_lidar_hz(scn, default=10.0)
