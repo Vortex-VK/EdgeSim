@@ -8,13 +8,11 @@ import csv, math, time, os, json
 import numpy as np
 import pybullet as p
 
-from .planner import rasterize_occupancy, astar, inflate_grid
 from .world import build_world, spawn_human
-from .sampling import should_save_frames
 from .world_digest import build_world_digest, write_world_digest
 from .injectors import (
 	LidarSectorBlackoutInjector, FallingObjectInjector, ThrownObjectInjector,
-	InjectorState
+	InjectorState, Injector
 )
 
 # ---------- small I/O helpers ----------
@@ -78,64 +76,78 @@ def _pt_in_aabb(x: float, y: float, aabb: Tuple[float, float, float, float] | No
 	x0, y0, x1, y1 = aabb
 	return (x0 <= x <= x1) and (y0 <= y <= y1)
 
-# ---------- simple frame capture ----------
+def _rect_overlap(a: Tuple[float, float, float, float],
+                  b: Tuple[float, float, float, float]) -> Tuple[float, float, float, float] | None:
+	x0 = max(a[0], b[0]); y0 = max(a[1], b[1])
+	x1 = min(a[2], b[2]); y1 = min(a[3], b[3])
+	if (x1 - x0) > 1e-4 and (y1 - y0) > 1e-4:
+		return (x0, y0, x1, y1)
+	return None
 
-def _capture_frame(
-	batch_root: Path,
-	run_dir_name: str,
-	cam_conf: Dict[str, Any],
-	width: int = 640,
-	height: int = 480,
-	idx: int = 0,
-	focus_xy: Tuple[float, float] | None = None,
-	height_override: float | None = None,
-) -> None:
-	fx, fy = focus_xy if focus_xy is not None else (cam_conf["cx"], cam_conf["cy"])
-	target = [fx, fy, 0.0]
-	eye = [fx, fy, height_override if height_override is not None else cam_conf["cz"]]
-	view_m = p.computeViewMatrix(
-		cameraEyePosition=eye,
-		cameraTargetPosition=target,
-		cameraUpVector=[0.0, 1.0, 0.0],
-	)
-	proj_m = p.computeProjectionMatrixFOV(fov=cam_conf["fov_deg"], aspect=width/height, nearVal=0.01, farVal=100.0)
-	_, _, px, _, _ = p.getCameraImage(width, height, view_m, proj_m, renderer=p.ER_TINY_RENDERER)
-	img = np.reshape(np.array(px, dtype=np.uint8), (height, width, 4))[:, :, :3]
-	out_dir = batch_root / "frames_sample" / run_dir_name
-	out_dir.mkdir(parents=True, exist_ok=True)
-	out_path = out_dir / f"{idx:03d}.png"
-	try:
-		p.writeImageFile(str(out_path), img)  # type: ignore[attr-defined]
-	except Exception:
-		try:
-			import imageio.v2 as imageio
-			imageio.imwrite(out_path, img)
-		except Exception:
-			return
+def _intervals_without(start: float, end: float,
+                       cuts: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+	intervals = [(start, end)]
+	for (c0, c1) in cuts:
+		c0 = max(start, min(end, c0))
+		c1 = max(start, min(end, c1))
+		if c1 <= c0:
+			continue
+		next_intervals: List[Tuple[float, float]] = []
+		for (i0, i1) in intervals:
+			if c1 <= i0 or c0 >= i1:
+				next_intervals.append((i0, i1))
+				continue
+			if i0 < c0:
+				next_intervals.append((i0, c0))
+			if c1 < i1:
+				next_intervals.append((c1, i1))
+		intervals = next_intervals
+	return intervals
 
-# ---------- helpers for grid/waypoints & replanning ----------
+def _resolve_spawn_point(x: float, y: float, radius: float,
+                         bounds: Tuple[float, float], border: float,
+                         blockers: List[Tuple[float, float, float, float]],
+                         max_iter: int = 25) -> Tuple[float, float]:
+	Lx, Ly = bounds
+	for _ in range(max_iter):
+		moved = False
+		for (x0, y0, x1, y1) in blockers:
+			closest_x = min(max(x, x0), x1)
+			closest_y = min(max(y, y0), y1)
+			dx = x - closest_x
+			dy = y - closest_y
+			dist = math.hypot(dx, dy)
+			if dist >= radius or radius <= 0.0:
+				continue
+			moved = True
+			if dist < 1e-6:
+				cx = 0.5 * (x0 + x1)
+				cy = 0.5 * (y0 + y1)
+				dx = x - cx
+				dy = y - cy
+				norm = math.hypot(dx, dy)
+				if norm < 1e-6:
+					dx, dy = 1.0, 0.0
+				else:
+					dx /= norm
+					dy /= norm
+				dist = 0.0
+			else:
+				dx /= dist
+				dy /= dist
+			push = (radius - dist) + 1e-3
+			x += dx * push
+			y += dy * push
+			x = max(border, min(Lx - border, x))
+			y = max(border, min(Ly - border, y))
+		if not moved:
+			break
+	return x, y
 
-def _to_cell(px: float, py: float, res: float, grid: List[List[int]]) -> tuple[int, int]:
-	ix = max(0, min(int(px / res), len(grid[0]) - 1))
-	iy = max(0, min(int(py / res), len(grid) - 1))
-	return ix, iy
-
-def _to_world(ix: int, iy: int, res: float) -> tuple[float, float]:
-	return ((ix + 0.5) * res, (iy + 0.5) * res)
-
-def _cells_to_waypoints(path_cells: List[Tuple[int,int]], res: float, min_gap: float = 0.5) -> List[Tuple[float,float]]:
-	waypoints: List[Tuple[float,float]] = []
-	last = (-999.0, -999.0)
-	for (ix, iy) in path_cells:
-		wx, wy = _to_world(ix, iy, res)
-		if not waypoints or math.hypot(wx - last[0], wy - last[1]) > min_gap:
-			waypoints.append((wx, wy))
-			last = (wx, wy)
-	return waypoints
-
-def _inflate(aabb: Tuple[float,float,float,float], r: float) -> Tuple[float,float,float,float]:
-	x0, y0, x1, y1 = aabb
-	return (x0 - r, y0 - r, x1 + r, y1 + r)
+def _vehicle_aabb(v: Dict[str, Any], x: float, y: float) -> Tuple[float, float, float, float]:
+	half = v.get("half_extents") or [0.5, 0.4, 0.4]
+	hx, hy = abs(half[0]), abs(half[1])
+	return (x - hx, y - hy, x + hx, y + hy)
 
 def _fallen_human_aabb(hid: int | None) -> Tuple[float,float,float,float] | None:
 	if hid is None: return None
@@ -145,13 +157,273 @@ def _fallen_human_aabb(hid: int | None) -> Tuple[float,float,float,float] | None
 	except Exception:
 		return None
 
-def _fallen_human_aabbs(ids: List[int]) -> List[Tuple[float, float, float, float]]:
-	out: List[Tuple[float, float, float, float]] = []
-	for hid in ids:
-		fb = _fallen_human_aabb(hid)
-		if fb is not None:
-			out.append(fb)
-	return out
+# ---------- human helpers ----------
+
+_HUMAN_ROLE_PRESETS = {
+	"picker": {"radius": 0.25, "length": 1.6, "speed": (0.8, 1.3), "behaviors": {"start_stop", "hesitation"}},
+	"fast_walker": {"radius": 0.24, "length": 1.6, "speed": (1.3, 2.0), "behaviors": {"zig_zag"}},
+	"distracted": {"radius": 0.25, "length": 1.6, "speed": (0.8, 1.2), "behaviors": {"late_react", "start_stop", "step_back"}},
+	"carry": {"radius": 0.3, "length": 1.7, "speed": (0.7, 1.1), "behaviors": {"carry_payload"}},
+	"child": {"radius": 0.18, "length": 1.0, "speed": (0.9, 1.4), "behaviors": {"zig_zag"}},
+	"supervisor": {"radius": 0.25, "length": 1.6, "speed": (0.0, 0.0), "behaviors": {"stationary"}},
+	"group": {"radius": 0.25, "length": 1.6, "speed": (0.8, 1.2), "behaviors": set()},
+}
+
+def _human_profile(cfg: Dict[str, Any]) -> Dict[str, Any]:
+	role = (cfg.get("role") or cfg.get("type") or "picker").lower()
+	profile = _HUMAN_ROLE_PRESETS.get(role, _HUMAN_ROLE_PRESETS["picker"]).copy()
+	profile["radius"] = float(cfg.get("radius_m", profile["radius"]))
+	profile["length"] = float(cfg.get("length_m", profile["length"]))
+	speed_cfg = cfg.get("speed_mps", profile["speed"])
+	if isinstance(speed_cfg, (list, tuple)) and len(speed_cfg) == 2:
+		profile["speed"] = (float(speed_cfg[0]), float(speed_cfg[1]))
+	behaviors = set(profile.get("behaviors", set()))
+	for tag in (cfg.get("motion_patterns") or []):
+		behaviors.add(tag)
+	if cfg.get("push_cart"):
+		behaviors.add("push_cart")
+	if cfg.get("carry_payload"):
+		behaviors.add("carry_payload")
+	if cfg.get("zigzag"):
+		behaviors.add("zig_zag")
+	profile["behaviors"] = behaviors
+	profile["height_scale"] = float(cfg.get("height_scale", 1.0))
+	return profile
+
+def _clamp_point(pt: List[float], bounds: Tuple[float, float], border: float) -> List[float]:
+	return [
+		max(border, min(bounds[0] - border, float(pt[0]))),
+		max(border, min(bounds[1] - border, float(pt[1]))),
+	]
+
+def _build_human_path(cfg: Dict[str, Any], bounds: Tuple[float, float], border: float) -> List[List[float]]:
+	Lx, Ly = bounds
+	if cfg.get("waypoints"):
+		pts = [_clamp_point(list(pt), bounds, border) for pt in cfg["waypoints"] if isinstance(pt, (list, tuple)) and len(pt) == 2]
+		if len(pts) >= 2:
+			return pts
+	start_side = (cfg.get("start_side") or "south").lower()
+	direction = -1 if start_side == "north" else 1
+	cross_x = max(border, min(Lx - border, float(cfg.get("cross_x", 0.5 * Lx))))
+	start_y = border if direction == 1 else (Ly - border)
+	end_y = (Ly - border) if direction == 1 else border
+	return [[cross_x, start_y], [cross_x, end_y]]
+
+def _segments_from_points(points: List[List[float]]) -> Tuple[List[Dict[str, Any]], float]:
+	segments: List[Dict[str, Any]] = []
+	total = 0.0
+	for idx in range(len(points) - 1):
+		start = points[idx]
+		end = points[idx + 1]
+		dx = end[0] - start[0]
+		dy = end[1] - start[1]
+		length = math.hypot(dx, dy)
+		if length < 1e-4:
+			continue
+		segments.append({
+			"start": start,
+			"end": end,
+			"len": length,
+			"dir": (dx / length, dy / length),
+		})
+		total += length
+	return segments, total
+
+def _spawn_cart_body(width: float = 0.6, length: float = 1.0, height: float = 0.5, color=(0.3, 0.3, 0.3, 1.0)) -> Tuple[int, float]:
+	vis = p.createVisualShape(p.GEOM_BOX, halfExtents=[length/2, width/2, height/2], rgbaColor=color)
+	col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[length/2, width/2, height/2])
+	body = p.createMultiBody(baseMass=0.0, baseCollisionShapeIndex=col, baseVisualShapeIndex=vis,
+	                         basePosition=[-20.0, -20.0, height/2])
+	return body, height
+
+def _spawn_payload_box(size: float = 0.35, height: float = 0.4, color=(0.7, 0.4, 0.2, 1.0)) -> Tuple[int, float]:
+	vis = p.createVisualShape(p.GEOM_BOX, halfExtents=[size/2, size/2, height/2], rgbaColor=color)
+	col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[size/2, size/2, height/2])
+	body = p.createMultiBody(baseMass=0.0, baseCollisionShapeIndex=col, baseVisualShapeIndex=vis,
+	                         basePosition=[-20.0, -20.0, height/2])
+	return body, height
+
+def _offset_path(points: List[List[float]], segments: List[Dict[str, Any]], offset: float,
+                 bounds: Tuple[float, float], border: float) -> List[List[float]]:
+	if not segments or abs(offset) < 1e-4:
+		return points
+	perp = (-segments[0]["dir"][1], segments[0]["dir"][0])
+	return [_clamp_point([pt[0] + perp[0] * offset, pt[1] + perp[1] * offset], bounds, border) for pt in points]
+
+def _update_human_pose(body_id: int, xh: float, yh: float, z_base: float, heading: float, posture_scale: float = 1.0) -> None:
+	z = max(0.1, z_base * posture_scale)
+	p.resetBasePositionAndOrientation(body_id, [xh, yh, z], p.getQuaternionFromEuler([0.0, 0.0, heading]))
+
+def _update_human_props(state: Dict[str, Any], xh: float, yh: float, heading: float) -> None:
+	props = state.get("props") or {}
+	if not props:
+		return
+	ch = math.cos(heading)
+	sh = math.sin(heading)
+	if "cart" in props and props["cart"].get("id") is not None:
+		cart = props["cart"]
+		offset = float(cart.get("offset", 0.9))
+		px = xh + ch * offset
+		py = yh + sh * offset
+		p.resetBasePositionAndOrientation(cart["id"], [px, py, cart["height"] / 2.0], p.getQuaternionFromEuler([0.0, 0.0, heading]))
+	if "payload" in props:
+		payload = props["payload"]
+		if payload.get("id") is not None and not payload.get("dropped", False):
+			p.resetBasePositionAndOrientation(payload["id"], [xh, yh, payload["height"] / 2.0], p.getQuaternionFromEuler([0.0, 0.0, heading]))
+
+_BASE_PATH_AISLE_WIDTH = 1.25
+_FORKLIFT_WIDTH_SCALE = 1.3
+_HUMAN_AISLE_WIDTH = 1.0
+_EXTRA_VEHICLE_SCALE = 1.1
+
+def _segment_rect(start: List[float], end: List[float],
+                  width: float, bounds: Tuple[float, float]) -> List[float] | None:
+	dx = end[0] - start[0]
+	dy = end[1] - start[1]
+	if abs(dx) < 1e-4 and abs(dy) < 1e-4:
+		return None
+	pad = max(0.25, width * 0.5)
+	adx = abs(dx); ady = abs(dy)
+	if adx >= ady:
+		pad_x = max(pad, 0.35)
+		pad_y = pad
+	else:
+		pad_x = pad
+		pad_y = max(pad, 0.35)
+	if abs(adx - ady) < 0.3:
+		pad_x = max(pad_x, pad)
+		pad_y = max(pad_y, pad)
+	x0 = min(start[0], end[0]) - pad_x
+	x1 = max(start[0], end[0]) + pad_x
+	y0 = min(start[1], end[1]) - pad_y
+	y1 = max(start[1], end[1]) + pad_y
+	Lx, Ly = bounds
+	x0 = max(0.0, min(Lx, x0))
+	x1 = max(0.0, min(Lx, x1))
+	y0 = max(0.0, min(Ly, y0))
+	y1 = max(0.0, min(Ly, y1))
+	if (x1 - x0) < 0.2:
+		mid = 0.5 * (x0 + x1)
+		x0 = max(0.0, mid - 0.1)
+		x1 = min(Lx, mid + 0.1)
+	if (y1 - y0) < 0.2:
+		mid = 0.5 * (y0 + y1)
+		y0 = max(0.0, mid - 0.1)
+		y1 = min(Ly, mid + 0.1)
+	return [x0, y0, x1, y1]
+
+def _apply_path_defined_aisles(prompt: str | None,
+                               scn: Dict[str, Any],
+                               border: float = 0.6) -> None:
+	layout = scn.get("layout") or {}
+	if layout.get("lock_aisles"):
+		return
+	if layout.get("_path_aisles_applied"):
+		return
+	requested = bool(layout.get("auto_aisles_from_paths") or
+	                 layout.get("paths_define_aisles") or
+	                 layout.get("narrow_aisle_hint"))
+	if not requested and isinstance(prompt, str):
+		prompt_l = prompt.lower()
+		if "aisle" in prompt_l and "no aisle" not in prompt_l and "without aisle" not in prompt_l:
+			requested = True
+	if not requested:
+		return
+	map_size = layout.get("map_size_m") or [20.0, 20.0]
+	if not isinstance(map_size, (list, tuple)) or len(map_size) < 2:
+		map_size = [20.0, 20.0]
+	bounds = (float(map_size[0]), float(map_size[1]))
+	hazards = scn.get("hazards", {}) or {}
+	existing = layout.get("aisles")
+	if not isinstance(existing, list):
+		existing = []
+		layout["aisles"] = existing
+	entry_offset = len(existing)
+	new_entries: List[Dict[str, Any]] = []
+
+	def _clamped_points(seq: List[Any]) -> List[List[float]]:
+		points: List[List[float]] = []
+		for pt in seq:
+			if not isinstance(pt, (list, tuple)) or len(pt) != 2:
+				continue
+			points.append(_clamp_point([float(pt[0]), float(pt[1])], bounds, border))
+		return points
+
+	def _add_path(points: List[List[float]], width: float, tag: str, *, high_bay: bool = False) -> None:
+		if len(points) < 2:
+			return
+		segs, _ = _segments_from_points(points)
+		for seg in segs:
+			zone = _segment_rect(seg["start"], seg["end"], width, bounds)
+			if zone is None:
+				continue
+			entry_id = f"PathAisle_{entry_offset + len(new_entries) + 1:02d}"
+			new_entries.append({
+				"id": entry_id,
+				"name": f"{tag}_lane",
+				"rect": zone,
+				"type": "straight",
+				"racking": False,
+				"high_bay": high_bay,
+				"width_hint_m": width,
+			})
+
+	start = layout.get("start")
+	goal = layout.get("goal")
+	if isinstance(start, (list, tuple)) and isinstance(goal, (list, tuple)):
+		path_pts = [_clamp_point(list(start), bounds, border)]
+		agent_waypoints: List[Any] = []
+		if scn.get("agents"):
+			wps = scn["agents"][0].get("waypoints")
+			if isinstance(wps, list):
+				agent_waypoints = wps
+		path_pts.extend(_clamped_points(agent_waypoints))
+		path_pts.append(_clamp_point(list(goal), bounds, border))
+		_add_path(path_pts, _BASE_PATH_AISLE_WIDTH, "robot", high_bay=False)
+
+	for veh in hazards.get("vehicles", []):
+		path = _clamped_points(veh.get("path") or [])
+		if len(path) < 2:
+			continue
+		vtype = (veh.get("type") or "vehicle").lower()
+		if vtype == "forklift":
+			width = _BASE_PATH_AISLE_WIDTH * _FORKLIFT_WIDTH_SCALE
+			_add_path(path, width, vtype, high_bay=True)
+		else:
+			width = _BASE_PATH_AISLE_WIDTH * _EXTRA_VEHICLE_SCALE
+			_add_path(path, width, vtype or "vehicle", high_bay=False)
+
+	for idx, cfg in enumerate(hazards.get("human", [])):
+		path = _build_human_path(cfg, bounds, border)
+		if len(path) >= 2:
+			_add_path(path, _HUMAN_AISLE_WIDTH, f"human_{idx+1}", high_bay=False)
+
+	if new_entries:
+		existing.extend(new_entries)
+	layout["_path_aisles_applied"] = True
+
+def _apply_dynamic_reflections(ranges: np.ndarray, robot_xy: Tuple[float, float],
+                               vehicle_states: List[Dict[str, Any]], rng: np.random.Generator) -> np.ndarray:
+	if not vehicle_states:
+		return ranges
+	mod = ranges
+	cloned = False
+	for v in vehicle_states:
+		if not v.get("reflective"):
+			continue
+		pose = v.get("last_pose")
+		if not pose:
+			continue
+		dist = math.hypot(pose[0] - robot_xy[0], pose[1] - robot_xy[1])
+		if dist > 3.0:
+			continue
+		count = max(1, int(round(3.0 / max(dist, 0.3))))
+		idx = rng.choice(len(mod), size=count, replace=False)
+		if not cloned:
+			mod = mod.copy()
+			cloned = True
+		mod[idx] = np.clip(mod[idx] * rng.uniform(0.1, 0.4, size=count), 0.05, mod[idx])
+	return mod
 
 # ---------- Site profile loader ----------
 
@@ -174,7 +446,8 @@ def _load_site_tuned() -> Dict[str, Any]:
 class _LidarSim:
 	def __init__(self, beams: int = 360, hz: float = 10.0, max_range: float = 8.0,
 	             dropout_pct_range=(0.01, 0.02), noise_sigma: float = 0.02,
-	             jitter_ms_max: int = 50):
+	             jitter_ms_max: int = 50, fog_density: float = 0.0,
+	             reflective_zones: List[Dict[str, Any]] | None = None):
 		self.beams = int(beams)
 		self.hz = float(hz)
 		self.dt = 1.0 / max(1e-6, self.hz)
@@ -186,6 +459,8 @@ class _LidarSim:
 		self._rng = np.random.default_rng()
 		self._queue: List[Tuple[float, np.ndarray]] = []
 		self._jitter_s = float(jitter_ms_max) / 1000.0
+		self.fog_density = max(0.0, min(1.0, float(fog_density)))
+		self.reflective_zones = reflective_zones or []
 
 	def maybe_update(self, t: float, x: float, y: float, yaw: float, sensor_z: float, ignore_ids: set[int]) -> None:
 		if t < self.next_update_t:
@@ -215,13 +490,31 @@ class _LidarSim:
 			d = self.max_range if (hit_uid in ignore_ids or hit_uid == -1) else float(hit_frac) * self.max_range
 			dists[i] = d
 
-		dropout_pct = float(self._rng.uniform(self.dropout_low, self.dropout_high))
+		if self.fog_density > 0.0:
+			fog_sigma = self.noise_sigma + self.fog_density * 0.08
+			dists = np.clip(dists + self._rng.normal(0.0, fog_sigma, size=self.beams), 0.0, self.max_range * (1.0 - 0.35 * self.fog_density))
+
+		dropout_pct = float(self._rng.uniform(self.dropout_low, self.dropout_high + self.fog_density * 0.1))
 		if dropout_pct > 0.0:
 			k = max(1, int(round(dropout_pct * self.beams)))
 			idx = self._rng.choice(self.beams, size=k, replace=False)
 			dists[idx] = self.max_range
 		if self.noise_sigma > 0:
 			dists = np.clip(dists + self._rng.normal(0.0, self.noise_sigma, size=self.beams), 0.0, self.max_range)
+
+		if self.reflective_zones:
+			for zone in self.reflective_zones:
+				aabb = zone.get("aabb")
+				if not aabb:
+					continue
+				dist = _aabb_distance_point(tuple(aabb), x, y)
+				trigger = float(zone.get("trigger", 1.5))
+				if dist <= trigger:
+					strength = float(zone.get("strength", 0.5))
+					count = max(1, int(round(strength * 4)))
+					idx = self._rng.choice(self.beams, size=count, replace=False)
+					multipath = dists[idx] * self._rng.uniform(0.15, 0.5, size=count)
+					dists[idx] = np.clip(multipath, 0.05, self.max_range)
 
 		avail_t = t + float(self._rng.uniform(0.0, self._jitter_s))
 		self._queue.append((avail_t, dists))
@@ -240,10 +533,30 @@ class _OdomSim:
 		self.noise_v = float(noise_v); self.noise_w = float(noise_w)
 		self.rng = np.random.default_rng()
 
-	def apply(self, v_cmd: float, w_cmd: float) -> Tuple[float, float]:
-		v = v_cmd * (1.0 + self.bias_v) + float(self.rng.normal(0.0, self.noise_v))
-		w = w_cmd * (1.0 + self.bias_w) + float(self.rng.normal(0.0, self.noise_w))
+	def apply(self, v_cmd: float, w_cmd: float, slip_factor: float = 0.0) -> Tuple[float, float]:
+		slip_scale = max(0.0, 1.0 - slip_factor)
+		v = (v_cmd * slip_scale) * (1.0 + self.bias_v) + float(self.rng.normal(0.0, self.noise_v + slip_factor * 0.05))
+		w = (w_cmd * slip_scale) * (1.0 + self.bias_w) + float(self.rng.normal(0.0, self.noise_w + slip_factor * 0.03))
 		return v, w
+
+class _IMUSim:
+	def __init__(self, accel_noise: float = 0.02, gyro_noise: float = 0.015):
+		self.accel_noise = float(accel_noise)
+		self.gyro_noise = float(gyro_noise)
+		self.prev_v = 0.0
+		self.prev_yaw = 0.0
+		self.rng = np.random.default_rng()
+
+	def measure(self, v_cur: float, yaw: float, dt: float, surface_effects: Dict[str, Any] | None = None) -> Tuple[float, float, float]:
+		vib = float((surface_effects or {}).get("imu_vibe_g", 0.0))
+		ax = (v_cur - self.prev_v) / max(1e-6, dt)
+		ax += float(self.rng.normal(0.0, self.accel_noise + vib * 0.05))
+		ay = float(self.rng.normal(0.0, (self.accel_noise * 0.8) + vib * 0.03))
+		yaw_rate = (yaw - self.prev_yaw) / max(1e-6, dt)
+		gz = yaw_rate + float(self.rng.normal(0.0, self.gyro_noise + vib * 0.02))
+		self.prev_v = v_cur
+		self.prev_yaw = yaw
+		return ax, ay, gz
 
 # ---------- main single-run ----------
 
@@ -263,6 +576,7 @@ def run_one(
 		except Exception:
 			pass
 
+	_apply_path_defined_aisles(prompt, scn)
 	env = build_world(scn, use_gui=gui)
 	client_id = env["client"]
 	try:
@@ -275,6 +589,14 @@ def run_one(
 		transition_zones_meta: List[Dict[str, Any]] = list(env.get("transition_zones", []))
 		vehicle_meta: List[Dict[str, Any]] = list(env.get("vehicles_meta", []))
 		vehicle_body_ids = {v["body_id"] for v in vehicle_meta if isinstance(v, dict)}
+
+		# Static geometry bounds for spawn checks
+		static_aabbs: List[Tuple[float, float, float, float]] = []
+		for wid in wall_ids:
+			if wid in vehicle_body_ids:
+				continue
+			(a0, a1) = p.getAABB(wid)
+			static_aabbs.append((a0[0], a0[1], a1[0], a1[1]))
 
 		_tuned = _load_site_tuned()
 		if not isinstance(_tuned, dict):
@@ -303,13 +625,11 @@ def run_one(
 		h_cfg = (_tuned.get("human") or {})
 		tuned_slip_prob = float(h_cfg.get("slip_prob", 0.85))               # moderate default
 		slip_min_exposure_s = float(h_cfg.get("slip_min_exposure_s", 0.06))  # brief exposure
-		replan_on_fall_p = float(h_cfg.get("replan_on_fall_p", 0.5))        # only sometimes replan
 		tuned_fall_duration = float(h_cfg.get("fall_duration_s", 6.0))
 		taxonomy = scn.get("taxonomy", {}) or {}
 		if taxonomy.get("occlusion"):
 			tuned_slip_prob = min(0.7, tuned_slip_prob)
 			slip_min_exposure_s = max(0.25, slip_min_exposure_s * 3.0)
-			replan_on_fall_p = min(replan_on_fall_p, 0.15)
 
 		l_cfg = (_tuned.get("lidar") or {})
 		tuned_lidar_noise = float(l_cfg.get("noise_sigma", 0.02))
@@ -319,22 +639,6 @@ def run_one(
 		o_cfg = (_tuned.get("odom") or {})
 		tuned_bias_v = float(o_cfg.get("bias_v", 0.02))
 		tuned_bias_w = float(o_cfg.get("bias_w", 0.01))
-
-		brake_cfg = (_tuned.get("brake") or {})
-		STOP_DIST = float(brake_cfg.get("stop_dist_m", 1.0))   # was 1.4
-		SLOW_DIST = float(brake_cfg.get("slow_dist_m", 2.4))   # was 3.6
-		STOP_HOLD = float(brake_cfg.get("stop_hold_s", 0.8))   # was 1.0
-		aggr = 1.0
-		if taxonomy.get("occlusion"):
-			aggr *= 0.75
-		if taxonomy.get("multi_actor"):
-			aggr *= 0.85
-		if taxonomy.get("human_behavior"):
-			aggr *= 0.9
-		if aggr < 1.0:
-			STOP_DIST = max(0.4, STOP_DIST * aggr)
-			SLOW_DIST = max(STOP_DIST + 0.3, SLOW_DIST * aggr)
-			STOP_HOLD = max(0.4, STOP_HOLD * 0.85)
 
 		# per-run rng (salted by run id)
 		seed_val = int(scn.get("seed", 0))
@@ -370,7 +674,20 @@ def run_one(
 		start[1] = max(border, min(Ly - border, start[1]))
 		goal[0] = max(border, min(Lx - border, goal[0]))
 		goal[1] = max(border, min(Ly - border, goal[1]))
+		start[0], start[1] = _resolve_spawn_point(start[0], start[1], radius + 0.05, (Lx, Ly), border, static_aabbs)
 		p.resetBasePositionAndOrientation(amr, [start[0], start[1], radius * 0.5], p.getQuaternionFromEuler([0, 0, 0]))
+
+		moving_blockers: List[Tuple[float, float, float, float]] = []
+		moving_blockers.append((start[0] - radius - 0.1, start[1] - radius - 0.1, start[0] + radius + 0.1, start[1] + radius + 0.1))
+		for vmeta in vehicle_meta:
+			path_pts = vmeta.get("path") or []
+			if not path_pts:
+				continue
+			half_ext = vmeta.get("half_extents") or [0.5, 0.4, 0.4]
+			hx = abs(half_ext[0]) + 0.15
+			hy = abs(half_ext[1]) + 0.15
+			vx, vy = path_pts[0]
+			moving_blockers.append((vx - hx, vy - hy, vx + hx, vy + hy))
 
 		# Optional wet corridor (not every run)
 		ensure_corr_p = float(_tuned.get("ensure_wet_corridor_pct", 0.0))
@@ -389,89 +706,149 @@ def run_one(
 		human_states: List[Dict[str, Any]] = []
 		global_wet = bool(scn.get("hazards", {}).get("traction"))
 		for cfg in human_cfgs:
-			scale = float(cfg.get("height_scale", 1.0))
-			h_radius = max(0.15, 0.25 * scale)
-			h_length = max(1.0, 1.6 * scale)
-			cross_x = float(cfg.get("cross_x", 0.5 * Lx))
+			profile = _human_profile(cfg)
+			base_path = _build_human_path(cfg, (Lx, Ly), border)
+			base_segments, _ = _segments_from_points(base_path)
 			base_slip = float(cfg.get("p_slip", tuned_slip_prob))
 			use_local_wet = global_wet or bool(cfg.get("force_wet", False))
 			if taxonomy.get("occlusion"):
 				base_slip = min(0.75, base_slip)
-				cfg.setdefault("trigger_mu", 0.6)
-				cfg.setdefault("trigger_sigma", 0.12)
 				cfg.setdefault("start_delay_s", 0.2 + rng.uniform(0.2, 0.6))
 				cfg.setdefault("slip_min_exposure_s", max(0.35, slip_min_exposure_s))
 			if not use_local_wet:
 				base_slip = min(0.05, base_slip * 0.2)
 				cfg["slip_min_exposure_s"] = max(cfg.get("slip_min_exposure_s", slip_min_exposure_s), 0.6)
 			cfg["p_slip"] = base_slip
-			wet_aabb_local: Tuple[float, float, float, float] | None = None
-			if use_local_wet:
-				wet_band_h = 2.2
-				wet_y0 = max(border, 0.5 * Ly - 0.5 * wet_band_h)
-				wet_y1 = min(Ly - border, 0.5 * wet_band_h + 0.5 * Ly)
-				wet_id = _spawn_wet_patch(cross_x - 1.0, wet_y0, cross_x + 1.0, wet_y1, mu=wet_mu)
+			local_wet_aabb = None
+			if use_local_wet and base_path:
+				xs = [pt[0] for pt in base_path]
+				ys = [pt[1] for pt in base_path]
+				wet_zone = [
+					max(0.0, min(xs) - 1.0),
+					max(0.0, min(ys) - 0.5),
+					min(Lx, max(xs) + 1.0),
+					min(Ly, max(ys) + 0.5),
+				]
+				wet_id = _spawn_wet_patch(wet_zone[0], wet_zone[1], wet_zone[2], wet_zone[3], mu=wet_mu)
 				patch_ids.append(wet_id)
 				ignored_for_collision.add(wet_id)
-				wet_aabb_local = (cross_x - 1.0, wet_y0, cross_x + 1.0, wet_y1)
-				dynamic_wet_aabbs.append(wet_aabb_local)
+				local_wet_aabb = tuple(wet_zone)
+				dynamic_wet_aabbs.append(local_wet_aabb)
 			group_size = max(1, int(cfg.get("group_size", 1)))
-			offset_step = 0.6
+			offset_step = float(cfg.get("group_spacing_m", 0.6))
 			for member_idx in range(group_size):
 				offset = (member_idx - 0.5 * (group_size - 1)) * offset_step
-				hid = spawn_human(radius=h_radius, length=h_length)
-				human_states.append({
+				member_path = _offset_path(base_path, base_segments, offset, (Lx, Ly), border)
+				member_segments, _ = _segments_from_points(member_path)
+				if member_path:
+					safe_x, safe_y = _resolve_spawn_point(member_path[0][0], member_path[0][1],
+					                                      profile["radius"] + 0.05, (Lx, Ly), border,
+					                                      moving_blockers, max_iter=20)
+					dx, dy = safe_x - member_path[0][0], safe_y - member_path[0][1]
+					if abs(dx) > 1e-3 or abs(dy) > 1e-3:
+						member_path = [_clamp_point([pt[0] + dx, pt[1] + dy], (Lx, Ly), border) for pt in member_path]
+						member_segments, _ = _segments_from_points(member_path)
+					moving_blockers.append((safe_x - profile["radius"], safe_y - profile["radius"],
+					                        safe_x + profile["radius"], safe_y + profile["radius"]))
+				hid = spawn_human(radius=profile["radius"], length=profile["length"])
+				state_behaviors = set(profile["behaviors"])
+				state = {
 					"id": hid,
 					"cfg": dict(cfg),
-					"phase": "idle",
+					"phase": "stationary" if "stationary" in state_behaviors else "idle",
+					"behaviors": state_behaviors,
+					"path": member_path,
+					"segments": member_segments,
+					"radius": profile["radius"],
+					"length": profile["length"],
+					"loop_path": bool(cfg.get("loop", False)),
+					"speed_range": profile["speed"],
+					"speed_mps": rng.uniform(*profile["speed"]),
+					"next_start_t": rng.uniform(0.4, 1.2) + float(cfg.get("start_delay_s", 0.0)),
 					"active_since": 0.0,
+					"seg_idx": 0,
+					"seg_progress": 0.0,
 					"wet_since": None,
 					"fallen_since": None,
-					"next_start_t": float(cfg.get("start_delay_s", 0.0) + rng.uniform(2.5, 5.5)),
-					"cross_x": cross_x + offset,
-					"duration": float(cfg.get("duration_s_running", cfg.get("duration_s", 4.5))),
-					"wet_aabb": wet_aabb_local,
-					"slipped": False,
-					"radius": h_radius,
-				})
-		use_human = bool(human_states)
+					"wet_aabb": local_wet_aabb,
+					"p_slip": base_slip,
+					"slip_min_exposure": float(cfg.get("slip_min_exposure_s", slip_min_exposure_s)),
+					"z_base": profile["radius"] + 0.5 * profile["length"],
+					"posture_state": "upright",
+					"posture_scale": 1.0,
+					"props": {},
+					"last_pose": (-10.0, -10.0),
+					"hold_until": None,
+					"late_react_triggered": False,
+				}
+				if "push_cart" in state_behaviors:
+					cart_id, cart_h = _spawn_cart_body()
+					state["props"]["cart"] = {"id": cart_id, "height": cart_h, "offset": float(cfg.get("cart_offset_m", 0.9))}
+				if "carry_payload" in state_behaviors:
+					payload_id, payload_h = _spawn_payload_box()
+					state["props"]["payload"] = {"id": payload_id, "height": payload_h, "dropped": False}
+				human_states.append(state)
+		use_human = len(human_states) > 0
 
-		# Vehicle state (for simple kinematic motion)
+		env_cfg = scn.get("environment", {}) or {}
+		safety_zones_cfg = (scn.get("layout", {}) or {}).get("safety_zones", [])
+
 		vehicle_states: List[Dict[str, Any]] = []
 		for vmeta in vehicle_meta:
-			path_pts = [tuple(pt) for pt in vmeta.get("path", []) if isinstance(pt, (list, tuple)) and len(pt) == 2]
+			raw_pts = vmeta.get("path") or []
+			path_pts = [list(pt) for pt in raw_pts if isinstance(pt, (list, tuple)) and len(pt) == 2]
+			segments, _ = _segments_from_points(path_pts)
+			half_ext = vmeta.get("half_extents") or [0.5, 0.4, 0.4]
 			state = {
+				"id": vmeta.get("id"),
 				"body_id": vmeta.get("body_id"),
 				"path": path_pts,
-				"path_y": [pt[1] for pt in path_pts],
-				"lane_x_base": path_pts[0][0] if path_pts else 0.0,
-				"lane_offset": 0.0,
+				"segments": segments,
 				"speed": float(vmeta.get("speed_mps", 0.0)),
 				"direction": 1,
-				"curr_idx": 0,
-				"progress": 0.0,
-				"half_extents": list(vmeta.get("half_extents", [0.5, 0.4, 0.4])),
+				"seg_idx": 0,
+				"seg_progress": 0.0,
+				"loop": bool(vmeta.get("loop", False)),
+				"ping_pong": bool(vmeta.get("ping_pong", True)),
+				"half_extents": half_ext,
+				"height": float(vmeta.get("base_z", half_ext[2])),
+				"reflective": bool(vmeta.get("reflective")),
 			}
-			state["height"] = state["half_extents"][2] if state["half_extents"] else 0.4
-			if state["body_id"] is not None:
-				vehicle_states.append(state)
+			body_id = state["body_id"]
+			if path_pts:
+				sx, sy = path_pts[0]
+			else:
+				if body_id is not None:
+					try:
+						pos, _orn = p.getBasePositionAndOrientation(body_id)
+						sx, sy = pos[0], pos[1]
+					except Exception:
+						sx, sy = start[0], start[1]
+				else:
+					sx, sy = start[0], start[1]
+			collision_radius = max(abs(half_ext[0]), abs(half_ext[1])) + 0.1
+			sx, sy = _resolve_spawn_point(sx, sy, collision_radius, (Lx, Ly), border, static_aabbs)
+			if segments:
+				first_dir = segments[0]["dir"]
+				heading = math.atan2(first_dir[1], first_dir[0])
+			else:
+				heading = float(vmeta.get("yaw", 0.0))
+			state["last_pose"] = (sx, sy, heading)
+			state["aabb"] = _vehicle_aabb(state, sx, sy)
+			if body_id is not None:
+				try:
+					p.resetBasePositionAndOrientation(body_id, [sx, sy, state.get("height", 0.4)],
+					                                  p.getQuaternionFromEuler([0.0, 0.0, heading]))
+				except Exception:
+					pass
+			vehicle_states.append(state)
 
-		# Floor events (spills, cleaning foam, etc.)
 		floor_event_states = [
 			{"cfg": evt, "spawned": False, "body_id": None}
 			for evt in hazards.get("floor_events", []) if isinstance(evt, dict)
 		]
 
-		# Safety configuration
-		safety_zones_cfg = (scn.get("layout", {}) or {}).get("safety_zones", [])
-		env_cfg = scn.get("environment", {}) or {}
-		battery_cfg = env_cfg.get("battery", {}) or {}
-		battery_level = float(battery_cfg.get("initial_pct", 0.85))
-		battery_low_pct = float(battery_cfg.get("low_pct_behavior", 0.25))
-		voltage_sag_pct = float(battery_cfg.get("voltage_sag_pct", 0.05))
-
-		# Injectors (each gated by probability p if provided)
-		injectors = []  # type: ignore[list-item-type]
+		injectors: List[Injector] = []
 		inj_cfg = (_tuned.get("injectors") or {}) if isinstance(_tuned, dict) else {}
 
 		if isinstance(inj_cfg.get("lidar_blackout"), dict):
@@ -488,7 +865,7 @@ def run_one(
 
 		if isinstance(inj_cfg.get("falling_object"), dict):
 			c = inj_cfg["falling_object"]
-			if rng.random() < float(c.get("p", 0.40)):
+			if rng.random() < float(c.get("p", 0.4)):
 				inj = FallingObjectInjector(
 					drop_x=float(c.get("drop_x", 8.0)),
 					drop_y=float(c.get("drop_y", 10.0)),
@@ -523,12 +900,6 @@ def run_one(
 					launch_within_r=float(c.get("launch_within_r", 4.0)),
 				))
 
-		# Human state
-		crossing_active = False
-		crossing_started_at = 0.0
-		slipped = False
-		human_wet_since: float | None = None
-
 		# Logging
 		out_dir.mkdir(parents=True, exist_ok=True)
 		rows: List[List[float | str]] = []
@@ -536,16 +907,41 @@ def run_one(
 			"t", "x", "y", "yaw", "v_cmd", "w_cmd",
 			"min_clearance_lidar", "min_clearance_geom",
 			"event", "event_detail", "in_wet", "human_phase", "near_stop",
-			"min_ttc"
+			"min_ttc", "odom_v", "odom_w", "imu_ax", "imu_ay", "imu_wz"
 		]
 
-		# Static AABBs
-		static_aabbs: List[Tuple[float, float, float, float]] = []
-		for wid in wall_ids:
-			if wid in vehicle_body_ids:
+		odom_meas = (0.0, 0.0)
+		imu_meas = (0.0, 0.0, 0.0)
+
+		def _log_row(event: str, detail: str, *, human_phase: str | None = None,
+		             near_stop: int = 0, position: Tuple[float, float, float] | None = None,
+		             wet_flag: int | None = None) -> None:
+			px, py, pyaw = position if position is not None else (new_x, new_y, new_yaw)
+			in_wet_flag = wet_flag if wet_flag is not None else int(_compute_in_wet(px, py))
+			rows.append([
+				t, px, py, pyaw, v_cmd, w_cmd,
+				min_clear_lidar, min_clear_geom,
+				event, detail,
+				in_wet_flag,
+				human_phase or _human_phase_str(),
+				near_stop,
+				min_ttc if min_ttc < 1e8 else "",
+				odom_meas[0], odom_meas[1],
+				imu_meas[0], imu_meas[1], imu_meas[2],
+			])
+
+		reflective_regions: List[Dict[str, Any]] = []
+		for sobj in env.get("static_obstacles", []) or []:
+			if not sobj.get("reflective"):
 				continue
-			(a0, a1) = p.getAABB(wid)
-			static_aabbs.append((a0[0], a0[1], a1[0], a1[1]))
+			aabb = sobj.get("aabb")
+			if not aabb or len(aabb) != 4:
+				continue
+			reflective_regions.append({
+				"aabb": [float(aabb[0]), float(aabb[1]), float(aabb[2]), float(aabb[3])],
+				"strength": float(sobj.get("reflectivity", 0.65)),
+				"trigger": float(sobj.get("trigger_m", 1.6)),
+			})
 
 		# World digest (best-effort)
 		try:
@@ -563,17 +959,18 @@ def run_one(
 				],
 			}
 			digest = build_world_digest(
-				static_aabbs,
-				hazards_digest,
-				(start[0], start[1]),
-				(goal[0], goal[1]),
-				floor_zones=floor_zones_meta,
-				transition_zones=transition_zones_meta,
-				static_objects=list(env.get("static_obstacles", [])),
-				vehicles=vehicle_meta,
-				safety_zones=(safety_zones_cfg or []),
-				environment=env_cfg,
-			)
+					static_aabbs,
+					hazards_digest,
+					(start[0], start[1]),
+					(goal[0], goal[1]),
+					floor_zones=floor_zones_meta,
+					transition_zones=transition_zones_meta,
+					static_objects=list(env.get("static_obstacles", [])),
+					vehicles=vehicle_meta,
+					safety_zones=(safety_zones_cfg or []),
+					environment=env_cfg,
+					aisles=env.get("aisles_meta"),
+				)
 			write_world_digest(out_dir, digest)
 		except Exception:
 			pass
@@ -597,38 +994,14 @@ def run_one(
 		except Exception:
 			pass
 
-		# Plan initial path
-		grid, res = rasterize_occupancy((Lx, Ly), [(_inflate(a, radius)) for a in static_aabbs], res=0.25)
-		inflate_cells = max(0, int(round(radius / max(1e-6, res))))
-		grid_infl = inflate_grid(grid, inflate_cells)
-		s_ix, s_iy = _to_cell(start[0], start[1], res, grid_infl)
-		g_ix, g_iy = _to_cell(goal[0], goal[1], res, grid_infl)
-		path_cells = astar(grid_infl, (s_ix, s_iy), (g_ix, g_iy))
-		waypoints: List[Tuple[float, float]] = _cells_to_waypoints(path_cells, res) or [(goal[0], goal[1])]
-
-		# Camera
-		run_dir_name = out_dir.name
-		batch_root = out_dir.parent.parent
-		cam_conf = {
-			"cx": 0.5 * Lx,
-			"cy": 0.5 * Ly,
-			"cz": max(10.0, 0.7 * max(Lx, Ly)),
-			"tx": 0.5 * Lx,
-			"ty": 0.5 * Ly,
-			"fov_deg": 30.0,
-			"event_height": 6.0,
-		}
-		event_cam_height = float(cam_conf.get("event_height", cam_conf["cz"] * 0.4))
+		# Reference controllers now live outside the simulator. Default to a direct goal waypoint
+		# so run_one can still drive the robot without internal planning logic.
+		waypoints: List[Tuple[float, float]] = [(goal[0], goal[1])]
 
 		agent_cfg = (scn.get("agents") or [{}])[0]
 		max_speed_nominal = float(agent_cfg.get("max_speed_mps", 1.2))
-		current_max_speed = max_speed_nominal
-		battery_drain_rate = 0.0005 * (1.0 + voltage_sag_pct)
-		safety_zone_hits: set[str] = set()
-		safety_zone_state: Dict[str, Dict[str, Any]] = {}
 
 		# Control state
-		stop_until = 0.0
 		prev_err = np.array([0.0, 0.0])
 		wp_idx = 0
 		success = False
@@ -638,12 +1011,6 @@ def run_one(
 		min_ttc: float = 1e9
 		v_cmd = 0.0
 		w_cmd = 0.0
-		minclr_below_since: Optional[float] = None
-
-		# Replan policy knobs: a bit less aggressive than before
-		MINCLR_THRESH = float(scn.get("planner", {}).get("minclr_replan_m", 0.35))  # was 0.35
-		MINCLR_GRACE = float(scn.get("planner", {}).get("minclr_grace_s", 1.0))     # was 0.6
-		STALL_GRACE = float(scn.get("planner", {}).get("stall_grace_s", 3.0))
 
 		def _human_phase_str() -> str:
 			if any(h["phase"] == "fallen" for h in human_states):
@@ -682,186 +1049,74 @@ def run_one(
 					return tz
 			return None
 
-		def _attempt_replan(reason: str, px: float, py: float, yaw_r: float, v_r: float, w_r: float) -> bool:
-			dyn_obs: List[Tuple[float, float, float, float]] = [(_inflate(a, radius)) for a in static_aabbs]
-			for fh in _fallen_human_aabbs([h["id"] for h in human_states if h["phase"] == "fallen"]):
-				dyn_obs.append(_inflate(fh, radius * 1.1))
-			for v in vehicle_states:
-				body = v.get("body_id")
-				if body is None:
-					continue
-				try:
-					a0, a1 = p.getAABB(body)
-					dyn_obs.append(_inflate((a0[0], a0[1], a1[0], a1[1]), radius * 0.1))
-				except Exception:
-					continue
-			grid2, res2 = rasterize_occupancy((Lx, Ly), dyn_obs, res=0.25)
-			inflate_cells2 = max(0, int(round(radius / max(1e-6, res2))))
-			grid_infl2 = inflate_grid(grid2, inflate_cells2)
-			ci, cj = _to_cell(px, py, res2, grid_infl2)
-			gi, gj = _to_cell(goal[0], goal[1], res2, grid_infl2)
-			new_cells = astar(grid_infl2, (ci, cj), (gi, gj))
-			new_wps = _cells_to_waypoints(new_cells, res2)
-			if new_wps:
-				nonlocal waypoints, wp_idx
-				waypoints = new_wps
-				wp_idx = 0
-				rows.append([t, px, py, yaw_r, v_r, w_r,
-				             min_clear_lidar, min_clear_geom,
-				             "replan", reason, int(_compute_in_wet(px, py)),
-				             _human_phase_str(), int(v_r < 0.2),
-				             min_ttc if min_ttc < 1e8 else ""])
-				return True
-			return False
-
-		_heading_map = {
-			"east": 0.0,
-			"north": math.pi / 2.0,
-			"west": math.pi,
-			"south": -math.pi / 2.0,
-		}
-
-		def _apply_safety_zones(px: float, py: float, yaw_r: float, v_r: float, t_cur: float, speed_cap: float) -> tuple[float, str | None]:
-			nonlocal stop_until
-			triggered = None
-			inside_now: set[str] = set()
-			for idx, zone in enumerate(safety_zones_cfg or []):
-				zone_box = zone.get("zone")
-				if not zone_box or not _pt_in_aabb(px, py, tuple(zone_box)):
-					continue
-				ztype = (zone.get("type") or "").lower()
-				zid = str(zone.get("id") or f"zone_{idx}")
-				inside_now.add(zid)
-				if ztype == "one_way":
-					heading = _heading_map.get((zone.get("heading") or "east").lower(), 0.0)
-					diff = abs(((yaw_r - heading + math.pi) % (2 * math.pi)) - math.pi)
-					if diff > (math.pi / 3.0):
-						v_r = min(v_r, 0.4)
-						triggered = zone.get("id")
-				elif ztype == "restricted":
-					v_r = min(v_r, 0.15)
-					triggered = zone.get("id")
-				elif ztype == "emergency_stop":
-					state = safety_zone_state.setdefault(zid, {"hold_until": -1.0, "inside": False})
-					if not state.get("inside"):
-						state["inside"] = True
-						state["hold_until"] = t_cur + float(zone.get("hold_s", 1.0))
-					hold_until = float(state["hold_until"])
-					if t_cur < hold_until:
-						stop_until = max(stop_until, hold_until)
-						v_r = 0.0
-					else:
-						v_r = min(v_r, max(0.2, speed_cap * 0.4))
-					triggered = zone.get("id")
-			# reset inside flags for zones not currently occupied
-			for zid, state in safety_zone_state.items():
-				state["inside"] = zid in inside_now
-			return v_r, triggered
-
-		def _vehicle_aabb(v: Dict[str, Any], x: float, y: float) -> Tuple[float, float, float, float]:
-			half = v.get("half_extents") or [0.5, 0.4, 0.4]
-			hx, hy = abs(half[0]), abs(half[1])
-			return (x - hx, y - hy, x + hx, y + hy)
-
-		def _aabb_overlap(a, b) -> bool:
-			return not (a[2] <= b[0] or a[0] >= b[2] or a[3] <= b[1] or a[1] >= b[3])
-
-		def _blocked(aabb) -> bool:
-			for obs in static_aabbs:
-				if _aabb_overlap(obs, aabb):
-					return True
-			return False
-
-		def _overlaps_vehicle(aabb, exclude: Dict[str, Any] | None = None) -> bool:
-			for v in vehicle_states:
-				if exclude is not None and v is exclude:
-					continue
-				va = v.get("aabb")
-				if va is not None and _aabb_overlap(va, aabb):
-					return True
-			return False
-
 		def _update_vehicles(dt: float, t_cur: float) -> None:
 			for v in vehicle_states:
 				body = v.get("body_id")
-				path = v.get("path") or []
-				path_y = v.get("path_y") or [pt[1] for pt in path]
-				speed = v.get("speed", 0.0)
-				if body is None or speed <= 0.0 or len(path_y) < 2:
+				segments = v.get("segments") or []
+				speed = float(v.get("speed", 0.0))
+				if body is None or speed <= 0.0 or not segments:
 					continue
-				if t_cur < float(v.get("blocked_until", 0.0)):
-					continue
-				curr_idx = v.get("curr_idx", 0)
-				direction = v.get("direction", 1)
-				next_idx = curr_idx + direction
-				if next_idx < 0 or next_idx >= len(path_y):
-					direction *= -1
-					v["direction"] = direction
-					next_idx = curr_idx + direction
-					if next_idx < 0 or next_idx >= len(path_y):
-						continue
-				base_lane = v.setdefault("lane_x_base", path[0][0] if path else 0.0)
-				lane_x = base_lane + v.get("lane_offset", 0.0)
-				start_pt = [lane_x, path_y[curr_idx]]
-				end_pt = [lane_x, path_y[next_idx]]
-				seg_len = abs(end_pt[1] - start_pt[1])
-				if seg_len < 1e-6:
-					v["curr_idx"] = next_idx
-					v["progress"] = 0.0
-					continue
-				progress = v.get("progress", 0.0) + speed * dt
-				while progress >= seg_len:
-					progress -= seg_len
-					curr_idx = next_idx
-					next_idx = curr_idx + direction
-					if next_idx < 0 or next_idx >= len(path_y):
-						direction *= -1
-						v["direction"] = direction
-						next_idx = curr_idx + direction
-						if next_idx < 0 or next_idx >= len(path_y):
-							break
-					start_pt = [lane_x, path_y[curr_idx]]
-					end_pt = [lane_x, path_y[next_idx]]
-					seg_len = abs(end_pt[1] - start_pt[1])
-					if seg_len < 1e-6:
-						break
-				v["curr_idx"] = curr_idx
-				v["progress"] = progress
-				if seg_len < 1e-6:
-					continue
-				frac = progress / max(1e-6, seg_len)
-				new_x = lane_x
-				new_y = start_pt[1] + frac * (end_pt[1] - start_pt[1])
-				yaw = math.atan2(end_pt[1] - start_pt[1], 1e-6)
+				step_remaining = speed * dt
+				while step_remaining > 1e-6:
+					seg_idx = max(0, min(len(segments) - 1, int(v.get("seg_idx", 0))))
+					v["seg_idx"] = seg_idx
+					seg = segments[seg_idx]
+					direction = int(v.get("direction", 1)) or 1
+					progress = float(v.get("seg_progress", 0.0))
+					if direction > 0:
+						remain = seg["len"] - progress
+						if remain <= 1e-6:
+							if seg_idx >= len(segments) - 1:
+								if v.get("loop", False):
+									v["seg_idx"] = 0
+									v["seg_progress"] = 0.0
+									continue
+								if v.get("ping_pong", True):
+									v["direction"] = -1
+									continue
+								break
+							else:
+								v["seg_idx"] = seg_idx + 1
+								v["seg_progress"] = 0.0
+								continue
+						move = min(step_remaining, remain)
+						v["seg_progress"] = progress + move
+						step_remaining -= move
+					else:
+						if progress <= 1e-6:
+							if seg_idx <= 0:
+								if v.get("loop", False):
+									v["seg_idx"] = len(segments) - 1
+									v["seg_progress"] = segments[-1]["len"]
+									continue
+								if v.get("ping_pong", True):
+									v["direction"] = 1
+									continue
+								break
+							else:
+								v["seg_idx"] = seg_idx - 1
+								v["seg_progress"] = segments[v["seg_idx"]]["len"]
+								continue
+						move = min(step_remaining, progress)
+						v["seg_progress"] = progress - move
+						step_remaining -= move
+				seg_idx = max(0, min(len(segments) - 1, int(v.get("seg_idx", 0))))
+				v["seg_idx"] = seg_idx
+				seg = segments[seg_idx]
+				length = max(1e-6, seg["len"])
+				frac = float(v.get("seg_progress", 0.0)) / length
+				x_start, y_start = seg["start"]
+				x_end, y_end = seg["end"]
+				new_x = x_start + frac * (x_end - x_start)
+				new_y = y_start + frac * (y_end - y_start)
+				heading = math.atan2(y_end - y_start, x_end - x_start)
+				if v.get("direction", 1) < 0:
+					heading += math.pi
 				aabb = _vehicle_aabb(v, new_x, new_y)
-				if _blocked(aabb) or _overlaps_vehicle(aabb, v):
-					shifted = False
-					for delta in (0.45, -0.45, 0.9, -0.9, 1.3, -1.3):
-						test_x = base_lane + delta
-						aabb_try = _vehicle_aabb(v, test_x, new_y)
-						if _blocked(aabb_try) or _overlaps_vehicle(aabb_try, v):
-							continue
-						v["lane_offset"] = delta
-						new_x = test_x
-						aabb = aabb_try
-						shifted = True
-						break
-					if not shifted:
-						v["progress"] = max(0.0, progress - speed * dt)
-						v["curr_idx"] = curr_idx
-						v["blocked_until"] = t_cur + 0.5
-						last_pose = v.get("last_pose")
-						if last_pose:
-							p.resetBasePositionAndOrientation(
-								body,
-								[last_pose[0], last_pose[1], v.get("height", 0.4)],
-								p.getQuaternionFromEuler([0.0, 0.0, last_pose[2]])
-							)
-						continue
 				v["aabb"] = aabb
-				v["last_pose"] = (new_x, new_y, yaw)
+				v["last_pose"] = (new_x, new_y, heading)
 				p.resetBasePositionAndOrientation(body, [new_x, new_y, v.get("height", 0.4)],
-				                                  p.getQuaternionFromEuler([0.0, 0.0, yaw]))
+				                                  p.getQuaternionFromEuler([0.0, 0.0, heading]))
 
 		# crude TTC helper
 		last_xy: Optional[Tuple[float, float]] = None
@@ -903,22 +1158,42 @@ def run_one(
 			last_xy = (x, y)
 
 		# Sensors
-		lidar_hz = float(((scn.get("sensors", {}) or {}).get("lidar", {}) or {}).get("hz", 10.0))
+		lidar_cfg = ((scn.get("sensors", {}) or {}).get("lidar") or {})
+		lidar_hz = float(lidar_cfg.get("hz", 10.0))
+		lidar_max = float(lidar_cfg.get("max_range_m", 8.0))
+		fog_density = float(lidar_cfg.get("fog_density", 0.0))
+		if taxonomy.get("visibility"):
+			fog_density = max(fog_density, 0.3)
+		lidar_noise = float(lidar_cfg.get("noise_sigma", tuned_lidar_noise))
+		lidar_dropout = float(lidar_cfg.get("dropout_pct", tuned_lidar_dropout))
 		lidar = _LidarSim(
 			beams=360,
 			hz=lidar_hz,
-			max_range=8.0,
-			dropout_pct_range=(tuned_lidar_dropout, tuned_lidar_dropout + 1e-9),
-			noise_sigma=tuned_lidar_noise,
-			jitter_ms_max=tuned_lidar_jitter
+			max_range=lidar_max,
+			dropout_pct_range=(lidar_dropout, lidar_dropout + 1e-9),
+			noise_sigma=lidar_noise,
+			jitter_ms_max=tuned_lidar_jitter,
+			fog_density=fog_density,
+			reflective_zones=reflective_regions,
 		)
-		odom = _OdomSim(bias_v=tuned_bias_v, bias_w=tuned_bias_w, noise_v=0.02, noise_w=0.01)
+		odom_cfg = ((scn.get("sensors", {}) or {}).get("odom") or {})
+		imu_cfg = ((scn.get("sensors", {}) or {}).get("imu") or {})
+		odom = _OdomSim(
+			bias_v=tuned_bias_v,
+			bias_w=tuned_bias_w,
+			noise_v=float(odom_cfg.get("noise_v", 0.02)),
+			noise_w=float(odom_cfg.get("noise_w", 0.01)),
+		)
+		imu = _IMUSim(
+			accel_noise=float(imu_cfg.get("noise_std", 0.02)),
+			gyro_noise=float(imu_cfg.get("gyro_noise", 0.015)),
+		)
+		imu = _IMUSim()
 		sensor_z = radius * 0.9
 		min_clear_lidar = 10.0
+		vehicle_guard_boxes: List[Tuple[float, float, float, float]] = []
 
 		# -------- main loop --------
-		best_goal_dist = float("inf")
-		last_progress_at = 0.0
 
 		while t < timeout:
 			pos, orn = p.getBasePositionAndOrientation(amr)
@@ -935,7 +1210,16 @@ def run_one(
 
 			# Update dynamic geometry
 			_update_vehicles(dt, t)
-
+			vehicle_guards: List[Tuple[float, float, float]] = []
+			vehicle_guard_boxes.clear()
+			for v in vehicle_states:
+				pose = v.get("last_pose")
+				if not pose:
+					continue
+				half_v = v.get("half_extents") or [0.5, 0.4, 0.4]
+				r_guard = max(abs(half_v[0]), abs(half_v[1])) + 0.4
+				vehicle_guards.append((pose[0], pose[1], r_guard))
+				vehicle_guard_boxes.append((pose[0] - r_guard, pose[1] - r_guard, pose[0] + r_guard, pose[1] + r_guard))
 			for evt_state in floor_event_states:
 				if evt_state["spawned"]:
 					continue
@@ -959,153 +1243,140 @@ def run_one(
 					})
 					evt_state["spawned"] = True
 					evt_state["body_id"] = bid
-					rows.append([t, x, y, yaw, v_cmd, w_cmd,
-					             min_clear_lidar, min_clear_geom,
-					             "floor_event", evt_state["cfg"].get("type", "spill"),
-					             int(_compute_in_wet(x, y)), _human_phase_str(), int(v_cmd < 0.2),
-					             min_ttc if min_ttc < 1e8 else ""])
-
-			# Battery-aware speed scaling
-			drain = dt * battery_drain_rate * (0.5 + v_cmd / max(0.1, max_speed_nominal))
-			battery_level = max(0.05, battery_level - drain)
-			if battery_level < battery_low_pct:
-				scale = max(0.3, battery_level / max(1e-6, battery_low_pct))
-			else:
-				scale = min(1.0, battery_level)
-			current_max_speed = max_speed_nominal * scale
-			v_cmd = min(v_cmd, current_max_speed)
-
-			surface_here = _surface_at(x, y)
-			surface_effects = (surface_here or {}).get("effects") or {}
-			brake_scale = float(surface_effects.get("brake_scale", 1.0))
-			local_stop = STOP_DIST * brake_scale
-			local_slow = SLOW_DIST * max(0.8, brake_scale)
-			if surface_here:
-				v_cmd = min(v_cmd, current_max_speed / max(1.0, brake_scale))
+					_log_row("floor_event_spawn", evt_state["cfg"].get("type", "spill"),
+					         position=(x, y, yaw), near_stop=int(v_cmd < 0.2))
 
 			transition_here = _transition_at(x, y)
 			transition_shadow = bool(((transition_here or {}).get("attributes") or {}).get("sensor_shadow", False))
-			if transition_here:
-				v_cmd = min(v_cmd, max(current_max_speed * 0.8, 0.4))
-
-			# Human proximity brake
-			nearest_h = None
-			min_h_dist = float("inf")
-			if use_human:
-				for h in human_states:
-					if h["phase"] not in ("running", "fallen"):
-						continue
-					try:
-						h_pos = p.getBasePositionAndOrientation(h["id"])[0]
-					except Exception:
-						continue
-					dist = math.hypot(h_pos[0] - x, h_pos[1] - y)
-					if dist < min_h_dist:
-						min_h_dist = dist
-						nearest_h = h_pos
-			if nearest_h is not None:
-				hx, hy, _hz = nearest_h
-				d = math.hypot(hx - x, hy - y)
-				ang_to_h = math.atan2(hy - y, hx - x)
-				rel = (ang_to_h - yaw + math.pi) % (2 * math.pi) - math.pi
-				in_front = abs(rel) < (math.pi / 2.0)
-				if in_front and d < local_stop:
-					stop_until = max(stop_until, t + STOP_HOLD)
-				if t < stop_until:
-					v_cmd = 0.0
-				elif in_front and d < local_slow:
-					v_cmd = min(v_cmd, max(0.3, current_max_speed * 0.5))
-
-			# Vehicle proximity brake
-			nearest_v = None
-			min_v_dist = float("inf")
-			for v in vehicle_states:
-				pose = v.get("last_pose")
-				if not pose:
-					continue
-				vx, vy = pose[0], pose[1]
-				dist = math.hypot(vx - x, vy - y)
-				if dist < min_v_dist:
-					min_v_dist = dist
-					nearest_v = pose
-			if nearest_v is not None:
-				vx, vy, vyaw = nearest_v
-				d = math.hypot(vx - x, vy - y)
-				ang_to_v = math.atan2(vy - y, vx - x)
-				rel = (ang_to_v - yaw + math.pi) % (2 * math.pi) - math.pi
-				in_front = abs(rel) < (math.pi / 2.3)
-				vehicle_stop = STOP_DIST + 0.6
-				vehicle_slow = SLOW_DIST + 0.6
-				if in_front and d < vehicle_stop:
-					stop_until = max(stop_until, t + STOP_HOLD * 1.2)
-				if t < stop_until:
-					v_cmd = 0.0
-				elif in_front and d < vehicle_slow:
-					v_cmd = min(v_cmd, max(0.25, current_max_speed * 0.4))
-
-			v_cmd, safety_hit = _apply_safety_zones(x, y, yaw, v_cmd, t, current_max_speed)
-			if safety_hit and safety_hit not in safety_zone_hits:
-				safety_zone_hits.add(safety_hit)
-				rows.append([t, x, y, yaw, v_cmd, w_cmd,
-				             min_clear_lidar, min_clear_geom,
-				             "safety_zone", safety_hit, int(_compute_in_wet(x, y)),
-				             _human_phase_str(), int(v_cmd < 0.2),
-				             min_ttc if min_ttc < 1e8 else ""])
+			surface_here = _surface_at(x, y)
+			surface_effects = (surface_here or {}).get("effects") or {}
+			slip_factor = float(surface_effects.get("slip_boost", 0.0))
 
 			# Human behavior update
 			if use_human:
 				for idx, h in enumerate(human_states):
 					body_id = h["id"]
 					cfg = h["cfg"]
+					behaviors = h.get("behaviors") or set()
 					if h["phase"] == "fallen":
 						if (t - (h["fallen_since"] or 0.0)) >= float(cfg.get("fall_duration_s", tuned_fall_duration)):
-							h["phase"] = "idle"
+							h["phase"] = "idle" if "stationary" not in behaviors else "stationary"
 							h["fallen_since"] = None
 							h["wet_since"] = None
 							h["next_start_t"] = t + float(cfg.get("recovery_delay_s", 6.0))
-							p.resetBasePositionAndOrientation(body_id, [-10.0, -10.0, 1.05], p.getQuaternionFromEuler([0, 0, 0]))
+							_update_human_pose(body_id, -10.0, -10.0, h["z_base"], 0.0)
+							payload = h.get("props", {}).get("payload")
+							if payload:
+								payload["dropped"] = True
+						continue
+					if h["phase"] == "stationary":
+						if h.get("path"):
+							origin = h["path"][0]
+							_update_human_pose(body_id, origin[0], origin[1], h["z_base"], 0.0)
+							_update_human_props(h, origin[0], origin[1], 0.0)
 						continue
 					if h["phase"] == "running":
-						duration = max(0.5, float(h.get("duration", 4.5)))
-						progress = min(1.0, (t - h["active_since"]) / duration)
-						if progress >= 1.0:
-							h["phase"] = "idle"
-							h["wet_since"] = None
-							h["next_start_t"] = t + max(2.0, 60.0 / max(0.1, float(cfg.get("rate_per_min", 2.0))))
-							p.resetBasePositionAndOrientation(body_id, [-10.0, -10.0, 1.05], p.getQuaternionFromEuler([0, 0, 0]))
+						if h.get("hold_until") and t < h["hold_until"]:
 							continue
-						yh = h["start_y"] + (h["end_y"] - h["start_y"]) * progress
-						xh = h["cross_x"]
-						radius_h = float(h.get("radius", 0.25))
-						aabb_h = (xh - radius_h, yh - radius_h, xh + radius_h, yh + radius_h)
-						if _blocked(aabb_h) or _overlaps_vehicle(aabb_h):
-							nudged = False
-							for delta in (0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0, 1.25, -1.25):
-								test_x = xh + delta
-								if test_x < border or test_x > (Lx - border):
+						if not vehicle_guards:
+							for v in vehicle_states:
+								pose = v.get("last_pose")
+								if not pose:
 									continue
-								aabb_try = (test_x - radius_h, yh - radius_h, test_x + radius_h, yh + radius_h)
-								if not _blocked(aabb_try) and not _overlaps_vehicle(aabb_try):
-									h["cross_x"] = test_x
-									xh = test_x
-									aabb_h = aabb_try
-									nudged = True
-									break
-							if not nudged:
-								h["active_since"] += dt
-								continue
-						p.resetBasePositionAndOrientation(body_id, [xh, yh, 1.05], p.getQuaternionFromEuler([0, 0, 0]))
+								half_v = v.get("half_extents") or [0.5, 0.4, 0.4]
+								safe = max(abs(half_v[0]), abs(half_v[1])) + 0.4
+								vehicle_guards.append((pose[0], pose[1], safe))
+						path_ref = h.get("path") or []
+						hx_prev, hy_prev = h.get("last_pose", (-999.0, -999.0))
+						if hx_prev < -100 or hy_prev < -100:
+							if path_ref:
+								hx_prev, hy_prev = path_ref[0]
+							else:
+								hx_prev = hy_prev = 0.0
+						blocked_by_vehicle = False
+						for (vx_b, vy_b, rad_b) in vehicle_guards:
+							if math.hypot(hx_prev - vx_b, hy_prev - vy_b) < (rad_b + h["radius"] + 0.1):
+								h["hold_until"] = t + 0.6
+								blocked_by_vehicle = True
+								break
+						if blocked_by_vehicle:
+							continue
+						segments = h.get("segments") or []
+						if not segments:
+							continue
+						step = max(0.0, float(h.get("speed_mps", 1.0))) * dt
+						if "step_back" in behaviors and rng.random() < 0.01:
+							step *= -0.5
+						completed = False
+						while abs(step) > 1e-6 and segments:
+							seg = segments[h["seg_idx"]]
+							if step >= 0.0:
+								remain = seg["len"] - h["seg_progress"]
+								if step <= remain:
+									h["seg_progress"] += step
+									step = 0.0
+								else:
+									step -= remain
+									h["seg_idx"] += 1
+									h["seg_progress"] = 0.0
+									if h["seg_idx"] >= len(segments):
+										if h.get("loop_path"):
+											h["seg_idx"] = 0
+										else:
+											h["phase"] = "idle"
+											h["wet_since"] = None
+											h["next_start_t"] = t + max(2.0, 60.0 / max(0.1, float(cfg.get("rate_per_min", 2.0))))
+											_update_human_pose(body_id, -10.0, -10.0, h["z_base"], 0.0)
+											completed = True
+											break
+							else:
+								back = min(abs(step), h["seg_progress"])
+								h["seg_progress"] -= back
+								step += back
+								while h["seg_progress"] <= 0 and h["seg_idx"] > 0:
+									h["seg_idx"] -= 1
+									h["seg_progress"] = segments[h["seg_idx"]]["len"]
+						if completed or h["phase"] != "running":
+							continue
+						seg = segments[h["seg_idx"]]
+						frac = seg["len"] and (h["seg_progress"] / seg["len"]) or 0.0
+						xh = seg["start"][0] + frac * (seg["end"][0] - seg["start"][0])
+						yh = seg["start"][1] + frac * (seg["end"][1] - seg["start"][1])
+						heading = math.atan2(seg["end"][1] - seg["start"][1], seg["end"][0] - seg["start"][0])
+						if "zig_zag" in behaviors:
+							amp = float(cfg.get("zigzag_amp_m", 0.3))
+							freq = float(cfg.get("zigzag_freq_hz", 0.6))
+							offset = amp * math.sin(2.0 * math.pi * freq * (t - h.get("active_since", t)))
+							xh += -math.sin(heading) * offset
+							yh += math.cos(heading) * offset
+							if "late_react" in behaviors and not h.get("late_react_triggered"):
+								if math.hypot(xh - x, yh - y) < 2.0 and rng.random() < 0.4:
+									h["late_react_triggered"] = True
+									h["hold_until"] = t + rng.uniform(0.2, 0.6)
+									_log_row("human_behavior", f"late_react:{cfg.get('id', idx)}",
+									         human_phase="running", near_stop=int(v_cmd < 0.2),
+									         position=(x, y, yaw), wet_flag=int(_compute_in_wet(xh, yh)))
+									continue
+						min_robot_clear = max(0.7, radius + h["radius"] + 0.35)
+						dist_robot = math.hypot(xh - x, yh - y)
+						if dist_robot < min_robot_clear:
+							shift = (min_robot_clear - dist_robot) + 0.05
+							xh += math.cos(heading) * shift
+							yh += math.sin(heading) * shift
+						_update_human_pose(body_id, xh, yh, h["z_base"], heading, h.get("posture_scale", 1.0))
+						_update_human_props(h, xh, yh, heading)
+						h["last_pose"] = (xh, yh)
 						wet_band = h.get("wet_aabb")
 						if wet_band and _pt_in_aabb(xh, yh, wet_band):
 							if h["wet_since"] is None:
 								h["wet_since"] = t
 						else:
 							h["wet_since"] = None
-						req_exposure = float(h["cfg"].get("slip_min_exposure_s", slip_min_exposure_s))
+						req_exposure = float(h.get("slip_min_exposure", slip_min_exposure_s))
 						if h["wet_since"] is not None and ((t - h["wet_since"]) >= req_exposure):
 							surface = _surface_at(xh, yh)
 							slip_boost = max(0.0, ((surface or {}).get("effects") or {}).get("slip_boost", 0.0))
-							slip_prob = float(cfg.get("p_slip", tuned_slip_prob))
+							slip_prob = float(h.get("p_slip", tuned_slip_prob))
 							if surface is None and not wet_band:
 								slip_prob = min(slip_prob, 0.05)
 							slip_prob = min(0.99, slip_prob + slip_boost)
@@ -1113,29 +1384,27 @@ def run_one(
 								h["phase"] = "fallen"
 								h["fallen_since"] = t
 								h["wet_since"] = None
-								p.resetBasePositionAndOrientation(body_id, [xh, yh, 0.25],
-								                                  p.getQuaternionFromEuler([math.pi / 2.0, 0.0, 0.0]))
-								rows.append([t, x, y, yaw, v_cmd, w_cmd,
-								             min_clear_lidar, min_clear_geom,
-								             "slip", f"{xh:.2f},{yh:.2f},{cfg.get('id', idx)}", int(_compute_in_wet(x, y)),
-								             "fallen", int(v_cmd < 0.2), min_ttc if min_ttc < 1e8 else ""])
-								if rng.random() < replan_on_fall_p:
-									_attempt_replan("human_fall", x, y, yaw, v_cmd, w_cmd)
+								p.resetBasePositionAndOrientation(body_id, [xh, yh, 0.25], p.getQuaternionFromEuler([math.pi / 2.0, 0.0, 0.0]))
+								_log_row("floor_slip", f"{xh:.2f},{yh:.2f},{cfg.get('id', idx)}",
+								         human_phase="fallen", near_stop=int(v_cmd < 0.2),
+								         position=(x, y, yaw), wet_flag=int(_compute_in_wet(xh, yh)))
+								payload = h.get("props", {}).get("payload")
+								if payload:
+									payload["dropped"] = True
+									p.resetBasePositionAndOrientation(payload["id"], [xh, yh, payload["height"] / 2.0],
+									                                   p.getQuaternionFromEuler([0.0, 0.0, 0.0]))
 						continue
-					# idle state
 					default_trigger = 0.6 if taxonomy.get("occlusion") else 1.0
 					trigger_distance = float(max(0.3, cfg.get("trigger_distance", default_trigger)))
-					if t >= h["next_start_t"] or abs(x - h["cross_x"]) < trigger_distance:
+					if h["phase"] == "idle" and (t >= h["next_start_t"] or (h.get("path") and math.hypot(x - h["path"][0][0], y - h["path"][0][1]) < trigger_distance)):
 						h["phase"] = "running"
 						h["active_since"] = t
-						start_side = (cfg.get("start_side") or "south").lower()
-						direction = -1 if start_side == "north" else 1
-						h["direction"] = direction
-						h["start_y"] = border if direction == 1 else (Ly - border)
-						h["end_y"] = (Ly - border) if direction == 1 else border
+						h["seg_idx"] = 0
+						h["seg_progress"] = 0.0
+						h["speed_mps"] = rng.uniform(*h.get("speed_range", (0.8, 1.4)))
+						h["hold_until"] = None
+						h["late_react_triggered"] = False
 						h["wet_since"] = None
-						p.resetBasePositionAndOrientation(body_id, [h["cross_x"], h["start_y"], 1.05], p.getQuaternionFromEuler([0, 0, 0]))
-
 			# Injectors
 			active_human_ids = [h["id"] for h in human_states if h["phase"] == "running"]
 			fallen_ids = [h["id"] for h in human_states if h["phase"] == "fallen"]
@@ -1159,6 +1428,7 @@ def run_one(
 					mod = inj.apply_lidar(state, lr, lidar.max_range)
 					if mod is not None:
 						lr = mod
+				lr = _apply_dynamic_reflections(lr, (x, y), vehicle_states, rng)
 				if transition_shadow:
 					if len(lr) > 0:
 						mask = rng.choice(len(lr), size=max(1, len(lr)//12), replace=False)
@@ -1167,10 +1437,12 @@ def run_one(
 				min_clear_lidar = float(np.min(lr))
 
 			# Integrate motion
-			ov, ow = _OdomSim(bias_v=tuned_bias_v, bias_w=tuned_bias_w).apply(v_cmd, w_cmd)
+			ov, ow = odom.apply(v_cmd, w_cmd, slip_factor=slip_factor)
+			odom_meas = (ov, ow)
 			new_yaw = yaw + ow * dt
 			new_x = max(border, min(Lx - border, x + (ov * math.cos(new_yaw)) * dt))
 			new_y = max(border, min(Ly - border, y + (ov * math.sin(new_yaw)) * dt))
+			imu_meas = imu.measure(ov, new_yaw, dt, surface_effects)
 			p.resetBasePositionAndOrientation(amr, [new_x, new_y, radius * 0.5], p.getQuaternionFromEuler([0, 0, new_yaw]))
 
 			human_body_ids = {h["id"] for h in human_states}
@@ -1199,6 +1471,8 @@ def run_one(
 			_update_min_ttc(new_x, new_y)
 
 			# Clearance (geom) vs static + dynamic human footprint
+			vehicle_guard_boxes: List[Tuple[float, float, float, float]] = []
+
 			def _min_clear_geom(px: float, py: float, ry: float) -> float:
 				dyn = list(static_aabbs)
 				for fh_id in [h["id"] for h in human_states if h["phase"] == "fallen"]:
@@ -1209,9 +1483,13 @@ def run_one(
 				for h in human_states:
 					if h["phase"] != "running":
 						continue
-					slice_w = 0.25
-					aabb = (h["cross_x"] - slice_w, max(0.0, ry - 0.6), h["cross_x"] + slice_w, min(Ly, ry + 0.6))
+					hx, hy = h.get("last_pose", (-999.0, -999.0))
+					if hx < -100 or hy < -100:
+						continue
+					slice_w = max(0.2, float(h.get("radius", 0.25)))
+					aabb = (hx - slice_w, max(0.0, hy - slice_w), hx + slice_w, min(Ly, hy + slice_w))
 					dyn.append(aabb)
+				dyn.extend(vehicle_guard_boxes)
 				return _clearance_to_aabbs(px, py, dyn)
 
 			cur_geom = _min_clear_geom(new_x, new_y, new_y)
@@ -1223,96 +1501,25 @@ def run_one(
 				wp_idx += 1
 				if wp_idx >= len(waypoints):
 					success = True
-					in_wet = int(_compute_in_wet(new_x, new_y))
-					rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd,
-					             min_clear_lidar, min_clear_geom,
-					             "success", "", in_wet, _human_phase_str(), int(v_cmd < 0.2),
-					             min_ttc if min_ttc < 1e8 else ""])
-					save, _ = should_save_frames(batch_root, "success")
-					if save:
-						_capture_frame(
-							batch_root,
-							run_dir_name,
-							cam_conf,
-							idx=0,
-							focus_xy=(new_x, new_y),
-							height_override=event_cam_height,
-						)
+					_log_row("mission_success", "", near_stop=int(v_cmd < 0.2))
 					break
-
-			# progress / stall replan
-			goal_dist = math.hypot(goal[0] - new_x, goal[1] - new_y)
-			if goal_dist < (best_goal_dist - 0.1):
-				best_goal_dist = goal_dist
-				last_progress_at = t
-			elif (t - last_progress_at) >= STALL_GRACE:
-				_attempt_replan("stall", new_x, new_y, new_yaw, v_cmd, w_cmd)
-				last_progress_at = t
-
-			# min-clearance replan (less aggressive)
-			if cur_geom < MINCLR_THRESH:
-				if minclr_below_since is None:
-					minclr_below_since = t
-				elif (t - minclr_below_since) >= MINCLR_GRACE:
-					if _attempt_replan("low_clearance", new_x, new_y, new_yaw, v_cmd, w_cmd):
-						minclr_below_since = None
-					else:
-						minclr_below_since = None
-			else:
-				minclr_below_since = None
 
 			# contacts & outcomes
 			# injector events
 			for inj in injectors:
 				ev = inj.pop_event()
 				if ev:
-					rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd,
-					             min_clear_lidar, min_clear_geom,
-					             ev[0], ev[1], int(_compute_in_wet(new_x, new_y)),
-					             _human_phase_str(), int(v_cmd < 0.2),
-					             min_ttc if min_ttc < 1e8 else ""])
+					_log_row(ev[0], ev[1], near_stop=int(v_cmd < 0.2))
 
 			if human_contact_flag:
-				in_wet = int(_compute_in_wet(new_x, new_y))
-				rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd,
-				             min_clear_lidar, min_clear_geom,
-				             "collision_human", "1", in_wet, _human_phase_str(), int(v_cmd < 0.2),
-				             min_ttc if min_ttc < 1e8 else ""])
-				save, _ = should_save_frames(batch_root, "collision_human")
-				if save:
-					_capture_frame(
-						batch_root,
-						run_dir_name,
-						cam_conf,
-						idx=1,
-						focus_xy=(new_x, new_y),
-						height_override=event_cam_height,
-					)
+				_log_row("collision_human", "1", near_stop=int(v_cmd < 0.2))
 				break
 			elif nonhuman_contact_count > 0:
-				in_wet = int(_compute_in_wet(new_x, new_y))
-				rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd,
-				             min_clear_lidar, min_clear_geom,
-				             "collision_static", str(nonhuman_contact_count), in_wet, _human_phase_str(), int(v_cmd < 0.2),
-				             min_ttc if min_ttc < 1e8 else ""])
-				save, _ = should_save_frames(batch_root, "contact_nonhuman")
-				if save:
-					_capture_frame(
-						batch_root,
-						run_dir_name,
-						cam_conf,
-						idx=3,
-						focus_xy=(new_x, new_y),
-						height_override=event_cam_height,
-					)
+				_log_row("collision_static", str(nonhuman_contact_count), near_stop=int(v_cmd < 0.2))
 				break
 
 			# regular log row
-			in_wet = int(_compute_in_wet(new_x, new_y))
-			rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd,
-			             min_clear_lidar, min_clear_geom,
-			             "", "", in_wet, _human_phase_str(), int(v_cmd < 0.2),
-			             min_ttc if min_ttc < 1e8 else ""])
+			_log_row("", "", near_stop=int(v_cmd < 0.2))
 
 			p.stepSimulation()
 			if realtime:
@@ -1322,21 +1529,7 @@ def run_one(
 			t += dt
 
 		if not success and (not rows or (rows and not rows[-1][8])):
-			in_wet = int(_compute_in_wet(new_x, new_y))
-			rows.append([t, new_x, new_y, new_yaw, v_cmd, w_cmd,
-			             min_clear_lidar, min_clear_geom,
-			             "other", "timeout", in_wet, _human_phase_str(), int(v_cmd < 0.2),
-			             min_ttc if min_ttc < 1e8 else ""])
-			save, _ = should_save_frames(batch_root, "other")
-			if save:
-				_capture_frame(
-					batch_root,
-					run_dir_name,
-					cam_conf,
-					idx=2,
-					focus_xy=(new_x, new_y),
-					height_override=event_cam_height,
-				)
+			_log_row("timeout", "elapsed", near_stop=int(v_cmd < 0.2))
 
 		_write_csv(out_dir / "run_one.csv", header, rows)
 		return {"success": success, "time": t, "steps": len(rows)}

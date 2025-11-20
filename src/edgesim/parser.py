@@ -63,6 +63,211 @@ KEYWORDS = {
 	                  "failsafe mode", "degraded sensing"],
 }
 
+_GROUP_CROSS_TERMS = [
+	"group of workers",
+	"group of people",
+	"group crossing",
+	"workers crossing",
+	"group of staff",
+]
+
+_MAIN_AISLE_TERMS = [
+	"main aisle",
+	"main-aisle",
+	"central aisle",
+]
+
+_T_INTERSECTION_TERMS = [
+	"t intersection",
+	"t-intersection",
+	"t junction",
+	"t-junction",
+]
+
+def _is_main_aisle_lr_prompt(text: str) -> bool:
+	text_l = text.lower()
+	has_main = any(term in text_l for term in _MAIN_AISLE_TERMS)
+	has_lr = ("left to right" in text_l) or ("left-right" in text_l) or ("left→right" in text_l)
+	return has_main and has_lr
+
+def _is_t_intersection_prompt(text: str) -> bool:
+	text_l = text.lower()
+	return any(term in text_l for term in _T_INTERSECTION_TERMS)
+
+def _apply_main_aisle_lr_layout(scn: Dict[str, Any]) -> None:
+	layout = scn.setdefault("layout", {})
+	layout["map_size_m"] = [20.0, 20.0]
+	layout["start"] = [2.0, 9.0]
+	layout["goal"] = [18.0, 9.0]
+	geom = layout.setdefault("geometry", {})
+	geom.clear()
+	geom["main_aisle_lane_y"] = 9.0
+	geom["main_aisle_lane_x"] = 10.0
+	geom["cross_access"] = True
+	# Split horizontal racks to leave a doorway near the crossing corridor
+	geom["racking"] = [
+		{"id": "Rack_lower_W", "aabb": [1.0, 6.0, 9.0, 7.0], "height_m": 3.0},
+		{"id": "Rack_lower_E", "aabb": [11.0, 6.0, 19.0, 7.0], "height_m": 3.0},
+		{"id": "Rack_upper_W", "aabb": [1.0, 11.0, 9.0, 12.0], "height_m": 3.0},
+		{"id": "Rack_upper_E", "aabb": [11.0, 11.0, 19.0, 12.0], "height_m": 3.0},
+	]
+	layout["aisles"] = [
+		{"id": "A_main", "name": "main_aisle", "rect": [1.0, 7.0, 19.0, 11.0], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.2], "racking": False},
+		{"id": "A_cross", "name": "cross_access", "rect": [9.0, 7.0, 11.0, 11.0], "type": "cross", "pad": [0.2, 0.0, 0.2, 0.0], "racking": False},
+	]
+	layout["floor_surfaces"] = [{
+		"id": "base_floor",
+		"type": "dry",
+		"zone": [0.0, 0.0, 20.0, 20.0],
+		"mu": 0.85,
+		"brake_scale": 1.0,
+		"slip_boost": 0.0,
+		"imu_vibe_g": 0.2,
+	}]
+	layout["transition_zones"] = []
+	layout["static_obstacles"] = []
+	layout["lock_aisles"] = True
+	layout["auto_aisles_from_paths"] = False
+	layout["paths_define_aisles"] = False
+	layout["main_lr_case"] = True
+	hazards = scn.setdefault("hazards", {})
+	hazards["vehicles"] = [{
+		"id": "ForkliftParked_01",
+		"type": "forklift",
+		"path": [[4.2, 4.0], [4.4, 4.0]],
+		"speed_mps": 0.0,
+		"warning_lights": False,
+		"reversing_bias": False,
+		"parked": True,
+	}]
+	hazards["human"] = [{
+		"path": "waypoints",
+		"waypoints": [[10.0, 6.5], [10.0, 13.5]],
+		"rate_per_min": 2.0,
+		"group_size": 3,
+		"speed_mps": [0.8, 1.4],
+		"motion_patterns": ["linear", "start_stop", "close_pass"],
+		"interaction_modes": ["mutual_yield", "human_yield", "robot_yield"],
+	}]
+	hazards["traction"] = hazards.get("traction", [])
+	hazards["floor_events"] = hazards.get("floor_events", [])
+	scn["taxonomy"]["multi_actor"] = True
+	scn["taxonomy"]["human_behavior"] = True
+
+def _apply_t_intersection_layout(scn: Dict[str, Any]) -> None:
+	layout = scn.setdefault("layout", {})
+	layout["map_size_m"] = [20.0, 20.0]
+	layout["start"] = [2.0, 9.0]
+	layout["goal"] = [18.0, 9.0]
+	geom = layout.setdefault("geometry", {})
+	geom.clear()
+	geom["t_intersection_case"] = True
+	geom["main_aisle_lane_y"] = 9.0
+	geom["branch_lane_x"] = 10.0
+	geom["racking"] = [
+		{"id": "Rack_lower_W", "aabb": [1.0, 6.0, 9.2, 7.0], "height_m": 3.0},
+		{"id": "Rack_lower_E", "aabb": [10.8, 6.0, 19.0, 7.0], "height_m": 3.0},
+		{"id": "Rack_upper_W", "aabb": [1.0, 11.0, 9.2, 12.0], "height_m": 3.0},
+		{"id": "Rack_upper_E", "aabb": [10.8, 11.0, 19.0, 12.0], "height_m": 3.0},
+		{"id": "Rack_branch_side_right", "aabb": [10.8, 5.5, 12.2, 17.0], "height_m": 3.0},
+		{"id": "Rack_branch_side_left", "aabb": [7.6, 11.5, 8.6, 16.0], "height_m": 3.0},
+	]
+	layout["aisles"] = [
+		{"id": "A_main", "name": "main_aisle", "rect": [1.0, 7.0, 19.0, 11.0], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.2], "racking": False},
+		{"id": "A_branch_vertical", "name": "branch_vertical", "rect": [9.6, 7.0, 10.4, 16.5], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.0], "racking": False, "appearance": "vertical_branch"},
+	]
+	layout["junctions"] = [
+		{"id": "J_center", "rect": [9.2, 7.2, 10.8, 11.0], "type": "t", "pad": [0.2, 0.0, 0.2, 0.0]}
+	]
+	layout["transition_zones"] = []
+	layout["static_obstacles"] = []
+	layout["lock_aisles"] = True
+	layout["auto_aisles_from_paths"] = False
+	layout["paths_define_aisles"] = False
+	layout["t_case"] = True
+	hazards = scn.setdefault("hazards", {})
+	hazards["vehicles"] = [{
+		"id": "ForkliftTBranch",
+		"type": "forklift",
+		"path": [[10.0, 4.0], [10.0, 14.5]],
+		"speed_mps": 1.0,
+		"warning_lights": True,
+		"reversing_bias": False,
+		"body_height_m": 0.9,
+		"base_height_m": 0.45,
+		"base_z": 0.9,
+	}]
+	hazards["human"] = [
+		{
+			"path": "waypoints",
+			"waypoints": [[10.0, 3.0], [10.0, 9.0]],
+			"group_size": 1,
+			"speed_mps": [0.7, 1.0],
+			"motion_patterns": ["hesitation", "emerge_from_occlusion", "start_stop"],
+			"interaction_modes": ["mutual_yield", "robot_yield"],
+		},
+		{
+			"path": "waypoints",
+			"waypoints": [[10.0, 15.5], [10.0, 11.0]],
+			"group_size": 1,
+			"speed_mps": [0.7, 1.2],
+			"motion_patterns": ["hesitation", "emerge_from_occlusion", "start_stop"],
+			"interaction_modes": ["mutual_yield", "robot_yield"],
+		}
+	]
+	hazards["traction"] = hazards.get("traction", [])
+	hazards["floor_events"] = hazards.get("floor_events", [])
+	scn["taxonomy"]["multi_actor"] = True
+	scn["taxonomy"]["human_behavior"] = True
+	scn["taxonomy"]["occlusion"] = True
+
+def _is_simple_forklift_aisle_prompt(text: str) -> bool:
+	text_l = text.lower()
+	has_forklift = _has_any(text_l, KEYWORDS["forklift"])
+	has_aisle = "aisle" in text_l or "aisles" in text_l
+	has_group = any(term in text_l for term in _GROUP_CROSS_TERMS) or _has_any(text_l, KEYWORDS["busy_crossing"])
+	return has_forklift and has_aisle and has_group
+
+def _apply_simple_forklift_aisle_layout(scn: Dict[str, Any]) -> None:
+	layout = scn.setdefault("layout", {})
+	layout["map_size_m"] = [20.0, 20.0]
+	layout["start"] = [2.0, 9.0]
+	layout["goal"] = [18.0, 9.0]
+	geom = layout.setdefault("geometry", {})
+	geom.clear()
+	main_lane_y = 9.0
+	forklift_lane_y = 12.0
+	geom["main_aisle_lane_y"] = main_lane_y
+	geom["forklift_aisle_lane_y"] = forklift_lane_y
+	geom["main_cross_x"] = 10.0
+	geom["racking"] = [
+		{"id": "Rack_lower", "aabb": [1.0, 6.5, 19.0, 7.5], "height_m": 3.0},
+		{"id": "Rack_upper", "aabb": [1.0, 10.5, 19.0, 11.5], "height_m": 3.0},
+		{"id": "Rack_far_upper", "aabb": [1.0, 13.5, 19.0, 14.5], "height_m": 3.0},
+	]
+	geom["open_storage"] = []
+	geom["endcaps"] = []
+	geom["blind_corners"] = []
+	layout["aisles"] = [
+		{"id": "A_main", "name": "main_aisle", "rect": [1.0, 7.5, 19.0, 10.5], "type": "straight"},
+		{"id": "A_forklift", "name": "forklift_aisle", "rect": [1.0, 11.5, 19.0, 13.5], "type": "straight"},
+	]
+	layout["floor_surfaces"] = [{
+		"id": "base_floor",
+		"type": "dry",
+		"zone": [0.0, 0.0, 20.0, 20.0],
+		"mu": 0.85,
+		"brake_scale": 1.0,
+		"slip_boost": 0.0,
+		"imu_vibe_g": 0.2,
+	}]
+	layout["transition_zones"] = []
+	layout["static_obstacles"] = []
+	layout["lock_aisles"] = True
+	layout["auto_aisles_from_paths"] = False
+	layout["paths_define_aisles"] = False
+	layout["simple_forklift_aisle"] = True
+
 
 def _layout_list(scn: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
 	layout = scn.setdefault("layout", {})
@@ -200,6 +405,18 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 	scn = new_scenario(n_runs)
 	text = prompt.lower()
 	nums = parse_numbers(prompt)
+	t_case = _is_t_intersection_prompt(text)
+	main_lr_case = _is_main_aisle_lr_prompt(text) and not t_case
+	simple_aisle_case = _is_simple_forklift_aisle_prompt(text) and not main_lr_case and not t_case
+	if t_case:
+		_apply_t_intersection_layout(scn)
+	elif main_lr_case:
+		_apply_main_aisle_lr_layout(scn)
+	elif simple_aisle_case:
+		_apply_simple_forklift_aisle_layout(scn)
+	if ("aisle" in text and "no aisle" not in text and "without aisle" not in text and
+	    not simple_aisle_case and not main_lr_case and not t_case):
+		scn["layout"]["auto_aisles_from_paths"] = True
 
 	# convenience handle for overrides
 	def _so_root() -> Dict[str, Any]:
@@ -207,7 +424,6 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 
 	# --- Visibility ---
 	if _has_any(text, KEYWORDS["visibility"]):
-		scn["sensors"]["lighting_dim"] = True
 		scn["taxonomy"]["visibility"] = True
 
 	# --- Traction (wet patch) ---
@@ -240,7 +456,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 		scn["taxonomy"]["traction"] = True
 
 	# --- Human crossing (generic, single stream) ---
-	if _has_any(text, KEYWORDS["human"]):
+	if _has_any(text, KEYWORDS["human"]) and not scn["layout"].get("main_lr_case") and not scn["layout"].get("t_case"):
 		rate = nums.get("human_rate_per_min", 2.0)  # every 30s default
 		cfg = _ensure_human_entry(scn, len(scn["hazards"]["human"]))
 		cfg.update({
@@ -253,19 +469,15 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 		cfg.setdefault("visibility_awareness", "normal")
 		scn["taxonomy"]["human_behavior"] = True
 
-	# --- Traffic → clutter density ---
-	if _has_any(text, KEYWORDS["traffic"]):
-		scn["hazards"]["clutter"]["aisle_density"] = 0.25
-
-	if _has_any(text, KEYWORDS["busy_aisle"]) or _has_any(text, KEYWORDS["congestion"]):
-		cl = scn["hazards"]["clutter"]
-		cl["aisle_density"] = max(cl.get("aisle_density", 0.0), 0.45)
-		cl["overhang_prob"] = max(cl.get("overhang_prob", 0.0), 0.25)
+	# --- Traffic / congestion keywords imply multi-actor environments ---
+	if (_has_any(text, KEYWORDS["traffic"]) or
+	    _has_any(text, KEYWORDS["busy_aisle"]) or
+	    _has_any(text, KEYWORDS["congestion"])):
 		scn["taxonomy"]["multi_actor"] = True
 
-	# --- Overhang probability ---
+	# --- Overhangs / irregular loads increase occlusion pressure ---
 	if _has_any(text, KEYWORDS["overhang"]):
-		scn["hazards"]["clutter"]["overhang_prob"] = 0.3
+		scn["taxonomy"]["occlusion"] = True
 
 	# --- Narrow aisle hint (keep lightweight; world builder may interpret later) ---
 	if _has_any(text, KEYWORDS["narrow"]):
@@ -323,14 +535,8 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 			"ensure_wet_corridor_width_m": 1.4,
 		})
 
-		# Make robot slightly less cautious; keep fallen as persistent obstacle; increase chaos
-		so_root.setdefault("brake", {}).update({
-			"stop_dist_m": 0.8,
-			"slow_dist_m": 1.8,
-			"stop_hold_s": 0.6,
-		})
+		# Keep fallen humans persistent and slippery
 		so_root.setdefault("human", {}).update({
-			"replan_on_fall_p": 0.20,   # less replanning → more conflict
 			"fall_duration_s": 10.0,    # linger longer
 			"slip_min_exposure_s": 0.25 # brief but non-zero exposure
 		})
@@ -346,9 +552,8 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 		scn["taxonomy"]["human_behavior"] = True
 		so_root = _so_root()
 		h = so_root.setdefault("human", {})
-		# more likely to slip and less likely for planner to replan nicely
+		# more likely to slip when distracted
 		h.setdefault("slip_prob", 0.95)
-		h.setdefault("replan_on_fall_p", 0.25)
 
 	if _has_any(text, KEYWORDS["worker_carry"]):
 		cfg = _ensure_human_entry(scn, 0)
@@ -389,7 +594,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 			cfg.setdefault("interaction_modes", []).append("mutual_yield")
 
 	# --- Blind corner / occluded crosswalks ---
-	if _has_any(text, KEYWORDS["blind_corner"]):
+	if _has_any(text, KEYWORDS["blind_corner"]) and not scn["layout"].get("t_case"):
 		scn["taxonomy"]["occlusion"] = True
 		so_root = _so_root()
 		so_inj = so_root.setdefault("injectors", {})
@@ -424,21 +629,28 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 		scn["taxonomy"]["occlusion"] = True
 
 	# --- Forklift-related chaos (load overhangs, drops) ---
-	if _has_any(text, KEYWORDS["forklift"]):
+	if _has_any(text, KEYWORDS["forklift"]) and not scn["layout"].get("main_lr_case") and not scn["layout"].get("t_case"):
 		scn["taxonomy"]["multi_actor"] = True
-		scn["hazards"]["clutter"]["overhang_prob"] = max(
-			scn["hazards"]["clutter"].get("overhang_prob", 0.0),
-			0.4,
-		)
-		lane_x = scn["layout"].setdefault("geometry", {}).get("blind_corner_lane_x", 9.0)
-		_ensure_vehicle(scn, {
-			"id": f"Forklift_{len(scn.setdefault('hazards', {}).setdefault('vehicles', []))+1:02d}",
+		geom = scn["layout"].setdefault("geometry", {})
+		lane_x = geom.get("forklift_aisle_lane_x")
+		lane_y = geom.get("forklift_aisle_lane_y")
+		if lane_x is None:
+			lane_x = geom.get("blind_corner_lane_x", 9.0)
+		veh_list = scn.setdefault('hazards', {}).setdefault('vehicles', [])
+		veh_id = f"Forklift_{len(veh_list)+1:02d}"
+		if lane_y is not None or geom.get("forklift_aisle_lane_x") is not None:
+			veh_id = f"ForkliftAisle_{len(veh_list)+1:02d}"
+		f_default = {
+			"id": veh_id,
 			"type": "forklift",
-			"path": [[lane_x, 2.0], [lane_x, 18.0]],
+			"path": [[2.0, lane_y if lane_y is not None else 2.0], [18.0, lane_y if lane_y is not None else 18.0]] if lane_y is not None else [[lane_x, 2.0], [lane_x, 18.0]],
 			"speed_mps": 1.2,
 			"warning_lights": True,
 			"reversing_bias": True,
-		})
+		}
+		if lane_y is not None or geom.get("forklift_aisle_lane_x") is not None:
+			f_default["reversing_bias"] = False
+		_ensure_vehicle(scn, f_default)
 
 	if _has_any(text, KEYWORDS["forklift_reverse"]):
 		_ensure_vehicle(scn, {
@@ -459,10 +671,6 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 	# --- Pallet jack / hand-cart => denser clutter & more nonhuman contacts ---
 	if _has_any(text, KEYWORDS["pallet_jack"]):
 		scn["taxonomy"]["multi_actor"] = True
-		scn["hazards"]["clutter"]["aisle_density"] = max(
-			scn["hazards"]["clutter"].get("aisle_density", 0.0),
-			0.35,
-		)
 		_ensure_vehicle(scn, {
 			"id": f"PalletJack_{len(scn.setdefault('hazards', {}).setdefault('vehicles', []))+1:02d}",
 			"type": "pallet_jack",
@@ -478,10 +686,6 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 			"height": 1.2,
 			"occlusion": True,
 		})
-		scn["hazards"]["clutter"]["aisle_density"] = max(
-			scn["hazards"]["clutter"].get("aisle_density", 0.0),
-			0.5,
-		)
 		scn["taxonomy"]["multi_actor"] = True
 
 	if _has_any(text, KEYWORDS["transition"]):
@@ -536,12 +740,27 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 	if "duration_s" in nums:
 		scn["runtime"]["duration_s"] = int(nums["duration_s"])  # type: ignore[arg-type]
 
+	if simple_aisle_case:
+		scn["hazards"]["human"] = []
+		cfg = _ensure_human_entry(scn, 0)
+		cfg.update({
+			"path": "waypoints",
+			"rate_per_min": 2.0,
+			"speed_mps": [0.8, 1.4],
+			"group_size": 3,
+			"waypoints": [[10.0, 6.5], [10.0, 12.5]],
+		})
+		cfg["motion_patterns"] = ["linear", "start_stop", "close_pass"]
+		cfg["interaction_modes"] = ["mutual_yield", "human_yield", "robot_yield"]
+		scn["taxonomy"]["human_behavior"] = True
+
 	_align_vehicle_paths(scn)
+
+	layout = scn.get("layout", {})
+	geom = layout.get("geometry", {}) or {}
 
 	# Align human crossings with blind-corner geometry so they don't spawn inside walls
 	if scn["taxonomy"].get("occlusion"):
-		layout = scn.get("layout", {})
-		geom = layout.get("geometry", {}) or {}
 		lane_x = geom.get("blind_corner_lane_x")
 		if lane_x is None:
 			for endcap in geom.get("endcaps", []):
@@ -555,24 +774,51 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 			for cfg in scn["hazards"].get("human", []):
 				cfg["cross_x"] = lane_x
 
+	if simple_aisle_case:
+		main_cross = geom.get("main_cross_x", 10.0)
+		for cfg in scn["hazards"].get("human", []):
+			cfg["cross_x"] = main_cross
+	if main_lr_case:
+		cross = geom.get("main_aisle_lane_x", 10.0)
+		for cfg in scn["hazards"].get("human", []):
+			cfg["cross_x"] = cross
+
+	if layout.get("t_case"):
+		branch_x = geom.get("branch_lane_x", 10.0)
+		for cfg in scn["hazards"].get("human", []):
+			cfg["cross_x"] = branch_x
+
 	return scn
 
 def _align_vehicle_paths(scn: Dict[str, Any]) -> None:
 	layout = scn.get("layout", {})
+	if layout.get("main_lr_case") or layout.get("t_case"):
+		return
 	Lx = float(layout.get("map_size_m", [20.0, 20.0])[0])
 	geom = layout.get("geometry", {})
 	endcaps = geom.get("endcaps", [])
 	lane_hint = geom.get("blind_corner_lane_x")
+	forklift_lane_x = geom.get("forklift_aisle_lane_x")
+	forklift_lane_y = geom.get("forklift_aisle_lane_y")
 	vehicles = scn.setdefault("hazards", {}).setdefault("vehicles", [])
 	for veh in vehicles:
 		if veh.get("type") != "forklift":
 			continue
+		path = veh.get("path") or []
+		if forklift_lane_y is not None and len(path) >= 2:
+			if all(abs(float(pt[1]) - float(forklift_lane_y)) < 0.3 for pt in path[:2]):
+				continue
+		if forklift_lane_x is not None and len(path) >= 2 and forklift_lane_y is None:
+			if all(abs(float(pt[0]) - float(forklift_lane_x)) < 0.3 for pt in path[:2]):
+				continue
+		if forklift_lane_y is not None:
+			if len(path) >= 2:
+				veh["path"] = [[path[0][0], forklift_lane_y], [path[1][0], forklift_lane_y]]
+				continue
 		if lane_hint is not None:
-			path = veh.get("path") or []
 			if len(path) >= 2:
 				veh["path"] = [[lane_hint, path[0][1]], [lane_hint, path[1][1]]]
 				continue
-		path = veh.get("path") or []
 		if not path:
 			continue
 		xs = [pt[0] for pt in path]
