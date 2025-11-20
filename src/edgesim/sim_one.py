@@ -157,6 +157,53 @@ def _fallen_human_aabb(hid: int | None) -> Tuple[float,float,float,float] | None
 	except Exception:
 		return None
 
+def _slip_prob_from_mu(mu: float) -> float:
+	r = 2.2
+	p = 1e-6 * (r ** ((0.40 - float(mu)) / 0.01))
+	if p < 0.0:
+		p = 0.0
+	if p > 1.0:
+		p = 1.0
+	return p
+
+def _fall_slide_offset(speed_mps: float, mu: float, heading: float, slip_boost: float = 0.0) -> Tuple[float, float]:
+	# Simple kinetic friction slide distance: v^2 / (2 * mu * g), scaled so it is visible but bounded
+	mu_eff = max(0.05, float(mu) - slip_boost * 0.15)
+	g = 9.81
+	s = max(0.0, float(speed_mps))
+	if mu_eff <= 1e-4 or s <= 1e-4:
+		dist = 0.0
+	else:
+		slip_gain = 1.0 + max(0.0, (0.5 - mu_eff)) * 2.0 + slip_boost * 2.5
+		dist = (s * s) / (2.0 * mu_eff * g) * slip_gain
+	dist = min(1.0, max(0.12, dist))
+	return (math.cos(heading) * dist, math.sin(heading) * dist)
+
+def _human_spawn_ok(start_xy: Tuple[float, float],
+                    human_radius: float,
+                    robot_xy: Tuple[float, float],
+                    robot_radius: float,
+                    vehicle_guards: List[Tuple[float, float, float]],
+                    humans: List[Dict[str, Any]],
+                    clearance: float = 0.3) -> bool:
+	sx, sy = start_xy
+	clear = max(0.0, clearance)
+	if math.hypot(sx - robot_xy[0], sy - robot_xy[1]) < (robot_radius + human_radius + clear):
+		return False
+	for (vx, vy, vr) in vehicle_guards:
+		if math.hypot(sx - vx, sy - vy) < (vr + human_radius + clear):
+			return False
+	for other in humans:
+		if other.get("phase") != "running":
+			continue
+		lx, ly = other.get("last_pose", (-999.0, -999.0))
+		if lx < -100 or ly < -100:
+			continue
+		other_r = float(other.get("radius", human_radius))
+		if math.hypot(sx - lx, sy - ly) < (other_r + human_radius + clear):
+			return False
+	return True
+
 # ---------- human helpers ----------
 
 _HUMAN_ROLE_PRESETS = {
@@ -734,7 +781,14 @@ def run_one(
 				ignored_for_collision.add(wet_id)
 				local_wet_aabb = tuple(wet_zone)
 				dynamic_wet_aabbs.append(local_wet_aabb)
-			group_size = max(1, int(cfg.get("group_size", 1)))
+			if isinstance(cfg.get("group_size_range"), (list, tuple)) and len(cfg["group_size_range"]) == 2:
+				a, b = cfg["group_size_range"]
+				try:
+					group_size = int(rng.integers(min(int(a), int(b)), max(int(a), int(b)) + 1))
+				except Exception:
+					group_size = max(1, int(cfg.get("group_size", 1)))
+			else:
+				group_size = max(1, int(cfg.get("group_size", 1)))
 			offset_step = float(cfg.get("group_spacing_m", 0.6))
 			for member_idx in range(group_size):
 				offset = (member_idx - 0.5 * (group_size - 1)) * offset_step
@@ -750,6 +804,10 @@ def run_one(
 						member_segments, _ = _segments_from_points(member_path)
 					moving_blockers.append((safe_x - profile["radius"], safe_y - profile["radius"],
 					                        safe_x + profile["radius"], safe_y + profile["radius"]))
+				delay_min = float(cfg.get("start_delay_s_min", 0.4))
+				delay_max = float(cfg.get("start_delay_s_max", 1.2))
+				if delay_max < delay_min:
+					delay_max = delay_min
 				hid = spawn_human(radius=profile["radius"], length=profile["length"])
 				state_behaviors = set(profile["behaviors"])
 				state = {
@@ -764,7 +822,10 @@ def run_one(
 					"loop_path": bool(cfg.get("loop", False)),
 					"speed_range": profile["speed"],
 					"speed_mps": rng.uniform(*profile["speed"]),
-					"next_start_t": rng.uniform(0.4, 1.2) + float(cfg.get("start_delay_s", 0.0)),
+					"next_start_t": rng.uniform(
+						delay_min,
+						delay_max
+					) + float(cfg.get("start_delay_s", 0.0)),
 					"active_since": 0.0,
 					"seg_idx": 0,
 					"seg_progress": 0.0,
@@ -827,7 +888,8 @@ def run_one(
 				else:
 					sx, sy = start[0], start[1]
 			collision_radius = max(abs(half_ext[0]), abs(half_ext[1])) + 0.1
-			sx, sy = _resolve_spawn_point(sx, sy, collision_radius, (Lx, Ly), border, static_aabbs)
+			robot_block = (start[0] - radius - 0.3, start[1] - radius - 0.3, start[0] + radius + 0.3, start[1] + radius + 0.3)
+			sx, sy = _resolve_spawn_point(sx, sy, collision_radius, (Lx, Ly), border, static_aabbs + [robot_block])
 			if segments:
 				first_dir = segments[0]["dir"]
 				heading = math.atan2(first_dir[1], first_dir[0])
@@ -1041,6 +1103,15 @@ def run_one(
 				if zone and _pt_in_aabb(xr, yr, tuple(zone)):
 					return surface
 			return None
+
+		def _floor_mu_at(xr: float, yr: float, default_mu: float = 0.85) -> float:
+			surface = _surface_at(xr, yr)
+			if surface is not None:
+				return float(surface.get("mu", default_mu))
+			for (x0, y0, x1, y1) in dynamic_wet_aabbs:
+				if _pt_in_aabb(xr, yr, (x0, y0, x1, y1)):
+					return float(wet_mu)
+			return float(default_mu)
 
 		def _transition_at(xr: float, yr: float) -> Dict[str, Any] | None:
 			for tz in transition_zones_meta:
@@ -1375,8 +1446,13 @@ def run_one(
 						req_exposure = float(h.get("slip_min_exposure", slip_min_exposure_s))
 						if h["wet_since"] is not None and ((t - h["wet_since"]) >= req_exposure):
 							surface = _surface_at(xh, yh)
+							mu_here = _floor_mu_at(xh, yh, default_mu=0.85)
 							slip_boost = max(0.0, ((surface or {}).get("effects") or {}).get("slip_boost", 0.0))
-							slip_prob = float(h.get("p_slip", tuned_slip_prob))
+							base_slip = float(h.get("p_slip", tuned_slip_prob))
+							mu_slip = _slip_prob_from_mu(mu_here)
+							base_weight = max(0.1, min(1.0, ((0.42 - mu_here) / 0.1) + 0.2))
+							base_term = base_slip * base_weight
+							slip_prob = 1.0 - (1.0 - base_term) * (1.0 - mu_slip)
 							if surface is None and not wet_band:
 								slip_prob = min(slip_prob, 0.05)
 							slip_prob = min(0.99, slip_prob + slip_boost)
@@ -1384,19 +1460,31 @@ def run_one(
 								h["phase"] = "fallen"
 								h["fallen_since"] = t
 								h["wet_since"] = None
-								p.resetBasePositionAndOrientation(body_id, [xh, yh, 0.25], p.getQuaternionFromEuler([math.pi / 2.0, 0.0, 0.0]))
-								_log_row("floor_slip", f"{xh:.2f},{yh:.2f},{cfg.get('id', idx)}",
+								dx_slide, dy_slide = _fall_slide_offset(h.get("speed_mps", 1.0), mu_here, heading, slip_boost=slip_boost)
+								xh_slide = max(border, min(Lx - border, xh + dx_slide))
+								yh_slide = max(border, min(Ly - border, yh + dy_slide))
+								p.resetBasePositionAndOrientation(body_id, [xh_slide, yh_slide, 0.25], p.getQuaternionFromEuler([math.pi / 2.0, 0.0, 0.0]))
+								h["last_pose"] = (xh_slide, yh_slide)
+								_log_row("floor_slip", f"{xh_slide:.2f},{yh_slide:.2f},{cfg.get('id', idx)}",
 								         human_phase="fallen", near_stop=int(v_cmd < 0.2),
-								         position=(x, y, yaw), wet_flag=int(_compute_in_wet(xh, yh)))
+								         position=(x, y, yaw), wet_flag=int(_compute_in_wet(xh_slide, yh_slide)))
 								payload = h.get("props", {}).get("payload")
 								if payload:
 									payload["dropped"] = True
-									p.resetBasePositionAndOrientation(payload["id"], [xh, yh, payload["height"] / 2.0],
+									p.resetBasePositionAndOrientation(payload["id"], [xh_slide, yh_slide, payload["height"] / 2.0],
 									                                   p.getQuaternionFromEuler([0.0, 0.0, 0.0]))
 						continue
 					default_trigger = 0.6 if taxonomy.get("occlusion") else 1.0
 					trigger_distance = float(max(0.3, cfg.get("trigger_distance", default_trigger)))
 					if h["phase"] == "idle" and (t >= h["next_start_t"] or (h.get("path") and math.hypot(x - h["path"][0][0], y - h["path"][0][1]) < trigger_distance)):
+						start_xy = None
+						if h.get("path") and len(h["path"]) >= 1:
+							start_xy = (h["path"][0][0], h["path"][0][1])
+						spawn_clear = max(0.3, float(cfg.get("spawn_clearance_m", 0.3)))
+						if start_xy is not None:
+							if not _human_spawn_ok(start_xy, h["radius"], (x, y), radius, vehicle_guards, human_states, clearance=spawn_clear):
+								h["next_start_t"] = t + 0.5
+								continue
 						h["phase"] = "running"
 						h["active_since"] = t
 						h["seg_idx"] = 0
@@ -1542,4 +1630,4 @@ def run_one(
 
 
 
-#Not to self: need to keep on working on the T intersection and the way humans spawn there.
+#Note to self: need to keep on working on the T intersection and the way humans spawn there.

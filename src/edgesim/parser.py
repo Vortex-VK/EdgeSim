@@ -46,7 +46,7 @@ KEYWORDS = {
 
 	# Human posture/types
 	"worker_carry": ["carrying box", "carrying tote", "carrying bin", "worker carrying"],
-	"child_actor": ["child-height", "child height", "kid", "youth"],
+	"child_actor": ["child-height", "child height", "kid", "youth", "child"],
 	"fast_walker": ["fast walker", "fast walking", "hurried", "running picker"],
 
 	# Forklift reversing / alarms
@@ -131,20 +131,13 @@ def _apply_main_aisle_lr_layout(scn: Dict[str, Any]) -> None:
 	layout["paths_define_aisles"] = False
 	layout["main_lr_case"] = True
 	hazards = scn.setdefault("hazards", {})
-	hazards["vehicles"] = [{
-		"id": "ForkliftParked_01",
-		"type": "forklift",
-		"path": [[4.2, 4.0], [4.4, 4.0]],
-		"speed_mps": 0.0,
-		"warning_lights": False,
-		"reversing_bias": False,
-		"parked": True,
-	}]
+	hazards["vehicles"] = []
 	hazards["human"] = [{
 		"path": "waypoints",
 		"waypoints": [[10.0, 6.5], [10.0, 13.5]],
 		"rate_per_min": 2.0,
-		"group_size": 3,
+		"group_size": 4,
+		"start_delay_s": 8.0,
 		"speed_mps": [0.8, 1.4],
 		"motion_patterns": ["linear", "start_stop", "close_pass"],
 		"interaction_modes": ["mutual_yield", "human_yield", "robot_yield"],
@@ -153,6 +146,11 @@ def _apply_main_aisle_lr_layout(scn: Dict[str, Any]) -> None:
 	hazards["floor_events"] = hazards.get("floor_events", [])
 	scn["taxonomy"]["multi_actor"] = True
 	scn["taxonomy"]["human_behavior"] = True
+	# baseline aisle clutter for realism
+	layout["static_obstacles"] = [
+		{"type": "standing_pallet", "aabb": [5.5, 7.4, 6.6, 8.3], "height": 1.0},
+		{"type": "standing_pallet", "aabb": [13.6, 9.6, 14.6, 10.6], "height": 1.0},
+	]
 
 def _apply_t_intersection_layout(scn: Dict[str, Any]) -> None:
 	layout = scn.setdefault("layout", {})
@@ -165,19 +163,20 @@ def _apply_t_intersection_layout(scn: Dict[str, Any]) -> None:
 	geom["main_aisle_lane_y"] = 9.0
 	geom["branch_lane_x"] = 10.0
 	geom["racking"] = [
-		{"id": "Rack_lower_W", "aabb": [1.0, 6.0, 9.2, 7.0], "height_m": 3.0},
-		{"id": "Rack_lower_E", "aabb": [10.8, 6.0, 19.0, 7.0], "height_m": 3.0},
-		{"id": "Rack_upper_W", "aabb": [1.0, 11.0, 9.2, 12.0], "height_m": 3.0},
-		{"id": "Rack_upper_E", "aabb": [10.8, 11.0, 19.0, 12.0], "height_m": 3.0},
-		{"id": "Rack_branch_side_right", "aabb": [10.8, 5.5, 12.2, 17.0], "height_m": 3.0},
-		{"id": "Rack_branch_side_left", "aabb": [7.6, 11.5, 8.6, 16.0], "height_m": 3.0},
+		{"id": "Rack_lower_W", "aabb": [1.0, 6.0, 9.1, 7.0], "height_m": 3.0},
+		{"id": "Rack_lower_E", "aabb": [10.9, 6.0, 19.0, 7.0], "height_m": 3.0},
+		{"id": "Rack_upper_W", "aabb": [1.0, 11.0, 9.1, 12.0], "height_m": 3.0},
+		{"id": "Rack_upper_E", "aabb": [10.9, 11.0, 19.0, 12.0], "height_m": 3.0},
+		{"id": "Rack_branch_side_left_low", "aabb": [7.6, 3.5, 8.8, 7.0], "height_m": 3.0},
+		{"id": "Rack_branch_side_left_high", "aabb": [7.6, 11.0, 8.8, 16.5], "height_m": 3.0},
+		{"id": "Rack_branch_side_right", "aabb": [11.2, 3.5, 12.4, 16.5], "height_m": 3.0},
 	]
 	layout["aisles"] = [
 		{"id": "A_main", "name": "main_aisle", "rect": [1.0, 7.0, 19.0, 11.0], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.2], "racking": False},
-		{"id": "A_branch_vertical", "name": "branch_vertical", "rect": [9.6, 7.0, 10.4, 16.5], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.0], "racking": False, "appearance": "vertical_branch"},
+		{"id": "A_branch_vertical", "name": "branch_vertical", "rect": [9.1, 3.5, 10.9, 16.5], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.0], "racking": False, "appearance": "vertical_branch"},
 	]
 	layout["junctions"] = [
-		{"id": "J_center", "rect": [9.2, 7.2, 10.8, 11.0], "type": "t", "pad": [0.2, 0.0, 0.2, 0.0]}
+		{"id": "J_center", "rect": [9.1, 7.0, 10.9, 11.0], "type": "t", "pad": [0.2, 0.0, 0.2, 0.0]}
 	]
 	layout["transition_zones"] = []
 	layout["static_obstacles"] = []
@@ -189,7 +188,7 @@ def _apply_t_intersection_layout(scn: Dict[str, Any]) -> None:
 	hazards["vehicles"] = [{
 		"id": "ForkliftTBranch",
 		"type": "forklift",
-		"path": [[10.0, 4.0], [10.0, 14.5]],
+		"path": [[10.0, 3.6], [10.0, 16.2]],
 		"speed_mps": 1.0,
 		"warning_lights": True,
 		"reversing_bias": False,
@@ -200,19 +199,25 @@ def _apply_t_intersection_layout(scn: Dict[str, Any]) -> None:
 	hazards["human"] = [
 		{
 			"path": "waypoints",
-			"waypoints": [[4.0, 9.5], [10.0, 9.5]],
+			"waypoints": [[10.0, 15.5], [10.0, 8.0]],
 			"group_size": 1,
 			"speed_mps": [0.7, 1.0],
 			"motion_patterns": ["hesitation", "emerge_from_occlusion", "start_stop"],
 			"interaction_modes": ["mutual_yield", "robot_yield"],
+			"start_delay_s_min": 0.05,
+			"start_delay_s_max": 0.2,
+			"start_delay_s": 0.0,
 		},
 		{
 			"path": "waypoints",
-			"waypoints": [[16.0, 9.8], [10.0, 9.8]],
+			"waypoints": [[10.0, 4.0], [10.0, 10.5]],
 			"group_size": 1,
 			"speed_mps": [0.7, 1.2],
 			"motion_patterns": ["hesitation", "emerge_from_occlusion", "start_stop"],
 			"interaction_modes": ["mutual_yield", "robot_yield"],
+			"start_delay_s_min": 0.05,
+			"start_delay_s_max": 0.2,
+			"start_delay_s": 0.0,
 		}
 	]
 	hazards["traction"] = hazards.get("traction", [])
@@ -241,16 +246,20 @@ def _apply_simple_forklift_aisle_layout(scn: Dict[str, Any]) -> None:
 	geom["forklift_aisle_lane_y"] = forklift_lane_y
 	geom["main_cross_x"] = 10.0
 	geom["racking"] = [
-		{"id": "Rack_lower", "aabb": [1.0, 6.5, 19.0, 7.5], "height_m": 3.0},
-		{"id": "Rack_upper", "aabb": [1.0, 10.5, 19.0, 11.5], "height_m": 3.0},
-		{"id": "Rack_far_upper", "aabb": [1.0, 13.5, 19.0, 14.5], "height_m": 3.0},
+		{"id": "Rack_lower_W", "aabb": [1.0, 6.5, 8.5, 7.5], "height_m": 3.0},
+		{"id": "Rack_lower_E", "aabb": [11, 6.5, 19.0, 7.5], "height_m": 3.0},
+		{"id": "Rack_upper_W", "aabb": [1.0, 10.5, 8.5, 11.5], "height_m": 3.0},
+		{"id": "Rack_upper_E", "aabb": [11, 10.5, 19.0, 11.5], "height_m": 3.0},
+		{"id": "Rack_forklift_W", "aabb": [1.0, 13.5, 8.5, 14.5], "height_m": 3.0},
+		{"id": "Rack_forklift_E", "aabb": [11, 13.5, 19.0, 14.5], "height_m": 3.0},
 	]
 	geom["open_storage"] = []
 	geom["endcaps"] = []
 	geom["blind_corners"] = []
 	layout["aisles"] = [
-		{"id": "A_main", "name": "main_aisle", "rect": [1.0, 7.5, 19.0, 10.5], "type": "straight"},
-		{"id": "A_forklift", "name": "forklift_aisle", "rect": [1.0, 11.5, 19.0, 13.5], "type": "straight"},
+		{"id": "A_main", "name": "main_aisle", "rect": [1.0, 7.5, 19.0, 10.5], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.2], "racking": False},
+		{"id": "A_forklift", "name": "forklift_aisle", "rect": [1.0, 11.8, 19.0, 13.6], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.2], "racking": False},
+		{"id": "A_dock", "name": "dock_staging", "rect": [1.0, 4.2, 19.0, 6.0], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.2], "racking": False},
 	]
 	layout["floor_surfaces"] = [{
 		"id": "base_floor",
@@ -267,7 +276,59 @@ def _apply_simple_forklift_aisle_layout(scn: Dict[str, Any]) -> None:
 	layout["auto_aisles_from_paths"] = False
 	layout["paths_define_aisles"] = False
 	layout["simple_forklift_aisle"] = True
+	# Pallet jack left in dock area
+	layout["static_obstacles"].append({
+		"id": "PalletJack_Dock",
+		"type": "pallet_jack",
+		"shape": "box",
+		"aabb": [5.0, 4.5, 6.4, 5.1],
+		"height": 1.0,
+		"occlusion": True,
+	})
+	# Staging clutter
+	# keep dock clutter lightweight to avoid out-of-aisle floating blocks
+	layout["static_obstacles"].append({"id": "PalletStack_Main", "type": "standing_pallet", "aabb": [14.0, 7.6, 15.0, 8.6], "height": 1.2})
 
+	hazards = scn.setdefault("hazards", {})
+	hazards["vehicles"] = [
+		{
+			"id": "Forklift_Upper_01",
+			"type": "forklift",
+			"path": [[3.0, forklift_lane_y], [17.0, forklift_lane_y]],
+			"speed_mps": 0.9,
+			"warning_lights": True,
+			"reflective": True,
+			"ping_pong": True,
+			"carrying_pallet": True,
+		},
+	]
+	# Crossing workers and queued humans behind cart
+	hazards["human"] = [
+		{
+			"path": "waypoints",
+			"waypoints": [[geom["main_cross_x"], 7.0], [geom["main_cross_x"], 12.0]],
+			"group_size": 5,
+			"group_size_range": [3, 7],
+			"rate_per_min": 2.0,
+			"speed_mps": [0.8, 1.2],
+			"motion_patterns": ["linear", "start_stop", "close_pass", "emerge_from_occlusion"],
+			"interaction_modes": ["mutual_yield", "human_yield", "robot_yield"],
+			"start_delay_s": 6.0,
+			"group_spacing_m": 0.55,
+		},
+		{
+			"path": "waypoints",
+			"waypoints": [[4.0, main_lane_y], [9.0, main_lane_y]],
+			"group_size": 5,
+			"group_size_range": [3, 7],
+			"rate_per_min": 3.0,
+			"speed_mps": [0.5, 0.9],
+			"motion_patterns": ["start_stop", "hesitation"],
+			"interaction_modes": ["close_pass", "mutual_yield"],
+			"start_delay_s": 8.0,
+			"group_spacing_m": 0.5,
+		},
+	]
 
 def _layout_list(scn: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
 	layout = scn.setdefault("layout", {})
@@ -425,6 +486,11 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 	# --- Visibility ---
 	if _has_any(text, KEYWORDS["visibility"]):
 		scn["taxonomy"]["visibility"] = True
+		so_root = _so_root()
+		lid = so_root.setdefault("lidar", {})
+		lid.setdefault("noise_sigma", 0.03)
+		lid.setdefault("dropout", 0.05)
+		lid.setdefault("latency_ms_max", 70)
 
 	# --- Traction (wet patch) ---
 	if _has_any(text, KEYWORDS["traction"]):
@@ -474,6 +540,41 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 	    _has_any(text, KEYWORDS["busy_aisle"]) or
 	    _has_any(text, KEYWORDS["congestion"])):
 		scn["taxonomy"]["multi_actor"] = True
+		if scn.get("layout", {}).get("main_lr_case"):
+			vehicles = scn.setdefault("hazards", {}).setdefault("vehicles", [])
+			# Two forklifts with pallets, opposing directions along the main aisle
+			if not any(v.get("id") == "Forklift_Main_East" for v in vehicles):
+				vehicles.append({
+					"id": "Forklift_Main_East",
+					"type": "forklift",
+					"path": [[4.0, 9.1], [16.0, 9.1]],
+					"speed_mps": 0.85,
+					"warning_lights": True,
+					"reversing_bias": False,
+					"reflective": True,
+					"ping_pong": True,
+					"carrying_pallet": True,
+				})
+			if not any(v.get("id") == "Forklift_Main_West" for v in vehicles):
+				vehicles.append({
+					"id": "Forklift_Main_West",
+					"type": "forklift",
+					"path": [[16.5, 8.9], [3.5, 8.9]],
+					"speed_mps": 0.85,
+					"warning_lights": True,
+					"reversing_bias": False,
+					"reflective": True,
+					"ping_pong": True,
+					"carrying_pallet": True,
+				})
+			static_obs = _layout_list(scn, "static_obstacles")
+			if not any(o.get("id") == "PalletStack_Congest_01" for o in static_obs):
+				static_obs.append({"id": "PalletStack_Congest_01", "type": "standing_pallet", "aabb": [8.0, 5.2, 9.0, 6.2], "height": 1.2})
+			if not any(o.get("id") == "PalletStack_Congest_02" for o in static_obs):
+				static_obs.append({"id": "PalletStack_Congest_02", "type": "standing_pallet", "aabb": [12.0, 11.0, 13.0, 12.0], "height": 1.2})
+		elif scn.get("layout", {}).get("simple_forklift_aisle"):
+			# Dedicated forklift aisle already has a forklift; avoid duplicating vehicles from congestion keywords.
+			pass
 
 	# --- Overhangs / irregular loads increase occlusion pressure ---
 	if _has_any(text, KEYWORDS["overhang"]):
@@ -629,7 +730,10 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 		scn["taxonomy"]["occlusion"] = True
 
 	# --- Forklift-related chaos (load overhangs, drops) ---
-	if _has_any(text, KEYWORDS["forklift"]) and not scn["layout"].get("main_lr_case") and not scn["layout"].get("t_case"):
+	if (_has_any(text, KEYWORDS["forklift"]) and
+	    not scn["layout"].get("main_lr_case") and
+	    not scn["layout"].get("t_case") and
+	    not scn["layout"].get("simple_forklift_aisle")):
 		scn["taxonomy"]["multi_actor"] = True
 		geom = scn["layout"].setdefault("geometry", {})
 		lane_x = geom.get("forklift_aisle_lane_x")
@@ -679,10 +783,14 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 		})
 
 	if _has_any(text, KEYWORDS["cart_block"]):
+		aabb = [9.2, 7.6, 10.8, 8.8]
+		# In the parallel/forklift-aisle layout, move the cart off the crosswalk to the west side
+		if scn.get("layout", {}).get("simple_forklift_aisle"):
+			aabb = [12.8, 8.5, 13.8, 9.3]  # right-side, off the crosswalk
 		_add_static_obstacle(scn, {
 			"type": "cart_block",
 			"shape": "box",
-			"aabb": [9.2, 7.6, 10.8, 8.8],
+			"aabb": aabb,
 			"height": 1.2,
 			"occlusion": True,
 		})
