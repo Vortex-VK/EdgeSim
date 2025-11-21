@@ -1,0 +1,32 @@
+# Python cache/artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.python-version
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE/editor state
+.vscode/
+.idea/
+
+# Pytest/cache
+.pytest_cache/
+.coverage
+coverage.xml
+
+# Build/output
+build/
+dist/
+*.log
+
+# Local runs/output directories
+runs/
+
+# OS junk
+.DS_Store
+Thumbs.db

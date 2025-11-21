@@ -74,6 +74,16 @@ def _write_core_files(run_dir: Path, prompt: str, n_runs: int, seed_base: int, s
             write_json(run_dir / "validation.json", {"ok": False, "errors": [f"validator exception: {type(e).__name__}: {e}"], "context_summary": {}})
     return {"seeds": seeds, "manifest": manifest}
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256(); h.update(path.read_bytes()); return h.hexdigest()
+
+def _digest_csvs(per_run_dir: Path) -> str:
+    h = hashlib.sha256()
+    if per_run_dir.exists():
+        for p in sorted(per_run_dir.rglob("*.csv")):
+            h.update(p.read_bytes())
+    return h.hexdigest()
+
 def cmd_simulate(args: argparse.Namespace) -> int:
     prompt: str = args.prompt
     n_runs: int = int(args.runs)
@@ -141,6 +151,32 @@ def cmd_run_batch(args: argparse.Namespace) -> int:
     if write_summary is not None:
         write_summary(run_dir, summary)
 
+    # Digests (per_run CSVs + world)
+    man_path = run_dir / "manifest.json"
+    try:
+        man = json.loads(man_path.read_text(encoding="utf-8"))
+    except Exception:
+        man = {}
+    man["per_run_digest"] = _digest_csvs(run_dir / "per_run")
+    # choose batch-level world.json if present, else first per-run world
+    world_path = run_dir / "world.json"
+    if not world_path.exists():
+        pr = run_dir / "per_run"
+        for sub in sorted(pr.glob("run_*")):
+            cand = sub / "world.json"
+            if cand.exists():
+                world_path = cand
+                break
+    if world_path.exists():
+        man["world_sha256"] = _sha256_file(world_path)
+    write_json(man_path, man)
+
+    # reload manifest so reports get new fields
+    try:
+        files["manifest"] = json.loads(man_path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+
     # Legacy Markdown
     if write_report is not None:
         write_report(run_dir, prompt, files["manifest"], coverage, summary)
@@ -171,19 +207,23 @@ def cmd_run_one(args: argparse.Namespace) -> int:
     run_dir = _make_run_dir(prompt, args.name)
     _write_core_files(run_dir, prompt, 1, args.seed, scn)
     out = run_one(prompt, scn, run_dir, dt=dt, realtime=realtime, gui=gui, sleep_scale=slowmo)
+
+    # Digests for single run (csv + world)
+    man_path = run_dir / "manifest.json"
+    try:
+        man = json.loads(man_path.read_text(encoding="utf-8"))
+    except Exception:
+        man = {}
+    man["per_run_digest"] = _digest_csvs(run_dir)
+    world_path = run_dir / "world.json"
+    if world_path.exists():
+        man["world_sha256"] = _sha256_file(world_path)
+    write_json(man_path, man)
+
     print(f"\n[EdgeSim] Single rollout @ {run_dir}\n- success={out['success']} time={out['time']:.2f}s steps={out['steps']}\n- run_one.csv\n")
     return 0
 
 # ---- NEW: verify command (digest checks) ----
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256(); h.update(path.read_bytes()); return h.hexdigest()
-
-def _digest_csvs(per_run_dir: Path) -> str:
-    h = hashlib.sha256()
-    for p in sorted(per_run_dir.rglob("*.csv")):
-        h.update(p.read_bytes())
-    return h.hexdigest()
-
 def cmd_verify(args: argparse.Namespace) -> int:
     batch_dir = Path(args.batch).resolve()
     man_path = batch_dir / "manifest.json"

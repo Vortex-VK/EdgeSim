@@ -14,6 +14,7 @@ def build_world_digest(
 	hazards: Dict[str, Any],
 	start_xy: Tuple[float,float],
 	goal_xy: Tuple[float,float],
+	map_size_m: Tuple[float, float] | List[float] | None = None,
 	floor_zones: List[Dict[str, Any]] | None = None,
 	transition_zones: List[Dict[str, Any]] | None = None,
 	static_objects: List[Dict[str, Any]] | None = None,
@@ -75,6 +76,74 @@ def build_world_digest(
 			})
 		return out
 
+	# Summaries based on provided geometry
+	env_out: Dict[str, Any] = dict(environment or {})
+	if map_size_m:
+		try:
+			env_out["map_size_m"] = [float(map_size_m[0]), float(map_size_m[1])]  # type: ignore[index]
+		except Exception:
+			pass
+	if "map_size_m" not in env_out:
+		try:
+			# derive a bound from AABBs if none provided
+			max_x = max((a[2] for a in aabbs), default=0.0)
+			max_y = max((a[3] for a in aabbs), default=0.0)
+			env_out["map_size_m"] = [_round3(max_x), _round3(max_y)]
+		except Exception:
+			pass
+
+	# summarize floor surfaces for quick inspection
+	floor_mu = [float(z.get("mu", 0.0)) for z in (floor_zones or []) if isinstance(z, dict) and z.get("mu") is not None]
+	if floor_mu:
+		env_out["floor_summary"] = {
+			"mu_min": _round3(min(floor_mu)),
+			"mu_max": _round3(max(floor_mu)),
+			"wet_count": sum(1 for z in (floor_zones or []) if isinstance(z, dict) and str(z.get("type","")).lower() in {"wet","oil","cleaning_liquid","smooth_plastic"}),
+			"zones": len(floor_mu),
+		}
+	rack_area = 0.0
+	endcap_count = 0
+	blind_count = 0
+	obstacle_counts: Dict[str, int] = {}
+	obstructed_area = 0.0
+	for obj in (static_objects or []):
+		if not isinstance(obj, dict):
+			continue
+		aabb = obj.get("aabb")
+		if isinstance(aabb, (list, tuple)) and len(aabb) == 4:
+			area = max(0.0, float(aabb[2]) - float(aabb[0])) * max(0.0, float(aabb[3]) - float(aabb[1]))
+			obstructed_area += area
+			if obj.get("type") == "rack":
+				rack_area += area
+		otype = obj.get("type")
+		if otype:
+			obstacle_counts[otype] = obstacle_counts.get(otype, 0) + 1
+			if otype == "endcap":
+				endcap_count += 1
+			if otype == "blind_corner":
+				blind_count += 1
+
+	aisle_count = 0
+	junction_count = 0
+	for a in (aisles or []):
+		if not isinstance(a, dict):
+			continue
+		atype = (a.get("type") or "")
+		if atype.startswith("aisle"):
+			aisle_count += 1
+		if "junction" in atype:
+			junction_count += 1
+
+	env_out["layout_summary"] = {
+		"aisle_count": aisle_count,
+		"junction_count": junction_count,
+		"rack_area_m2": _round3(rack_area),
+		"obstructed_area_m2": _round3(obstructed_area),
+		"endcaps": endcap_count,
+		"blind_corners": blind_count,
+		"static_obstacles": obstacle_counts,
+	}
+
 	return {
 		"version": 1,
 		"start": [_round3(start_xy[0]), _round3(start_xy[1])],
@@ -87,7 +156,7 @@ def build_world_digest(
 		"vehicles": _pack_vehicle_list(vehicles),
 		"safety_zones": _pack_zone_list(safety_zones),
 		"aisles": _pack_zone_list(aisles),
-		"environment": environment or {},
+		"environment": env_out,
 	}
 
 def hash_world_digest(d: Dict[str, Any]) -> str:

@@ -47,10 +47,8 @@ def default_vehicle_roster() -> List[Dict[str, Any]]:
 def default_layout() -> Dict[str, Any]:
 	return {
 		"map_size_m": [20.0, 20.0],
-		"aisles": [
-			{"name": "A1", "rect": [2.0, 1.0, 16.0, 3.0]},
-			{"name": "A2", "rect": [2.0, 8.0, 16.0, 10.0]},
-		],
+		# Start empty so a blank prompt yields an open floor; aisles get added only when requested.
+		"aisles": [],
 		"walls": [
 			{"poly": [[0, 0], [20, 0], [20, 20], [0, 20]]}
 		],

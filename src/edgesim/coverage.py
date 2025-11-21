@@ -72,6 +72,7 @@ def build_coverage(per_run_dir: Path) -> Dict[str, Any]:
             idx_event = header.index("event") if "event" in header else 8  # shifted with new header
             idx_in_wet = header.index("in_wet") if "in_wet" in header else None
             idx_hphase = header.index("human_phase") if "human_phase" in header else None
+            idx_outcome = header.index("event_detail") if "event_detail" in header else None
 
             for row in r:
                 # traction
@@ -90,12 +91,13 @@ def build_coverage(per_run_dir: Path) -> Dict[str, Any]:
 
                 # outcomes from events
                 ev = row[idx_event] if idx_event < len(row) else ""
+                detail = row[idx_outcome] if idx_outcome is not None and idx_outcome < len(row) else ""
                 if ev == "collision_human":
                     outcome = "collision_human"
                 elif ev == "success":
                     outcome = "success"
-                elif ev == "other":
-                    outcome = "other"
+                elif detail in ("collision_human", "success"):
+                    outcome = detail
 
         # tally
         _update_count(counts["traction"], "wet_encountered" if ever_wet else "dry_only")

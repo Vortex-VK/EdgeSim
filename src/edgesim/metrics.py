@@ -2,6 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 import csv, json, math, os
+from .io_utils import RUNS_ROOT
 
 # -------- batch aggregation (unchanged API) --------
 
@@ -157,7 +158,9 @@ def _heuristic_fit_params(metrics: Dict[str, float]) -> Dict[str, Any]:
 	return tuned
 
 def write_site_profile(site: str, metrics: Dict[str,float], anchors_path: Path | None = None) -> Path:
-	out = Path("site_profiles"); out.mkdir(parents=True, exist_ok=True)
+	# Follow the same location used by the CLI/site loader (relative site_profiles/ at repo root)
+	out = (RUNS_ROOT.parent / "site_profiles")
+	out.mkdir(parents=True, exist_ok=True)
 	path = out / f"{site}.json"
 	obj: Dict[str, Any] = {"site": site, "metrics": metrics, "tuned": _heuristic_fit_params(metrics)}
 	if anchors_path is not None:

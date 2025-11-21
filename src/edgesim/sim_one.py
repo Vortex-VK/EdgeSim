@@ -15,6 +15,8 @@ from .injectors import (
 	InjectorState, Injector
 )
 
+_HERE = Path(__file__).resolve().parent
+
 # ---------- small I/O helpers ----------
 
 def _write_csv(path: Path, header: List[str], rows: List[List[float | str]]) -> None:
@@ -26,14 +28,15 @@ def _write_csv(path: Path, header: List[str], rows: List[List[float | str]]) -> 
 
 # ---------- geometry & controls ----------
 
-def _spawn_disc(radius: float = 0.4, height: float = 0.2, mass: float = 20.0, color=(0.9, 0.3, 0.3, 1.0)) -> int:
-	vis = p.createVisualShape(p.GEOM_CYLINDER, radius=radius, length=height, rgbaColor=color)
-	col = p.createCollisionShape(p.GEOM_CYLINDER, radius=radius, height=height)
+def _spawn_disc(radius: float = 0.4, height: float | None = None, mass: float = 20.0, color=(0.9, 0.3, 0.3, 1.0)) -> int:
+	h_use = max(0.18, radius * 0.6) if height is None else float(height)
+	vis = p.createVisualShape(p.GEOM_CYLINDER, radius=radius, length=h_use, rgbaColor=color)
+	col = p.createCollisionShape(p.GEOM_CYLINDER, radius=radius, height=h_use)
 	body = p.createMultiBody(
 		baseMass=mass,
 		baseCollisionShapeIndex=col,
 		baseVisualShapeIndex=vis,
-		basePosition=[1.0, 1.0, height / 2.0],
+		basePosition=[1.0, 1.0, h_use / 2.0],
 	)
 	p.changeDynamics(body, -1, lateralFriction=0.8)
 	return body
@@ -144,6 +147,43 @@ def _resolve_spawn_point(x: float, y: float, radius: float,
 			break
 	return x, y
 
+def _rect_contains_pt(rect: Tuple[float, float, float, float], x: float, y: float) -> bool:
+	x0, y0, x1, y1 = rect
+	return (x0 <= x <= x1) and (y0 <= y <= y1)
+
+def _project_point_to_rects(pt: Tuple[float, float], rects: List[Tuple[float, float, float, float]]) -> Tuple[float, float]:
+	if not rects:
+		return pt
+	px, py = pt
+	best = None
+	best_d2 = None
+	for rect in rects:
+		x0, y0, x1, y1 = rect
+		nx = min(max(px, x0), x1)
+		ny = min(max(py, y0), y1)
+		dx = px - nx
+		dy = py - ny
+		d2 = dx * dx + dy * dy
+		if best_d2 is None or d2 < best_d2:
+			best_d2 = d2
+			best = (nx, ny)
+	return best if best is not None else pt
+
+def _project_path_into_rects(points: List[List[float]],
+                             rects: List[Tuple[float, float, float, float]],
+                             radius: float,
+                             blockers: List[Tuple[float, float, float, float]],
+                             bounds: Tuple[float, float],
+                             border: float) -> List[List[float]]:
+	if not rects or not points:
+		return points
+	out: List[List[float]] = []
+	for pt in points:
+		nx, ny = _project_point_to_rects((pt[0], pt[1]), rects)
+		nx, ny = _resolve_spawn_point(nx, ny, max(radius, 0.0), bounds, border, blockers, max_iter=10)
+		out.append([nx, ny])
+	return out
+
 def _vehicle_aabb(v: Dict[str, Any], x: float, y: float) -> Tuple[float, float, float, float]:
 	half = v.get("half_extents") or [0.5, 0.4, 0.4]
 	hx, hy = abs(half[0]), abs(half[1])
@@ -179,6 +219,22 @@ def _fall_slide_offset(speed_mps: float, mu: float, heading: float, slip_boost: 
 	dist = min(1.0, max(0.12, dist))
 	return (math.cos(heading) * dist, math.sin(heading) * dist)
 
+
+def _floor_mu_at(xr: float, yr: float,
+                 floor_zones_meta: List[Dict[str, Any]],
+                 dynamic_wet_patches: List[Dict[str, Any]],
+                 wet_mu: float,
+                 default_mu: float = 0.85) -> float:
+	for surface in floor_zones_meta:
+		zone = surface.get("zone")
+		if zone and _pt_in_aabb(xr, yr, tuple(zone)):
+			return float(surface.get("mu", default_mu))
+	for patch in dynamic_wet_patches:
+		aabb = patch.get("aabb")
+		if aabb and _pt_in_aabb(xr, yr, tuple(aabb)):
+			return float(patch.get("mu", wet_mu))
+	return float(default_mu)
+
 def _human_spawn_ok(start_xy: Tuple[float, float],
                     human_radius: float,
                     robot_xy: Tuple[float, float],
@@ -194,14 +250,20 @@ def _human_spawn_ok(start_xy: Tuple[float, float],
 		if math.hypot(sx - vx, sy - vy) < (vr + human_radius + clear):
 			return False
 	for other in humans:
-		if other.get("phase") != "running":
-			continue
-		lx, ly = other.get("last_pose", (-999.0, -999.0))
-		if lx < -100 or ly < -100:
-			continue
 		other_r = float(other.get("radius", human_radius))
-		if math.hypot(sx - lx, sy - ly) < (other_r + human_radius + clear):
-			return False
+		if other.get("phase") == "running":
+			lx, ly = other.get("last_pose", (-999.0, -999.0))
+			if lx < -100 or ly < -100:
+				continue
+			if math.hypot(sx - lx, sy - ly) < (other_r + human_radius + clear):
+				return False
+		else:
+			path = other.get("path") or []
+			if not path or len(path) < 1:
+				continue
+			lx, ly = path[0]
+			if math.hypot(sx - lx, sy - ly) < (other_r + human_radius + clear):
+				return False
 	return True
 
 # ---------- human helpers ----------
@@ -245,10 +307,12 @@ def _clamp_point(pt: List[float], bounds: Tuple[float, float], border: float) ->
 
 def _build_human_path(cfg: Dict[str, Any], bounds: Tuple[float, float], border: float) -> List[List[float]]:
 	Lx, Ly = bounds
+	raw = bool(cfg.get("raw_coords"))
 	if cfg.get("waypoints"):
 		pts = [_clamp_point(list(pt), bounds, border) for pt in cfg["waypoints"] if isinstance(pt, (list, tuple)) and len(pt) == 2]
 		if len(pts) >= 2:
 			return pts
+	# Fallback only when no explicit waypoints were provided
 	start_side = (cfg.get("start_side") or "south").lower()
 	direction = -1 if start_side == "north" else 1
 	cross_x = max(border, min(Lx - border, float(cfg.get("cross_x", 0.5 * Lx))))
@@ -294,8 +358,26 @@ def _offset_path(points: List[List[float]], segments: List[Dict[str, Any]], offs
                  bounds: Tuple[float, float], border: float) -> List[List[float]]:
 	if not segments or abs(offset) < 1e-4:
 		return points
-	perp = (-segments[0]["dir"][1], segments[0]["dir"][0])
-	return [_clamp_point([pt[0] + perp[0] * offset, pt[1] + perp[1] * offset], bounds, border) for pt in points]
+
+	def _dir_for_idx(idx: int) -> Tuple[float, float]:
+		if idx <= 0:
+			return segments[0]["dir"]
+		if idx >= len(segments):
+			return segments[-1]["dir"]
+		d_prev = segments[idx - 1]["dir"]
+		d_next = segments[idx]["dir"]
+		avg = (d_prev[0] + d_next[0], d_prev[1] + d_next[1])
+		n = math.hypot(avg[0], avg[1])
+		if n < 1e-6:
+			return d_prev
+		return (avg[0] / n, avg[1] / n)
+
+	out: List[List[float]] = []
+	for idx, pt in enumerate(points):
+		dir_vec = _dir_for_idx(idx if idx < len(segments) else len(segments) - 1)
+		perp = (-dir_vec[1], dir_vec[0])
+		out.append(_clamp_point([pt[0] + perp[0] * offset, pt[1] + perp[1] * offset], bounds, border))
+	return out
 
 def _update_human_pose(body_id: int, xh: float, yh: float, z_base: float, heading: float, posture_scale: float = 1.0) -> None:
 	z = max(0.1, z_base * posture_scale)
@@ -327,23 +409,17 @@ def _segment_rect(start: List[float], end: List[float],
                   width: float, bounds: Tuple[float, float]) -> List[float] | None:
 	dx = end[0] - start[0]
 	dy = end[1] - start[1]
-	if abs(dx) < 1e-4 and abs(dy) < 1e-4:
+	length = math.hypot(dx, dy)
+	if length < 1e-4:
 		return None
 	pad = max(0.25, width * 0.5)
-	adx = abs(dx); ady = abs(dy)
-	if adx >= ady:
-		pad_x = max(pad, 0.35)
-		pad_y = pad
-	else:
-		pad_x = pad
-		pad_y = max(pad, 0.35)
-	if abs(adx - ady) < 0.3:
-		pad_x = max(pad_x, pad)
-		pad_y = max(pad_y, pad)
-	x0 = min(start[0], end[0]) - pad_x
-	x1 = max(start[0], end[0]) + pad_x
-	y0 = min(start[1], end[1]) - pad_y
-	y1 = max(start[1], end[1]) + pad_y
+	perp = (-dy / length, dx / length)
+	span_x = pad * abs(perp[0])
+	span_y = pad * abs(perp[1])
+	x0 = min(start[0], end[0]) - span_x
+	x1 = max(start[0], end[0]) + span_x
+	y0 = min(start[1], end[1]) - span_y
+	y1 = max(start[1], end[1]) + span_y
 	Lx, Ly = bounds
 	x0 = max(0.0, min(Lx, x0))
 	x1 = max(0.0, min(Lx, x1))
@@ -370,6 +446,9 @@ def _apply_path_defined_aisles(prompt: str | None,
 	requested = bool(layout.get("auto_aisles_from_paths") or
 	                 layout.get("paths_define_aisles") or
 	                 layout.get("narrow_aisle_hint"))
+	existing = layout.get("aisles")
+	if isinstance(existing, list) and len(existing) > 0:
+		return
 	if not requested and isinstance(prompt, str):
 		prompt_l = prompt.lower()
 		if "aisle" in prompt_l and "no aisle" not in prompt_l and "without aisle" not in prompt_l:
@@ -381,7 +460,6 @@ def _apply_path_defined_aisles(prompt: str | None,
 		map_size = [20.0, 20.0]
 	bounds = (float(map_size[0]), float(map_size[1]))
 	hazards = scn.get("hazards", {}) or {}
-	existing = layout.get("aisles")
 	if not isinstance(existing, list):
 		existing = []
 		layout["aisles"] = existing
@@ -478,11 +556,11 @@ def _load_site_tuned() -> Dict[str, Any]:
 	site = os.environ.get("EDGESIM_SITE", "").strip()
 	if not site:
 		return {}
-	path = os.path.join("site_profiles", f"{site}.json")
-	if not os.path.exists(path):
+	path = _HERE / "site_profiles" / f"{site}.json"
+	if not path.exists():
 		return {}
 	try:
-		with open(path, "r", encoding="utf-8") as f:
+		with path.open("r", encoding="utf-8") as f:
 			obj = json.load(f)
 		return obj.get("tuned", {})
 	except Exception:
@@ -490,11 +568,18 @@ def _load_site_tuned() -> Dict[str, Any]:
 
 # ---------- Sensors ----------
 
+def _child_rng(rng: np.random.Generator | None) -> np.random.Generator:
+	if rng is None:
+		return np.random.default_rng()
+	return np.random.default_rng(rng.integers(2**63 - 1))
+
+
 class _LidarSim:
 	def __init__(self, beams: int = 360, hz: float = 10.0, max_range: float = 8.0,
 	             dropout_pct_range=(0.01, 0.02), noise_sigma: float = 0.02,
 	             jitter_ms_max: int = 50, fog_density: float = 0.0,
-	             reflective_zones: List[Dict[str, Any]] | None = None):
+	             reflective_zones: List[Dict[str, Any]] | None = None,
+	             rng: np.random.Generator | None = None):
 		self.beams = int(beams)
 		self.hz = float(hz)
 		self.dt = 1.0 / max(1e-6, self.hz)
@@ -503,7 +588,7 @@ class _LidarSim:
 		self.noise_sigma = float(noise_sigma)
 		self.next_update_t = 0.0
 		self.angles = np.linspace(-math.pi, math.pi, self.beams, endpoint=False)
-		self._rng = np.random.default_rng()
+		self._rng = _child_rng(rng)
 		self._queue: List[Tuple[float, np.ndarray]] = []
 		self._jitter_s = float(jitter_ms_max) / 1000.0
 		self.fog_density = max(0.0, min(1.0, float(fog_density)))
@@ -575,24 +660,24 @@ class _LidarSim:
 		return None
 
 class _OdomSim:
-	def __init__(self, bias_v: float = 0.02, bias_w: float = 0.01, noise_v: float = 0.02, noise_w: float = 0.01):
+	def __init__(self, bias_v: float = 0.02, bias_w: float = 0.01, noise_v: float = 0.02, noise_w: float = 0.01,
+	             rng: np.random.Generator | None = None):
 		self.bias_v = float(bias_v); self.bias_w = float(bias_w)
 		self.noise_v = float(noise_v); self.noise_w = float(noise_w)
-		self.rng = np.random.default_rng()
+		self.rng = _child_rng(rng)
 
-	def apply(self, v_cmd: float, w_cmd: float, slip_factor: float = 0.0) -> Tuple[float, float]:
-		slip_scale = max(0.0, 1.0 - slip_factor)
-		v = (v_cmd * slip_scale) * (1.0 + self.bias_v) + float(self.rng.normal(0.0, self.noise_v + slip_factor * 0.05))
-		w = (w_cmd * slip_scale) * (1.0 + self.bias_w) + float(self.rng.normal(0.0, self.noise_w + slip_factor * 0.03))
+	def apply(self, v_true: float, w_true: float, slip_factor: float = 0.0) -> Tuple[float, float]:
+		v = (v_true * (1.0 + self.bias_v)) + float(self.rng.normal(0.0, self.noise_v + slip_factor * 0.05))
+		w = (w_true * (1.0 + self.bias_w)) + float(self.rng.normal(0.0, self.noise_w + slip_factor * 0.03))
 		return v, w
 
 class _IMUSim:
-	def __init__(self, accel_noise: float = 0.02, gyro_noise: float = 0.015):
+	def __init__(self, accel_noise: float = 0.02, gyro_noise: float = 0.015, rng: np.random.Generator | None = None):
 		self.accel_noise = float(accel_noise)
 		self.gyro_noise = float(gyro_noise)
 		self.prev_v = 0.0
 		self.prev_yaw = 0.0
-		self.rng = np.random.default_rng()
+		self.rng = _child_rng(rng)
 
 	def measure(self, v_cur: float, yaw: float, dt: float, surface_effects: Dict[str, Any] | None = None) -> Tuple[float, float, float]:
 		vib = float((surface_effects or {}).get("imu_vibe_g", 0.0))
@@ -625,6 +710,11 @@ def run_one(
 
 	_apply_path_defined_aisles(prompt, scn)
 	env = build_world(scn, use_gui=gui)
+	# Keep Bullet's timestep aligned with our integration step
+	try:
+		p.setTimeStep(dt)
+	except Exception:
+		pass
 	client_id = env["client"]
 	try:
 		Lx, Ly = env["bounds"]
@@ -635,7 +725,13 @@ def run_one(
 		floor_zones_meta: List[Dict[str, Any]] = list(env.get("floor_zones", []))
 		transition_zones_meta: List[Dict[str, Any]] = list(env.get("transition_zones", []))
 		vehicle_meta: List[Dict[str, Any]] = list(env.get("vehicles_meta", []))
-		vehicle_body_ids = {v["body_id"] for v in vehicle_meta if isinstance(v, dict)}
+		vehicle_body_ids: set[int] = set()
+		for v in vehicle_meta:
+			if not isinstance(v, dict):
+				continue
+			bid = v.get("body_id")
+			if bid is not None:
+				vehicle_body_ids.add(bid)
 
 		# Static geometry bounds for spawn checks
 		static_aabbs: List[Tuple[float, float, float, float]] = []
@@ -644,6 +740,30 @@ def run_one(
 				continue
 			(a0, a1) = p.getAABB(wid)
 			static_aabbs.append((a0[0], a0[1], a1[0], a1[1]))
+		for sobj in env.get("static_obstacles", []) or []:
+			if not isinstance(sobj, dict):
+				continue
+			body_id = sobj.get("body_id")
+			if body_id in vehicle_body_ids:
+				continue
+			aabb = None
+			if isinstance(sobj.get("aabb"), (list, tuple)) and len(sobj["aabb"]) == 4:
+				aabb = sobj["aabb"]
+			elif body_id is not None:
+				try:
+					a0, a1 = p.getAABB(body_id)
+					aabb = (a0[0], a0[1], a1[0], a1[1])
+				except Exception:
+					aabb = None
+			if aabb:
+				static_aabbs.append((float(aabb[0]), float(aabb[1]), float(aabb[2]), float(aabb[3])))
+		walkway_rects: List[Tuple[float, float, float, float]] = []
+		for meta in env.get("aisles_meta", []):
+			if not isinstance(meta, dict):
+				continue
+			zone = meta.get("zone")
+			if isinstance(zone, (list, tuple)) and len(zone) == 4:
+				walkway_rects.append((float(zone[0]), float(zone[1]), float(zone[2]), float(zone[3])))
 
 		_tuned = _load_site_tuned()
 		if not isinstance(_tuned, dict):
@@ -668,6 +788,7 @@ def run_one(
 		tr_cfg = (_tuned.get("traction") or {})
 		mu_wet_min = float(tr_cfg.get("mu_wet_min", 0.35))
 		mu_wet_max = float(tr_cfg.get("mu_wet_max", 0.60))
+		jitter_mu_default = bool(tr_cfg.get("jitter_mu", False))
 
 		h_cfg = (_tuned.get("human") or {})
 		tuned_slip_prob = float(h_cfg.get("slip_prob", 0.85))               # moderate default
@@ -696,7 +817,7 @@ def run_one(
 		seed_val = (seed_val * 1664525 + 1013904223 + run_salt) & 0xFFFFFFFF
 		rng = np.random.default_rng(seed_val)
 
-		dynamic_wet_aabbs: List[Tuple[float, float, float, float]] = []
+		dynamic_wet_patches: List[Dict[str, Any]] = []
 
 		if gui:
 			p.resetDebugVisualizerCamera(
@@ -706,13 +827,30 @@ def run_one(
 				cameraTargetPosition=[0.5 * Lx, 0.5 * Ly, 0.0],
 			)
 
-		# sample a single μ_wet for this run and apply to existing patches
+		# sample a single μ_wet for this run and apply to existing patches (only if jitter is requested)
 		wet_mu = float(rng.uniform(mu_wet_min, mu_wet_max))
-		for bid in patch_ids:
-			p.changeDynamics(bid, -1, lateralFriction=wet_mu)
+		wet_like_types = {"wet", "oil", "cleaning_liquid", "smooth_plastic"}
+		for surface in floor_zones_meta:
+			if not isinstance(surface, dict):
+				continue
+			s_type = (surface.get("type") or "").lower()
+			effects = surface.get("effects") or {}
+			is_wet = (s_type in wet_like_types) or (effects.get("slip_boost", 0.0) > 0.2)
+			if not is_wet:
+				continue
+			if not bool(surface.get("jitter_mu", jitter_mu_default)):
+				continue
+			mu_new = float(rng.uniform(mu_wet_min, mu_wet_max))
+			bid = surface.get("body_id")
+			if bid is not None:
+				p.changeDynamics(bid, -1, lateralFriction=mu_new)
+			surface["mu"] = mu_new
 
-		radius = float(scn.get("agents", [{}])[0].get("radius_m", 0.4))
-		amr = _spawn_disc(radius=radius)
+		agents_list = scn.get("agents") or [{}]
+		agent_cfg = agents_list[0]
+		radius = float(agent_cfg.get("radius_m", 0.4))
+		robot_height = max(0.18, radius * 0.6)
+		amr = _spawn_disc(radius=radius, height=robot_height)
 
 		border = 0.6
 		start = list(map(float, scn.get("layout", {}).get("start", [border, border])))
@@ -721,8 +859,41 @@ def run_one(
 		start[1] = max(border, min(Ly - border, start[1]))
 		goal[0] = max(border, min(Lx - border, goal[0]))
 		goal[1] = max(border, min(Ly - border, goal[1]))
-		start[0], start[1] = _resolve_spawn_point(start[0], start[1], radius + 0.05, (Lx, Ly), border, static_aabbs)
-		p.resetBasePositionAndOrientation(amr, [start[0], start[1], radius * 0.5], p.getQuaternionFromEuler([0, 0, 0]))
+		raw_coord_aisles = bool(scn.get("layout", {}).get("_raw_coord_aisles"))
+		if walkway_rects and not raw_coord_aisles and scn.get("layout", {}).get("snap_start_goal_to_walkways", False):
+			start[0], start[1] = _project_point_to_rects((start[0], start[1]), walkway_rects)
+			goal[0], goal[1] = _project_point_to_rects((goal[0], goal[1]), walkway_rects)
+		if not raw_coord_aisles:
+			vehicle_spawn_blockers: List[Tuple[float, float, float, float]] = []
+			for vmeta in vehicle_meta:
+				path_pts = vmeta.get("path") or []
+				if not path_pts:
+					continue
+				half_ext = vmeta.get("half_extents") or [0.5, 0.4, 0.4]
+				hx = abs(half_ext[0]) + 0.1
+				hy = abs(half_ext[1]) + 0.1
+				vx, vy = path_pts[0]
+				vehicle_spawn_blockers.append((vx - hx, vy - hy, vx + hx, vy + hy))
+			start[0], start[1] = _resolve_spawn_point(
+				start[0], start[1], radius + 0.05, (Lx, Ly), border, static_aabbs + vehicle_spawn_blockers
+			)
+		if static_aabbs:
+			if any(_rect_contains_pt(aabb, start[0], start[1]) for aabb in static_aabbs):
+				raise ValueError(f"Robot start {start} lies inside static geometry")
+			clearance = _clearance_to_aabbs(start[0], start[1], static_aabbs)
+			if clearance < radius + 0.1:
+				raise ValueError(f"Robot start {start} too close to geometry (clearance {clearance:.2f} m)")
+			if any(_rect_contains_pt(aabb, goal[0], goal[1]) for aabb in static_aabbs):
+				raise ValueError(f"Robot goal {goal} lies inside static geometry")
+			min_goal_clear = _clearance_to_aabbs(goal[0], goal[1], static_aabbs)
+			if min_goal_clear < radius + 0.1:
+				raise ValueError(f"Robot goal {goal} too close to geometry (clearance {min_goal_clear:.2f} m)")
+		if walkway_rects and not any(_rect_contains_pt(w, start[0], start[1]) for w in walkway_rects):
+			print(f"[geometry] start {start} not inside any aisle/junction; continuing with nearest projection")
+		dx = goal[0] - start[0]
+		dy = goal[1] - start[1]
+		yaw0 = math.pi / 2 if abs(dy) > abs(dx) and dy >= 0 else (-math.pi / 2 if abs(dy) > abs(dx) else (0.0 if dx >= 0 else math.pi))
+		p.resetBasePositionAndOrientation(amr, [start[0], start[1], robot_height * 0.5], p.getQuaternionFromEuler([0, 0, yaw0]))
 
 		moving_blockers: List[Tuple[float, float, float, float]] = []
 		moving_blockers.append((start[0] - radius - 0.1, start[1] - radius - 0.1, start[0] + radius + 0.1, start[1] + radius + 0.1))
@@ -739,14 +910,24 @@ def run_one(
 		# Optional wet corridor (not every run)
 		ensure_corr_p = float(_tuned.get("ensure_wet_corridor_pct", 0.0))
 		corr_w = float(_tuned.get("ensure_wet_corridor_width_m", 1.2))
-		if ensure_corr_p > 0.0 and rng.random() < ensure_corr_p:
+		explicit_traction = bool(scn.get("hazards", {}).get("traction"))
+		if ensure_corr_p > 0.0 and not explicit_traction and rng.random() < ensure_corr_p:
 			midx = 0.5 * Lx
 			x0, x1 = max(0.0, midx - 0.5 * corr_w), min(Lx, midx + 0.5 * corr_w)
 			y0, y1 = 0.0 + 0.6, Ly - 0.6
 			corr_id = _spawn_wet_patch(x0, y0, x1, y1, mu=wet_mu)
 			patch_ids.append(corr_id)
 			ignored_for_collision.add(corr_id)
-			dynamic_wet_aabbs.append((x0, y0, x1, y1))
+			zone_corr = (x0, y0, x1, y1)
+			dynamic_wet_patches.append({"aabb": zone_corr, "mu": wet_mu})
+			floor_zones_meta.append({
+				"id": "wet_corridor_auto",
+				"type": "wet",
+				"zone": list(zone_corr),
+				"mu": wet_mu,
+				"body_id": corr_id,
+				"effects": {"brake_scale": 1.4, "slip_boost": 0.6},
+			})
 
 		# Human hazard (multiple actors)
 		human_cfgs = [cfg for cfg in (scn.get("hazards", {}).get("human") or []) if isinstance(cfg, dict)]
@@ -755,6 +936,8 @@ def run_one(
 		for cfg in human_cfgs:
 			profile = _human_profile(cfg)
 			base_path = _build_human_path(cfg, (Lx, Ly), border)
+			if walkway_rects and not cfg.get("raw_coords"):
+				base_path = _project_path_into_rects(base_path, walkway_rects, profile["radius"], static_aabbs, (Lx, Ly), border)
 			base_segments, _ = _segments_from_points(base_path)
 			base_slip = float(cfg.get("p_slip", tuned_slip_prob))
 			use_local_wet = global_wet or bool(cfg.get("force_wet", False))
@@ -780,7 +963,15 @@ def run_one(
 				patch_ids.append(wet_id)
 				ignored_for_collision.add(wet_id)
 				local_wet_aabb = tuple(wet_zone)
-				dynamic_wet_aabbs.append(local_wet_aabb)
+				dynamic_wet_patches.append({"aabb": local_wet_aabb, "mu": wet_mu})
+				floor_zones_meta.append({
+					"id": cfg.get("id") or f"human_wet_{len(floor_zones_meta)+1:02d}",
+					"type": cfg.get("type", "wet"),
+					"zone": wet_zone,
+					"mu": wet_mu,
+					"body_id": wet_id,
+					"effects": {"brake_scale": 1.3, "slip_boost": 0.6},
+				})
 			if isinstance(cfg.get("group_size_range"), (list, tuple)) and len(cfg["group_size_range"]) == 2:
 				a, b = cfg["group_size_range"]
 				try:
@@ -793,11 +984,13 @@ def run_one(
 			for member_idx in range(group_size):
 				offset = (member_idx - 0.5 * (group_size - 1)) * offset_step
 				member_path = _offset_path(base_path, base_segments, offset, (Lx, Ly), border)
+				if walkway_rects and not cfg.get("raw_coords"):
+					member_path = _project_path_into_rects(member_path, walkway_rects, profile["radius"], static_aabbs, (Lx, Ly), border)
 				member_segments, _ = _segments_from_points(member_path)
 				if member_path:
 					safe_x, safe_y = _resolve_spawn_point(member_path[0][0], member_path[0][1],
 					                                      profile["radius"] + 0.05, (Lx, Ly), border,
-					                                      moving_blockers, max_iter=20)
+					                                      moving_blockers + static_aabbs, max_iter=20) if not cfg.get("raw_coords") else (member_path[0][0], member_path[0][1])
 					dx, dy = safe_x - member_path[0][0], safe_y - member_path[0][1]
 					if abs(dx) > 1e-3 or abs(dy) > 1e-3:
 						member_path = [_clamp_point([pt[0] + dx, pt[1] + dy], (Lx, Ly), border) for pt in member_path]
@@ -858,8 +1051,11 @@ def run_one(
 		for vmeta in vehicle_meta:
 			raw_pts = vmeta.get("path") or []
 			path_pts = [list(pt) for pt in raw_pts if isinstance(pt, (list, tuple)) and len(pt) == 2]
-			segments, _ = _segments_from_points(path_pts)
 			half_ext = vmeta.get("half_extents") or [0.5, 0.4, 0.4]
+			collision_radius = max(abs(half_ext[0]), abs(half_ext[1])) + 0.1
+			if walkway_rects and not vmeta.get("raw_coords"):
+				path_pts = _project_path_into_rects(path_pts, walkway_rects, collision_radius, static_aabbs, (Lx, Ly), border)
+			segments, _ = _segments_from_points(path_pts)
 			state = {
 				"id": vmeta.get("id"),
 				"body_id": vmeta.get("body_id"),
@@ -887,23 +1083,23 @@ def run_one(
 						sx, sy = start[0], start[1]
 				else:
 					sx, sy = start[0], start[1]
-			collision_radius = max(abs(half_ext[0]), abs(half_ext[1])) + 0.1
 			robot_block = (start[0] - radius - 0.3, start[1] - radius - 0.3, start[0] + radius + 0.3, start[1] + radius + 0.3)
-			sx, sy = _resolve_spawn_point(sx, sy, collision_radius, (Lx, Ly), border, static_aabbs + [robot_block])
-			if segments:
-				first_dir = segments[0]["dir"]
-				heading = math.atan2(first_dir[1], first_dir[0])
-			else:
-				heading = float(vmeta.get("yaw", 0.0))
-			state["last_pose"] = (sx, sy, heading)
-			state["aabb"] = _vehicle_aabb(state, sx, sy)
-			if body_id is not None:
-				try:
-					p.resetBasePositionAndOrientation(body_id, [sx, sy, state.get("height", 0.4)],
-					                                  p.getQuaternionFromEuler([0.0, 0.0, heading]))
-				except Exception:
-					pass
-			vehicle_states.append(state)
+			if not vmeta.get("raw_coords"):
+				sx, sy = _resolve_spawn_point(sx, sy, collision_radius, (Lx, Ly), border, static_aabbs + [robot_block])
+				if segments:
+					first_dir = segments[0]["dir"]
+					heading = math.atan2(first_dir[1], first_dir[0])
+				else:
+					heading = float(vmeta.get("yaw", 0.0))
+				state["last_pose"] = (sx, sy, heading)
+				state["aabb"] = _vehicle_aabb(state, sx, sy)
+				if body_id is not None:
+					try:
+						p.resetBasePositionAndOrientation(body_id, [sx, sy, state.get("height", 0.4)],
+						                                  p.getQuaternionFromEuler([0.0, 0.0, heading]))
+					except Exception:
+						pass
+				vehicle_states.append(state)
 
 		floor_event_states = [
 			{"cfg": evt, "spawned": False, "body_id": None}
@@ -943,7 +1139,16 @@ def run_one(
 				def _spawn_patch_cb(x0, y0, x1, y1, mu):
 					bid = _spawn_wet_patch(x0, y0, x1, y1, mu=mu)
 					ignored_for_collision.add(bid)
-					dynamic_wet_aabbs.append((float(x0), float(y0), float(x1), float(y1)))
+					zone = (float(x0), float(y0), float(x1), float(y1))
+					dynamic_wet_patches.append({"aabb": zone, "mu": mu})
+					floor_zones_meta.append({
+						"id": f"falling_puddle_{len(floor_zones_meta)+1:02d}",
+						"type": "wet",
+						"zone": list(zone),
+						"mu": mu,
+						"body_id": bid,
+						"effects": {"brake_scale": 1.4, "slip_boost": 0.6},
+					})
 					return bid
 				inj.spawn_wet_patch_cb = _spawn_patch_cb
 				injectors.append(inj)
@@ -994,10 +1199,10 @@ def run_one(
 
 		reflective_regions: List[Dict[str, Any]] = []
 		for sobj in env.get("static_obstacles", []) or []:
-			if not sobj.get("reflective"):
+			if not isinstance(sobj, dict) or not sobj.get("reflective"):
 				continue
 			aabb = sobj.get("aabb")
-			if not aabb or len(aabb) != 4:
+			if not isinstance(aabb, (list, tuple)) or len(aabb) != 4:
 				continue
 			reflective_regions.append({
 				"aabb": [float(aabb[0]), float(aabb[1]), float(aabb[2]), float(aabb[3])],
@@ -1005,22 +1210,25 @@ def run_one(
 				"trigger": float(sobj.get("trigger_m", 1.6)),
 			})
 
-		# World digest (best-effort)
-		try:
-			hazards_digest = {
-				"traction": [dict(zone=list(z["zone"]), mu=float(z.get("mu", 0.45)))
-				             for z in scn.get("hazards", {}).get("traction", []) if isinstance(z, dict)],
-				"human": (scn.get("hazards", {}).get("human") or [{}]),
-				"floor_events": [
-					{key: evt.get(key) for key in ("id", "type", "zone", "spawn_time_s")}
-					for evt in (scn.get("hazards", {}).get("floor_events", []) or []) if isinstance(evt, dict)
-				],
-				"vehicles": [
-					{"id": v.get("id"), "type": v.get("type"), "path_len": len(v.get("path", []) or [])}
-					for v in (scn.get("hazards", {}).get("vehicles", []) or []) if isinstance(v, dict)
-				],
-			}
-			digest = build_world_digest(
+		def _write_digest_snapshot() -> None:
+			try:
+				hazards_digest = {
+					"traction": [
+						dict(zone=list(zone), mu=float(z.get("mu", 0.45)))
+						for z in scn.get("hazards", {}).get("traction", []) if isinstance(z, dict)
+						for zone in [z.get("zone")] if isinstance(zone, (list, tuple)) and len(zone) == 4
+					],
+					"human": (scn.get("hazards", {}).get("human") or [{}]),
+					"floor_events": [
+						{key: evt.get(key) for key in ("id", "type", "zone", "spawn_time_s")}
+						for evt in (scn.get("hazards", {}).get("floor_events", []) or []) if isinstance(evt, dict)
+					],
+					"vehicles": [
+						{"id": v.get("id"), "type": v.get("type"), "path_len": len(v.get("path", []) or [])}
+						for v in (scn.get("hazards", {}).get("vehicles", []) or []) if isinstance(v, dict)
+					],
+				}
+				digest = build_world_digest(
 					static_aabbs,
 					hazards_digest,
 					(start[0], start[1]),
@@ -1033,16 +1241,12 @@ def run_one(
 					environment=env_cfg,
 					aisles=env.get("aisles_meta"),
 				)
-			write_world_digest(out_dir, digest)
-		except Exception:
-			pass
+				write_world_digest(out_dir, digest)
 
-		try:
-			batch_root = out_dir.parent
-			if batch_root.name == "per_run":
-				batch_root = batch_root.parent
-			root_world = batch_root / "world.json"
-			if not root_world.exists():
+				batch_root = out_dir.parent
+				if batch_root.name == "per_run":
+					batch_root = batch_root.parent
+				root_world = batch_root / "world.json"
 				root_world.write_text((out_dir / "world.json").read_text(encoding="utf-8"), encoding="utf-8")
 				import json as _json, hashlib
 				h = hashlib.sha256(root_world.read_bytes()).hexdigest()
@@ -1053,14 +1257,13 @@ def run_one(
 					man = {}
 				man["world_sha256"] = h
 				man_path.write_text(_json.dumps(man, indent=2), encoding="utf-8")
-		except Exception:
-			pass
+			except Exception:
+				pass
 
 		# Reference controllers now live outside the simulator. Default to a direct goal waypoint
 		# so run_one can still drive the robot without internal planning logic.
 		waypoints: List[Tuple[float, float]] = [(goal[0], goal[1])]
 
-		agent_cfg = (scn.get("agents") or [{}])[0]
 		max_speed_nominal = float(agent_cfg.get("max_speed_mps", 1.2))
 
 		# Control state
@@ -1089,11 +1292,17 @@ def run_one(
 					    (surface.get("effects") or {}).get("slip_boost", 0.0) > 0.2):
 						return True
 			for patch in scn.get("hazards", {}).get("traction", []):
-				x0, y0, x1, y1 = patch["zone"]
+				if not isinstance(patch, dict):
+					continue
+				zone = patch.get("zone")
+				if not isinstance(zone, (list, tuple)) or len(zone) != 4:
+					continue
+				x0, y0, x1, y1 = zone
 				if _pt_in_aabb(xr, yr, (float(x0), float(y0), float(x1), float(y1))):
 					return True
-			for (x0, y0, x1, y1) in dynamic_wet_aabbs:
-				if _pt_in_aabb(xr, yr, (x0, y0, x1, y1)):
+			for patch in dynamic_wet_patches:
+				aabb = patch.get("aabb")
+				if aabb and _pt_in_aabb(xr, yr, tuple(aabb)):
 					return True
 			return False
 
@@ -1103,15 +1312,6 @@ def run_one(
 				if zone and _pt_in_aabb(xr, yr, tuple(zone)):
 					return surface
 			return None
-
-		def _floor_mu_at(xr: float, yr: float, default_mu: float = 0.85) -> float:
-			surface = _surface_at(xr, yr)
-			if surface is not None:
-				return float(surface.get("mu", default_mu))
-			for (x0, y0, x1, y1) in dynamic_wet_aabbs:
-				if _pt_in_aabb(xr, yr, (x0, y0, x1, y1)):
-					return float(wet_mu)
-			return float(default_mu)
 
 		def _transition_at(xr: float, yr: float) -> Dict[str, Any] | None:
 			for tz in transition_zones_meta:
@@ -1127,6 +1327,9 @@ def run_one(
 				speed = float(v.get("speed", 0.0))
 				if body is None or speed <= 0.0 or not segments:
 					continue
+				initial_seg_idx = int(v.get("seg_idx", 0))
+				initial_progress = float(v.get("seg_progress", 0.0))
+				prev_pose = v.get("last_pose")
 				step_remaining = speed * dt
 				while step_remaining > 1e-6:
 					seg_idx = max(0, min(len(segments) - 1, int(v.get("seg_idx", 0))))
@@ -1184,6 +1387,17 @@ def run_one(
 				if v.get("direction", 1) < 0:
 					heading += math.pi
 				aabb = _vehicle_aabb(v, new_x, new_y)
+				if any(_rect_overlap(aabb, obs) for obs in static_aabbs):
+					v["seg_idx"] = initial_seg_idx
+					v["seg_progress"] = initial_progress
+					if prev_pose:
+						v["last_pose"] = prev_pose
+						try:
+							p.resetBasePositionAndOrientation(body, [prev_pose[0], prev_pose[1], v.get("height", 0.4)],
+							                                  p.getQuaternionFromEuler([0.0, 0.0, prev_pose[2]]))
+						except Exception:
+							pass
+					continue
 				v["aabb"] = aabb
 				v["last_pose"] = (new_x, new_y, heading)
 				p.resetBasePositionAndOrientation(body, [new_x, new_y, v.get("height", 0.4)],
@@ -1237,6 +1451,9 @@ def run_one(
 			fog_density = max(fog_density, 0.3)
 		lidar_noise = float(lidar_cfg.get("noise_sigma", tuned_lidar_noise))
 		lidar_dropout = float(lidar_cfg.get("dropout_pct", tuned_lidar_dropout))
+		lidar_rng = _child_rng(rng)
+		odom_rng = _child_rng(rng)
+		imu_rng = _child_rng(rng)
 		lidar = _LidarSim(
 			beams=360,
 			hz=lidar_hz,
@@ -1246,6 +1463,7 @@ def run_one(
 			jitter_ms_max=tuned_lidar_jitter,
 			fog_density=fog_density,
 			reflective_zones=reflective_regions,
+			rng=lidar_rng,
 		)
 		odom_cfg = ((scn.get("sensors", {}) or {}).get("odom") or {})
 		imu_cfg = ((scn.get("sensors", {}) or {}).get("imu") or {})
@@ -1254,13 +1472,14 @@ def run_one(
 			bias_w=tuned_bias_w,
 			noise_v=float(odom_cfg.get("noise_v", 0.02)),
 			noise_w=float(odom_cfg.get("noise_w", 0.01)),
+			rng=odom_rng,
 		)
 		imu = _IMUSim(
 			accel_noise=float(imu_cfg.get("noise_std", 0.02)),
 			gyro_noise=float(imu_cfg.get("gyro_noise", 0.015)),
+			rng=imu_rng,
 		)
-		imu = _IMUSim()
-		sensor_z = radius * 0.9
+		sensor_z = float(agent_cfg.get("sensor_z_m", max(0.12, robot_height * 0.8)))
 		min_clear_lidar = 10.0
 		vehicle_guard_boxes: List[Tuple[float, float, float, float]] = []
 
@@ -1297,13 +1516,14 @@ def run_one(
 				spawn_t = float(evt_state["cfg"].get("spawn_time_s", 20.0))
 				if t >= spawn_t:
 					zone = evt_state["cfg"].get("zone")
-					if not zone or len(zone) != 4:
+					if not isinstance(zone, (list, tuple)) or len(zone) != 4:
 						continue
+					x0, y0, x1, y1 = map(float, zone)
 					mu_evt = float(evt_state["cfg"].get("mu", wet_mu))
-					bid = _spawn_wet_patch(zone[0], zone[1], zone[2], zone[3], mu=mu_evt)
+					bid = _spawn_wet_patch(x0, y0, x1, y1, mu=mu_evt)
 					patch_ids.append(bid)
 					ignored_for_collision.add(bid)
-					dynamic_wet_aabbs.append((zone[0], zone[1], zone[2], zone[3]))
+					dynamic_wet_patches.append({"aabb": (x0, y0, x1, y1), "mu": mu_evt})
 					floor_zones_meta.append({
 						"id": evt_state["cfg"].get("id"),
 						"type": evt_state["cfg"].get("type", "spill"),
@@ -1434,6 +1654,10 @@ def run_one(
 							shift = (min_robot_clear - dist_robot) + 0.05
 							xh += math.cos(heading) * shift
 							yh += math.sin(heading) * shift
+						human_aabb = (xh - h["radius"], yh - h["radius"], xh + h["radius"], yh + h["radius"])
+						if any(_rect_overlap(human_aabb, obs) for obs in static_aabbs):
+							h["hold_until"] = t + 0.5
+							continue
 						_update_human_pose(body_id, xh, yh, h["z_base"], heading, h.get("posture_scale", 1.0))
 						_update_human_props(h, xh, yh, heading)
 						h["last_pose"] = (xh, yh)
@@ -1446,7 +1670,7 @@ def run_one(
 						req_exposure = float(h.get("slip_min_exposure", slip_min_exposure_s))
 						if h["wet_since"] is not None and ((t - h["wet_since"]) >= req_exposure):
 							surface = _surface_at(xh, yh)
-							mu_here = _floor_mu_at(xh, yh, default_mu=0.85)
+							mu_here = _floor_mu_at(xh, yh, floor_zones_meta, dynamic_wet_patches, wet_mu, default_mu=0.85)
 							slip_boost = max(0.0, ((surface or {}).get("effects") or {}).get("slip_boost", 0.0))
 							base_slip = float(h.get("p_slip", tuned_slip_prob))
 							mu_slip = _slip_prob_from_mu(mu_here)
@@ -1507,8 +1731,6 @@ def run_one(
 
 			# Sensors
 			lidar_ignore = ignored_for_collision | {amr}
-			for h in human_states:
-				lidar_ignore.add(h["id"])
 			lidar.maybe_update(t, x, y, yaw, sensor_z, lidar_ignore)
 			lr = lidar.try_pop_ready(t)
 			if lr is not None:
@@ -1524,20 +1746,21 @@ def run_one(
 						lr[mask] = lidar.max_range
 				min_clear_lidar = float(np.min(lr))
 
-			# Integrate motion
-			ov, ow = odom.apply(v_cmd, w_cmd, slip_factor=slip_factor)
-			odom_meas = (ov, ow)
-			new_yaw = yaw + ow * dt
-			new_x = max(border, min(Lx - border, x + (ov * math.cos(new_yaw)) * dt))
-			new_y = max(border, min(Ly - border, y + (ov * math.sin(new_yaw)) * dt))
-			imu_meas = imu.measure(ov, new_yaw, dt, surface_effects)
-			p.resetBasePositionAndOrientation(amr, [new_x, new_y, radius * 0.5], p.getQuaternionFromEuler([0, 0, new_yaw]))
+			# Integrate motion using commanded (ground-truth) velocities; sensors get noisy copies
+			slip_scale = max(0.0, 1.0 - slip_factor)
+			v_true = v_cmd * slip_scale
+			w_true = w_cmd * slip_scale
+			new_yaw = yaw + w_true * dt
+			new_x = max(border, min(Lx - border, x + (v_true * math.cos(new_yaw)) * dt))
+			new_y = max(border, min(Ly - border, y + (v_true * math.sin(new_yaw)) * dt))
+			odom_meas = odom.apply(v_true, w_true, slip_factor=slip_factor)
+			imu_meas = imu.measure(v_true, new_yaw, dt, surface_effects)
+			p.resetBasePositionAndOrientation(amr, [new_x, new_y, robot_height * 0.5], p.getQuaternionFromEuler([0, 0, new_yaw]))
 
 			human_body_ids = {h["id"] for h in human_states}
 			raw_contacts = p.getContactPoints(bodyA=amr)
 			human_contact_flag = False
 			nonhuman_contact_count = 0
-			blocked = False
 			for cp in raw_contacts:
 				bodyA = cp[1]; bodyB = cp[2]
 				if amr not in (bodyA, bodyB):
@@ -1547,20 +1770,12 @@ def run_one(
 					continue
 				if other in human_body_ids:
 					human_contact_flag = True
-					blocked = True
 					break
 				nonhuman_contact_count += 1
-				blocked = True
-			if blocked:
-				p.resetBasePositionAndOrientation(amr, [prev_pose[0], prev_pose[1], radius * 0.5], p.getQuaternionFromEuler([0, 0, prev_pose[2]]))
-				new_x, new_y, new_yaw = prev_pose
-				v_cmd = 0.0
 
 			_update_min_ttc(new_x, new_y)
 
 			# Clearance (geom) vs static + dynamic human footprint
-			vehicle_guard_boxes: List[Tuple[float, float, float, float]] = []
-
 			def _min_clear_geom(px: float, py: float, ry: float) -> float:
 				dyn = list(static_aabbs)
 				for fh_id in [h["id"] for h in human_states if h["phase"] == "fallen"]:
@@ -1619,6 +1834,7 @@ def run_one(
 		if not success and (not rows or (rows and not rows[-1][8])):
 			_log_row("timeout", "elapsed", near_stop=int(v_cmd < 0.2))
 
+		_write_digest_snapshot()
 		_write_csv(out_dir / "run_one.csv", header, rows)
 		return {"success": success, "time": t, "steps": len(rows)}
 
@@ -1630,4 +1846,122 @@ def run_one(
 
 
 
-#Note to self: need to keep on working on the T intersection and the way humans spawn there.
+# Some improvements are present, but more are needed.
+# I need to go through all the key words one by one and ensure they work well and the code respects the global design rules.
+# 
+
+"""
+Notes to Codex:
+EDGE-SIM PROJECT CONTEXT (READ FIRST)
+You are helping on EdgeSim, a PyBullet-based warehouse simulation environment for mobile robots.
+EdgeSim is an environment, not a planner. Your job is to design and fix geometry, actors, and sensors, not to make the robot “smart.”
+1. Core Purpose
+EdgeSim is meant to:
+Simulate realistic warehouse layouts: aisles, racks, intersections, docks, blind corners, open areas.
+Populate them with dynamic actors: AMR robot(s), forklifts, other vehicles, humans, carts, falling/ thrown objects.
+Model hazards and conditions:
+Floor traction (wet, oil, spills, smooth surfaces) and slip risk.
+Visibility (night / low-light, fog, sensor shadowing).
+Occlusions from racks, endcaps, forklifts, humans.
+Produce realistic sensor data (LiDAR, odom, IMU) and logs for RL, safety analysis, and coverage studies.
+The simulator is used to test how a controller would behave in a realistic, messy warehouse — but the controller itself is outside EdgeSim.
+2. Architecture Overview
+High-level flow:
+Natural language prompt → parser.py → scn dict
+parser.py takes a text prompt like
+"aisle near a forklift and group of workers crossing"
+plus keyword maps & templates.
+It outputs a scenario dict scn with:
+layout: map size, aisles, start/goal, intersections, safety zones, etc.
+hazards: humans, vehicles, traction zones, floor events, injectors, etc.
+taxonomy: tags like {"occlusion": True, "visibility": "low", ...}.
+site_overrides: tweaks that can override site profile defaults.
+Rule: parser.py is where scenario-specific layout decisions belong (waypoints, crossings, blind corners, etc.). It should avoid hardcoding behavior to one exact prompt string; use keywords, tags, and generic templates.
+world.py – build static and semi-static geometry
+build_world(scn, use_gui) creates the PyBullet world:
+Floor plane, walls, racks, endcaps, dock walls, columns, static obstacles.
+Aisles/junctions as rectangles, with metadata (aisles_meta).
+Floor zones with friction μ and effects (e.g. slip_boost, imu_vibe_g).
+Vehicle bodies & meta (vehicles_meta) with paths and dimensions.
+Returns an env dict with:
+client, plane_id, walls, static_obstacles
+bounds (Lx, Ly), aisles_meta, floor_zones, transition_zones
+vehicles_meta, patches, etc.
+Rule: All geometry (positions, sizes, AABBs) must be consistent:
+No racks inside walls, no aisles overlapping nonsensically.
+No actors should ever spawn inside static geometry.
+Racking must create occlusion and collision boundaries that sensors & actors respect.
+sim_one.py – run a single episode
+Takes prompt, scn, and env from build_world.
+Spawns the robot disc (AMR) with radius, height, start/goal from layout.
+Sets up humans and vehicles using hazards and env metadata.
+Applies tuned site profile (site_profiles/*.json) for:
+Traction ranges (μ for wet/ dry surfaces).
+Human slip probabilities & fall duration.
+LiDAR noise/dropout/jitter, odom & IMU bias/noise.
+Optional injectors: falling object, thrown object, lidar blackout.
+Steps physics in a loop:
+Simple PID-style controller from current pose → goal waypoint (no path planner).
+Updates humans (walking, groups, zig-zag, late-react, slipping, falling).
+Moves vehicles along their scripted paths.
+Computes LiDAR, odom, IMU measurements.
+Logs CSV rows (run_one.csv) and a world digest (world.json + manifest.json).
+Rule: sim_one.py is an executor + logger. It must not:
+Re-interpret natural language prompts.
+Implement obstacle avoidance, replanning, or “smart” navigation.
+Hardcode coordinates for particular prompt phrases.
+3. Global Design Rules
+Environment, not planner
+Do not add A*, RRT, “stop if obstacle” rules, or reactive obstacle avoidance into the sim.
+The robot’s commanded velocities must be applied; only physics & collisions decide what happens.
+A simple, generic PID to the goal is OK as a placeholder, but no clever pathfinding.
+Geometry first
+When fixing bugs, think:
+Shapes & positions of racks, walls, endcaps, aisles, docks.
+Actor spawn locations & sizes (robot, humans, forklifts, carts).
+Sensor geometry (raycasts, occlusions, reflective surfaces).
+Only after geometry is correct should you consider tweaking behavior parameters.
+No prompt-specific hardcoding
+Code must not special-case one English prompt or scenario.
+Instead use:
+Keyword maps (KEYWORDS) → taxonomy tags,
+Scenario templates,
+Generic “scene types” (e.g. “T-intersection”, “blind corner”) mapped to reusable geometry patterns.
+Any coordinates or objects you add must work for all prompts that use that pattern, not just the one we’re currently debugging.
+Respect raw_coords
+If cfg.get("raw_coords") (for humans/vehicles) or similar is true:
+Treat the provided waypoints/positions as authoritative.
+You may clamp to map bounds or do minimal collision-escape, but do not:
+Project paths into aisles,
+Snap to heuristic crosswalks,
+Auto-rotate or reorder waypoints.
+Projection to aisles, snapping, and path shaping is allowed only when raw_coords is false.
+Actors respect geometry (via physics and scripted paths)
+Robots, forklifts, humans must never spawn inside walls, racks, or other static geometry.
+Path following must keep them inside aisles and open areas, subject to:
+Clearance margins,
+Collision checks with static AABBs,
+Slip and friction effects.
+Hazards and floors are parameterized, not hacked
+Wet patches, spills, and slippery zones use:
+Friction coefficients μ,
+A probabilistic slip model based on μ and exposure time.
+New hazards (wet bands, events, injectors) must take their zones and coordinates from:
+scn["hazards"] (e.g. traction, floor_events),
+layout or aisles_meta,
+site_profiles JSON.
+Do not drop a spill at some hardcoded (x, y) just because of one prompt; use generic rules tied to geometry.
+Logging and digest must stay consistent
+Every run writes:
+run_one.csv with time series of pose, commands, sensors, events, TTC, proximity, wet/ not wet, human phases, etc.
+world.json / manifest.json with a digest of geometry & hazards.
+When changing world or hazard structure, ensure digest and CSV remain coherent: coordinates, AABBs, IDs, and event labels should match the simulation.
+4. Practical mindset for future edits
+When modifying or adding code in this project:
+Ask first:
+“Is this a geometry/layout issue, a spawn/size issue, or a behavior parameter issue?”
+Fix geometry and spawn logic before behavior.
+Never introduce logic that only makes sense for one specific English prompt.
+Ensure all new objects use sizes, positions, paths, and friction values that are consistent, generic, and driven by scn, env, or site profiles.
+This is the context you should assume for all future EdgeSim discussions.
+"""
