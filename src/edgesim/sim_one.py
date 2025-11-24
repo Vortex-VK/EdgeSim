@@ -269,13 +269,13 @@ def _human_spawn_ok(start_xy: Tuple[float, float],
 # ---------- human helpers ----------
 
 _HUMAN_ROLE_PRESETS = {
-	"picker": {"radius": 0.25, "length": 1.6, "speed": (0.8, 1.3), "behaviors": {"start_stop", "hesitation"}},
-	"fast_walker": {"radius": 0.24, "length": 1.6, "speed": (1.3, 2.0), "behaviors": {"zig_zag"}},
-	"distracted": {"radius": 0.25, "length": 1.6, "speed": (0.8, 1.2), "behaviors": {"late_react", "start_stop", "step_back"}},
-	"carry": {"radius": 0.3, "length": 1.7, "speed": (0.7, 1.1), "behaviors": {"carry_payload"}},
+	"picker": {"radius": 0.25, "length": 1.6, "speed": (0.9, 1.5), "behaviors": {"start_stop", "hesitation"}},
+	"fast_walker": {"radius": 0.24, "length": 1.6, "speed": (1.6, 2.2), "behaviors": {"zig_zag"}},
+	"distracted": {"radius": 0.25, "length": 1.6, "speed": (0.9, 1.5), "behaviors": {"late_react", "start_stop", "step_back"}},
+	"carry": {"radius": 0.3, "length": 1.7, "speed": (0.7, 1.2), "behaviors": {"carry_payload"}},
 	"child": {"radius": 0.18, "length": 1.0, "speed": (0.9, 1.4), "behaviors": {"zig_zag"}},
 	"supervisor": {"radius": 0.25, "length": 1.6, "speed": (0.0, 0.0), "behaviors": {"stationary"}},
-	"group": {"radius": 0.25, "length": 1.6, "speed": (0.8, 1.2), "behaviors": set()},
+	"group": {"radius": 0.25, "length": 1.6, "speed": (0.9, 1.5), "behaviors": set()},
 }
 
 def _human_profile(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -1035,6 +1035,14 @@ def run_one(
 					"hold_until": None,
 					"late_react_triggered": False,
 				}
+				if member_segments:
+					seg0 = member_segments[0]
+					start_pt = seg0["start"]
+					heading0 = math.atan2(seg0["dir"][1], seg0["dir"][0])
+					state["last_pose"] = (start_pt[0], start_pt[1], heading0)
+					# Place body at start so it is visible even before stepping
+					_update_human_pose(hid, start_pt[0], start_pt[1], state["z_base"], heading0)
+					state["next_start_t"] = min(float(state.get("next_start_t", 0.0)), 0.1)
 				if "push_cart" in state_behaviors:
 					cart_id, cart_h = _spawn_cart_body()
 					state["props"]["cart"] = {"id": cart_id, "height": cart_h, "offset": float(cfg.get("cart_offset_m", 0.9))}
@@ -1578,7 +1586,11 @@ def run_one(
 								safe = max(abs(half_v[0]), abs(half_v[1])) + 0.4
 								vehicle_guards.append((pose[0], pose[1], safe))
 						path_ref = h.get("path") or []
-						hx_prev, hy_prev = h.get("last_pose", (-999.0, -999.0))
+						last_pose = h.get("last_pose", (-999.0, -999.0))
+						if isinstance(last_pose, (list, tuple)) and len(last_pose) >= 2:
+							hx_prev, hy_prev = last_pose[0], last_pose[1]
+						else:
+							hx_prev, hy_prev = -999.0, -999.0
 						if hx_prev < -100 or hy_prev < -100:
 							if path_ref:
 								hx_prev, hy_prev = path_ref[0]
@@ -1706,7 +1718,8 @@ def run_one(
 							start_xy = (h["path"][0][0], h["path"][0][1])
 						spawn_clear = max(0.3, float(cfg.get("spawn_clearance_m", 0.3)))
 						if start_xy is not None:
-							if not _human_spawn_ok(start_xy, h["radius"], (x, y), radius, vehicle_guards, human_states, clearance=spawn_clear):
+							other_humans = [ho for ho in human_states if ho is not h]
+							if not _human_spawn_ok(start_xy, h["radius"], (x, y), radius, vehicle_guards, other_humans, clearance=spawn_clear):
 								h["next_start_t"] = t + 0.5
 								continue
 						h["phase"] = "running"
@@ -1786,7 +1799,8 @@ def run_one(
 				for h in human_states:
 					if h["phase"] != "running":
 						continue
-					hx, hy = h.get("last_pose", (-999.0, -999.0))
+					last_pose = h.get("last_pose", (-999.0, -999.0))
+					hx, hy = (last_pose[0], last_pose[1]) if isinstance(last_pose, (list, tuple)) and len(last_pose) >= 2 else (-999.0, -999.0)
 					if hx < -100 or hy < -100:
 						continue
 					slice_w = max(0.2, float(h.get("radius", 0.25)))
@@ -1848,7 +1862,6 @@ def run_one(
 
 # Some improvements are present, but more are needed.
 # I need to go through all the key words one by one and ensure they work well and the code respects the global design rules.
-# 
 
 """
 Notes to Codex:

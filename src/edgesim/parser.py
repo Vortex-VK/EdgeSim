@@ -1,5 +1,6 @@
 from __future__ import annotations
 import copy
+import math
 import re
 from typing import Any, Dict, List
 
@@ -94,6 +95,7 @@ _HUMAN_SEG_RE = re.compile(
 _VEHICLE_SEG_RE = re.compile(rf"(forklift|vehicle|cart|tugger)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
 _PATCH_SEG_RE = re.compile(rf"(wet\s+patch|spill|oil|traction)[^\n]*?(?:from|covering|zone)\s+{_SEG_RE}", re.IGNORECASE)
 _STATIC_PT_RE = re.compile(rf"(pallet|obstacle|cart block|column)[^\n]*?(?:at|center(?:ed)? at)\s+{_PT_RE}", re.IGNORECASE)
+_WALL_SEG_RE = re.compile(rf"(wall|barrier)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
 
 _MAIN_AISLE_TERMS = [
 	"main aisle",
@@ -146,6 +148,18 @@ def _is_wide_main_prompt(text: str) -> bool:
 	text_l = text.lower()
 	return (("wide aisle" in text_l or "main corridor" in text_l or "wide main aisle" in text_l) and "no human" in text_l and "no vehicle" in text_l)
 
+_WALLED_AISLE_TERMS = [
+	"aisle with walls",
+	"walled aisle",
+	"walled corridor",
+	"walled path",
+	"walls along the aisle",
+]
+
+def _wants_walled_aisles(text: str) -> bool:
+	text_l = text.lower()
+	return any(term in text_l for term in _WALLED_AISLE_TERMS)
+
 def _axis_aligned_rect_from_centerline(start: tuple[float, float], end: tuple[float, float], width: float) -> List[float]:
 	x0, y0 = start
 	x1, y1 = end
@@ -159,6 +173,104 @@ def _axis_aligned_rect_from_centerline(start: tuple[float, float], end: tuple[fl
 	x_lo, x_hi = sorted([x0, x1])
 	y_lo, y_hi = sorted([y0, y1])
 	return [x_lo - half_w, y_lo - half_w, x_hi + half_w, y_hi + half_w]
+
+def _rect_center(rect: List[float] | tuple[float, float, float, float]) -> tuple[float, float]:
+	x0, y0, x1, y1 = rect
+	return (0.5 * (float(x0) + float(x1)), 0.5 * (float(y0) + float(y1)))
+
+def _split_rect(rect: List[float], cut: List[float], min_span: float = 0.05) -> List[List[float]]:
+	rx0, ry0, rx1, ry1 = rect
+	cx0, cy0, cx1, cy1 = cut
+	# no overlap -> keep as-is
+	if cx1 <= rx0 or cx0 >= rx1 or cy1 <= ry0 or cy0 >= ry1:
+		return [rect]
+	pieces: List[List[float]] = []
+	# prefer splitting along the dominant overlap axis
+	if (cx0 > rx0):
+		pieces.append([rx0, ry0, cx0, ry1])
+	if (cx1 < rx1):
+		pieces.append([cx1, ry0, rx1, ry1])
+	if not pieces:
+		if cy0 > ry0:
+			pieces.append([rx0, ry0, rx1, cy0])
+		if cy1 < ry1:
+			pieces.append([rx0, cy1, rx1, ry1])
+	return [p for p in pieces if (p[2] - p[0]) > min_span and (p[3] - p[1]) > min_span]
+
+def _carve_racks_for_cut(geom: Dict[str, Any], cut_rect: List[float], pad: float = 0.05) -> None:
+	racks = list(geom.get("racking") or [])
+	if not racks:
+		return
+	cx0, cy0, cx1, cy1 = cut_rect
+	padded_cut = [cx0 - pad, cy0 - pad, cx1 + pad, cy1 + pad]
+	new_racks: List[Dict[str, Any]] = []
+	for rack in racks:
+		aabb = rack.get("aabb")
+		if not aabb or len(aabb) != 4:
+			new_racks.append(rack)
+			continue
+		pieces = _split_rect(list(map(float, aabb)), padded_cut)
+		if not pieces:
+			continue
+		if len(pieces) == 1 and pieces[0] == list(map(float, aabb)):
+			new_racks.append(rack)
+			continue
+		for idx, piece in enumerate(pieces):
+			nr = dict(rack)
+			nr["aabb"] = [float(piece[0]), float(piece[1]), float(piece[2]), float(piece[3])]
+			if len(pieces) > 1:
+				nr["id"] = f"{rack.get('id', 'Rack')}_seg{idx+1}"
+			new_racks.append(nr)
+	geom["racking"] = new_racks
+
+def _add_racking_bands_from_aisle(geom: Dict[str, Any], rect: List[float], rack_cfg: Dict[str, Any],
+                                  bounds: tuple[float, float], rid_prefix: str) -> None:
+	x0, y0, x1, y1 = map(float, rect)
+	Lx, Ly = bounds
+	horizontal = abs(x1 - x0) >= abs(y1 - y0)
+	gap = float(rack_cfg.get("gap_m", 0.15))
+	depth = float(rack_cfg.get("depth_m", 0.9))
+	height = float(rack_cfg.get("height_m", 3.0))
+	r_type = rack_cfg.get("type", "rack")
+	reflective = bool(rack_cfg.get("reflective", r_type == "high_bay"))
+	bands: List[List[float]] = []
+	if horizontal:
+		bands.append([x0, max(0.0, y0 - gap - depth), x1, max(0.0, y0 - gap)])
+		bands.append([x0, min(Ly, y1 + gap), x1, min(Ly, y1 + gap + depth)])
+	else:
+		bands.append([max(0.0, x0 - gap - depth), y0, max(0.0, x0 - gap), y1])
+		bands.append([min(Lx, x1 + gap), y0, min(Lx, x1 + gap + depth), y1])
+	racks = geom.setdefault("racking", [])
+	for idx, band in enumerate(bands):
+		aabb = _clamp_rect(band, bounds)
+		if (aabb[2] - aabb[0]) < 0.05 or (aabb[3] - aabb[1]) < 0.05:
+			continue
+		racks.append({
+			"id": f"{rid_prefix}_{idx+1:02d}",
+			"aabb": aabb,
+			"height_m": height,
+			"type": r_type,
+			"reflective": reflective,
+		})
+
+def _add_walls_for_aisle(layout: Dict[str, Any], rect: List[float], aid: str, thickness: float = 0.15, height: float = 2.0) -> None:
+	walls = layout.setdefault("walls", [])
+	Lx, Ly = map(float, layout.get("map_size_m", [20.0, 20.0]))
+	horizontal = abs(rect[2] - rect[0]) >= abs(rect[3] - rect[1])
+	if horizontal:
+		w_s = _clamp_rect([rect[0], rect[1] - thickness, rect[2], rect[1]], (Lx, Ly))
+		w_n = _clamp_rect([rect[0], rect[3], rect[2], rect[3] + thickness], (Lx, Ly))
+		walls.extend([
+			{"id": f"Wall_{aid}_S", "aabb": w_s, "height_m": height},
+			{"id": f"Wall_{aid}_N", "aabb": w_n, "height_m": height},
+		])
+	else:
+		w_w = _clamp_rect([rect[0] - thickness, rect[1], rect[0], rect[3]], (Lx, Ly))
+		w_e = _clamp_rect([rect[2], rect[1], rect[2] + thickness, rect[3]], (Lx, Ly))
+		walls.extend([
+			{"id": f"Wall_{aid}_W", "aabb": w_w, "height_m": height},
+			{"id": f"Wall_{aid}_E", "aabb": w_e, "height_m": height},
+		])
 
 def _add_columns(static_obs: List[Dict[str, Any]], centers: List[tuple[float, float]],
                  radius: float = 0.2, height: float = 2.4, prefix: str = "Column") -> None:
@@ -226,7 +338,7 @@ def _apply_main_aisle_lr_layout(scn: Dict[str, Any]) -> None:
 		"rate_per_min": 2.0,
 		"group_size": 4,
 		"start_delay_s": 8.0,
-		"speed_mps": [0.8, 1.4],
+		"speed_mps": [0.9, 1.5],
 		"motion_patterns": ["linear", "start_stop", "close_pass"],
 		"interaction_modes": ["mutual_yield", "human_yield", "robot_yield"],
 	}]
@@ -362,8 +474,8 @@ def _apply_simple_forklift_aisle_layout(scn: Dict[str, Any]) -> None:
 	geom["blind_corners"] = []
 
 	layout["aisles"] = [
-		{"id": "A_main", "name": "main_aisle", "rect": main_rect, "type": "straight", "pad": [0.05, 0.15, 0.05, 0.15], "racking": {"gap_m": 0.2, "depth_m": 0.95, "height_m": 3.6, "type": "rack"}},
-		{"id": "A_forklift", "name": "forklift_aisle", "rect": forklift_rect, "type": "straight", "pad": [0.05, 0.15, 0.05, 0.15], "racking": {"gap_m": 0.2, "depth_m": 0.95, "height_m": 4.2, "type": "high_bay"}, "high_bay": True},
+		{"id": "A_main", "name": "main_aisle", "rect": main_rect, "type": "straight", "pad": [0.05, 0.15, 0.05, 0.15], "racking": False},
+		{"id": "A_forklift", "name": "forklift_aisle", "rect": forklift_rect, "type": "straight", "pad": [0.05, 0.15, 0.05, 0.15], "racking": False, "high_bay": True},
 		{"id": "A_dock", "name": "dock_lane", "rect": dock_rect, "type": "straight", "pad": [0.05, 0.05, 0.05, 0.05], "racking": False, "mu": 0.78},
 		{"id": "A_spine", "name": "spine_connector", "rect": spine_rect, "type": "straight", "pad": [0.05, 0.2, 0.05, 0.2], "racking": False},
 	]
@@ -388,6 +500,10 @@ def _apply_simple_forklift_aisle_layout(scn: Dict[str, Any]) -> None:
 		{"id": "Endcap_Dock_SE", "aabb": [12.6, dock_y + 0.55, 13.4, dock_y + 1.15]},
 		{"id": "Endcap_Dock_NW", "aabb": [10.6, dock_y - 1.15, 11.4, dock_y - 0.55]},
 	])
+	# explicit racking bands flanking the two upper aisles
+	Lx, Ly = map(float, layout["map_size_m"])
+	_add_racking_bands_from_aisle(geom, main_rect, {"gap_m": 0.2, "depth_m": 0.95, "height_m": 3.6, "type": "rack"}, (Lx, Ly), "Rack_Main")
+	_add_racking_bands_from_aisle(geom, forklift_rect, {"gap_m": 0.2, "depth_m": 0.95, "height_m": 4.2, "type": "high_bay", "reflective": True}, (Lx, Ly), "Rack_Forklift")
 
 	static_obs = [
 		{"id": "PalletJack_Dock", "type": "pallet_jack", "shape": "box", "aabb": [4.6, 4.6, 6.0, 5.3], "height": 1.0, "occlusion": True},
@@ -407,7 +523,7 @@ def _apply_simple_forklift_aisle_layout(scn: Dict[str, Any]) -> None:
 			"id": "Forklift_Upper_01",
 			"type": "forklift",
 			"path": [[x_min + 1.0, forklift_y], [x_max - 1.0, forklift_y]],
-			"speed_mps": 0.9,
+			"speed_mps": 1.35,
 			"warning_lights": True,
 			"reflective": True,
 			"ping_pong": True,
@@ -476,9 +592,14 @@ def _apply_parallel_aisles_layout(scn: Dict[str, Any]) -> None:
 	aisle_2 = _rect(second_yc)
 	rack_cfg = {"gap_m": 0.15, "depth_m": 0.95, "height_m": 3.4, "type": "rack"}
 	aisles.extend([
-		{"id": "A_par_01", "name": "aisle_1", "rect": aisle_1, "type": "straight", "racking": rack_cfg},
-		{"id": "A_par_02", "name": "aisle_2", "rect": aisle_2, "type": "straight", "racking": rack_cfg},
+		{"id": "A_par_01", "name": "aisle_1", "rect": aisle_1, "type": "straight", "racking": False},
+		{"id": "A_par_02", "name": "aisle_2", "rect": aisle_2, "type": "straight", "racking": False},
 	])
+	geom = layout.setdefault("geometry", {})
+	geom.setdefault("racking", [])
+	LxLy = (float(Lx), float(Ly))
+	_add_racking_bands_from_aisle(geom, aisle_1, rack_cfg, LxLy, "Rack_A1")
+	_add_racking_bands_from_aisle(geom, aisle_2, rack_cfg, LxLy, "Rack_A2")
 
 	layout["lock_aisles"] = True
 	layout["auto_aisles_from_paths"] = False
@@ -548,6 +669,9 @@ def _iter_aabb_slots(layout: Dict[str, Any], hazards: Dict[str, Any]) -> List[tu
 	for obstacle in layout.get("static_obstacles", []) or []:
 		if obstacle.get("aabb"):
 			slots.append(("static", obstacle, "aabb"))
+	for wall in layout.get("walls", []) or []:
+		if wall.get("aabb"):
+			slots.append(("wall", wall, "aabb"))
 	geom = layout.get("geometry", {}) or {}
 	for rack in geom.get("racking", []) or []:
 		if rack.get("aabb"):
@@ -634,6 +758,9 @@ def _ensure_start_goal_open(layout: Dict[str, Any], bounds: tuple[float, float])
 	for endcap in geom.get("endcaps", []) or []:
 		if endcap.get("aabb"):
 			solid.append(list(map(float, endcap["aabb"])))
+	for wall in layout.get("walls", []) or []:
+		if wall.get("aabb"):
+			solid.append(list(map(float, wall["aabb"])))
 	for obs in layout.get("static_obstacles", []) or []:
 		if obs.get("aabb"):
 			solid.append(list(map(float, obs["aabb"])))
@@ -662,6 +789,42 @@ def _ensure_start_goal_open(layout: Dict[str, Any], bounds: tuple[float, float])
 		pt = layout.get(key)
 		if isinstance(pt, (list, tuple)) and len(pt) == 2:
 			layout[key] = _adjust([float(pt[0]), float(pt[1])])
+
+def _align_start_goal_to_rect(rect: List[float], bounds: tuple[float, float],
+                              segment: tuple[tuple[float, float], tuple[float, float]] | None = None) -> tuple[List[float], List[float]]:
+	x0, y0, x1, y1 = map(float, rect)
+	cx, cy = _rect_center(rect)
+	if segment:
+		(sx, sy), (ex, ey) = segment
+	else:
+		sx, sy, ex, ey = x0, y0, x1, y1
+	horizontal = abs(ex - sx) >= abs(ey - sy)
+	span = abs(ex - sx) if horizontal else abs(ey - sy)
+	span = max(span, abs(x1 - x0) if horizontal else abs(y1 - y0), 0.5)
+	inset = min(1.2, max(0.6, 0.2 * span))
+	if horizontal:
+		left = min(sx, ex, x0, x1)
+		right = max(sx, ex, x0, x1)
+		start_x = max(x0, left + inset)
+		goal_x = min(x1, right - inset)
+		if start_x >= goal_x - 0.05:
+			mid = 0.5 * (left + right)
+			start_x = max(x0, mid - 0.25)
+			goal_x = min(x1, mid + 0.25)
+		start = [start_x, cy]
+		goal = [goal_x, cy]
+	else:
+		low = min(sy, ey, y0, y1)
+		high = max(sy, ey, y0, y1)
+		start_y = max(y0, low + inset)
+		goal_y = min(y1, high - inset)
+		if start_y >= goal_y - 0.05:
+			mid = 0.5 * (low + high)
+			start_y = max(y0, mid - 0.25)
+			goal_y = min(y1, mid + 0.25)
+		start = [cx, start_y]
+		goal = [cx, goal_y]
+	return _clamp_xy(tuple(start), bounds), _clamp_xy(tuple(goal), bounds)
 
 def _collect_prompt_coords(prompt: str) -> tuple[float, float]:
 	max_x = 0.0
@@ -696,43 +859,48 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
 		Ly = max(Ly, max_prompt_y + 1.0)
 		layout["map_size_m"] = [Lx, Ly]
 	bounds = (float(Lx), float(Ly))
-	flags = {"aisle": False, "human": False, "vehicle": False, "traction": False, "static": False, "cart_block": False}
+	flags = {"aisle": False, "human": False, "vehicle": False, "traction": False, "static": False, "cart_block": False, "wall": False}
 
 	aisles: List[Dict[str, Any]] = []
 	vehicle_entries: List[Dict[str, Any]] = []
 	traction_entries: List[Dict[str, Any]] = []
+	aisle_segments: List[tuple[tuple[float, float], tuple[float, float]]] = []
+	wall_entries: List[Dict[str, Any]] = []
 
 	for m in _AISLE_SEG_RE.finditer(prompt):
+		snip = (m.group(0) or "").lower()
+		if ("wall from" in snip or "barrier from" in snip) and ("with wall" not in snip and "with walls" not in snip):
+			continue
 		x0 = float(m.group("x0")); y0 = float(m.group("y0"))
 		x1 = float(m.group("x1")); y1 = float(m.group("y1"))
 		start = tuple(_clamp_xy((x0, y0), bounds))
 		end = tuple(_clamp_xy((x1, y1), bounds))
 		width = 1.4 if "main" in m.group("label").lower() else 1.2
 		rect = _clamp_rect(_axis_aligned_rect_from_centerline(start, end, width), bounds)
+		aisle_segments.append((start, end))
 		aisles.append({
 			"id": f"A_coord_{len(aisles)+1:02d}",
 			"name": m.group("label").strip().replace(" ", "_"),
 			"rect": rect,
 			"type": "straight",
-			"racking": {"gap_m": 0.15, "depth_m": 0.9, "height_m": 3.2, "type": "rack"},
+			"racking": False,
+			"pad": [0.05, 0.05, 0.05, 0.05],
 		})
 	if aisles:
 		layout["aisles"] = aisles
 		layout["lock_aisles"] = True
 		layout["_raw_coord_aisles"] = True
+		layout["auto_aisles_from_paths"] = False
+		layout["paths_define_aisles"] = False
 		flags["aisle"] = True
-		# If still on defaults, align start/goal to the first user aisle
-		if layout.get("start") == [2.0, 10.0] and layout.get("goal") == [18.0, 10.0]:
-			a0, a1, a2, a3 = aisles[0]["rect"]
-			horizontal = (a2 - a0) >= (a3 - a1)
-			if horizontal:
-				y_mid = 0.5 * (a1 + a3)
-				layout["start"] = [_clamp_xy((a0 + 0.6, y_mid), bounds)[0], y_mid]
-				layout["goal"] = [_clamp_xy((a2 - 0.6, y_mid), bounds)[0], y_mid]
-			else:
-				x_mid = 0.5 * (a0 + a2)
-				layout["start"] = [x_mid, _clamp_xy((x_mid, a1 + 0.6), bounds)[1]]
-				layout["goal"] = [x_mid, _clamp_xy((x_mid, a3 - 0.6), bounds)[1]]
+		# Clear template geometry that might conflict with user-aligned aisles
+		geom = layout.setdefault("geometry", {})
+		for key in ("racking", "endcaps", "open_storage", "blind_corners"):
+			geom[key] = []
+		# Align start/goal to the first user-provided aisle using its centerline
+		first_rect = aisles[0]["rect"]
+		seg = aisle_segments[0] if aisle_segments else None
+		layout["start"], layout["goal"] = _align_start_goal_to_rect(first_rect, bounds, seg)
 
 	for m in _HUMAN_SEG_RE.finditer(prompt):
 		x0 = float(m.group("x0")); y0 = float(m.group("y0"))
@@ -753,7 +921,7 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
 			"waypoints": [[sx, sy], [ex, ey]],
 			"group_size": group_size,
 			"rate_per_min": float(rate),
-			"speed_mps": [0.8, 1.4],
+			"speed_mps": [0.9, 1.5],
 			"motion_patterns": ["linear"],
 			"raw_coords": True,
 		}
@@ -817,6 +985,20 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
 		})
 		flags["static"] = True
 
+	for m in _WALL_SEG_RE.finditer(prompt):
+		x0 = float(m.group("x0")); y0 = float(m.group("y0"))
+		x1 = float(m.group("x1")); y1 = float(m.group("y1"))
+		rect = _clamp_rect(_axis_aligned_rect_from_centerline(_clamp_xy((x0, y0), bounds), _clamp_xy((x1, y1), bounds), 0.3), bounds)
+		wall_entries.append({
+			"id": f"Wall_{len(wall_entries)+1:02d}",
+			"aabb": rect,
+			"height_m": 2.2,
+		})
+
+	if wall_entries:
+		layout.setdefault("walls", []).extend(wall_entries)
+		flags["wall"] = True
+
 	_ensure_map_bounds(layout, hazards)
 	_ensure_start_goal_open(layout, tuple(layout["map_size_m"]))
 	return flags
@@ -869,14 +1051,178 @@ def _ensure_human_entry(scn: Dict[str, Any], idx: int = 0) -> Dict[str, Any]:
 		humans.append({
 			"path": "line",
 			"rate_per_min": 2.0,
-			"speed_mps": [0.8, 1.4],
+			"speed_mps": [0.9, 1.5],
 			"motion_patterns": ["linear", "start_stop", "hesitation"],
 		})
 	cfg = humans[idx]
 	cfg.setdefault("motion_patterns", ["linear"])
 	cfg.setdefault("interaction_modes", ["mutual_yield", "human_yield", "robot_yield"])
 	cfg.setdefault("visibility_awareness", "normal")
+	cfg.setdefault("start_delay_s", 0.0)
+	cfg.setdefault("start_delay_s_min", 0.0)
+	cfg.setdefault("start_delay_s_max", 0.0)
 	return cfg
+
+_HUMAN_MODE_TERMS = {
+	"stand_near": ["stand near", "standing near", "near the aisle", "near aisle"],
+	"stand_in": ["standing in the aisle", "stand in the aisle", "in the aisle"],
+	"move_across": ["moving across", "move across", "crossing the aisle", "across the aisle", "crossing"],
+	"move_along": ["moving along", "move along", "walking along", "walk along", "along the aisle", "down the aisle"],
+}
+
+def _primary_aisle_ref(layout: Dict[str, Any]) -> Dict[str, Any] | None:
+	aisles = layout.get("aisles") or []
+	for a in aisles:
+		rect = a.get("rect")
+		if rect and len(rect) == 4:
+			rect_f = list(map(float, rect))
+			horizontal = abs(rect_f[2] - rect_f[0]) >= abs(rect_f[3] - rect_f[1])
+			width = abs(rect_f[3] - rect_f[1]) if horizontal else abs(rect_f[2] - rect_f[0])
+			length = abs(rect_f[2] - rect_f[0]) if horizontal else abs(rect_f[3] - rect_f[1])
+			center = _rect_center(rect_f)
+			return {"rect": rect_f, "horizontal": horizontal, "width": width, "length": length, "center": center}
+	return None
+
+def _human_motion_intent(text: str) -> str:
+	text_l = text.lower()
+	if any(term in text_l for term in _HUMAN_MODE_TERMS["move_across"]):
+		return "move_across"
+	if any(term in text_l for term in _HUMAN_MODE_TERMS["move_along"]):
+		return "move_along"
+	if any(term in text_l for term in _HUMAN_MODE_TERMS["stand_in"]):
+		return "stand_in"
+	if any(term in text_l for term in _HUMAN_MODE_TERMS["stand_near"]):
+		return "stand_near"
+	return "stand_near"
+
+def _waypoints_for_human_mode(mode: str, layout: Dict[str, Any]) -> List[List[float]]:
+	ref = _primary_aisle_ref(layout)
+	Lx, Ly = map(float, layout.get("map_size_m", [20.0, 20.0]))
+	bounds = (Lx, Ly)
+	if ref is None:
+		cx, cy = _clamp_xy((0.5 * Lx, 0.5 * Ly), bounds)
+		return [[cx, cy], [cx, cy]]
+	x0, y0, x1, y1 = ref["rect"]
+	cx, cy = ref["center"]
+	width = max(0.1, float(ref["width"]))
+	length = max(0.5, float(ref["length"]))
+	start = layout.get("start")
+	goal = layout.get("goal")
+	robot_start = None
+	robot_goal = None
+	try:
+		if isinstance(start, (list, tuple)) and isinstance(goal, (list, tuple)) and len(start) == 2 and len(goal) == 2:
+			robot_start = (float(start[0]), float(start[1]))
+			robot_goal = (float(goal[0]), float(goal[1]))
+	except Exception:
+		robot_start = robot_goal = None
+	if robot_start and robot_goal:
+		dx_r = robot_goal[0] - robot_start[0]
+		dy_r = robot_goal[1] - robot_start[1]
+		robot_len = math.hypot(dx_r, dy_r)
+		if robot_len < 1e-6:
+			robot_len = None
+			robot_dir = None
+		else:
+			robot_dir = (dx_r / robot_len, dy_r / robot_len)
+	else:
+		robot_len = None
+		robot_dir = None
+	# Keep humans away from walls so spawn clearance checks succeed.
+	margin = max(0.15, min(width * 0.5 - 0.05, max(0.4, width * 0.45)))
+	if ref["horizontal"]:
+		anchor_major = cx
+		if robot_start and robot_goal:
+			anchor_major = max(x0 + 0.4, min(x1 - 0.4, robot_start[0] + 0.35 * (robot_goal[0] - robot_start[0])))
+		near_side = min(y1 - margin, max(y0 + margin, cy - 0.3))
+		center_line = cy
+		if mode == "stand_near":
+			pt = _clamp_xy((anchor_major, near_side), bounds)
+			return [pt, pt]
+		if mode == "stand_in":
+			pt = _clamp_xy((anchor_major, center_line), bounds)
+			return [pt, pt]
+		if mode == "move_along":
+			# Follow the robot path along the aisle, offset slightly so spawn passes clearance.
+			dir_vec = robot_dir if robot_dir else (1.0, 0.0)
+			if robot_len is None:
+				robot_len = abs(x1 - x0)
+			offset = min(1.5, 0.2 * robot_len)
+			half_span = max(0.5, 0.5 * robot_len - offset)
+			mid = (anchor_major, center_line)
+			start_pt = (mid[0] - dir_vec[0] * half_span, mid[1] - dir_vec[1] * half_span)
+			end_pt = (mid[0] + dir_vec[0] * half_span, mid[1] + dir_vec[1] * half_span)
+			return [_clamp_xy(start_pt, bounds), _clamp_xy(end_pt, bounds)]
+		# move_across
+		dir_vec = robot_dir if robot_dir else (1.0, 0.0)
+		if robot_len is None:
+			robot_len = abs(x1 - x0)
+		perp = (-dir_vec[1], dir_vec[0])
+		mid = (anchor_major, center_line)
+		span = robot_len
+		start_pt = (mid[0] - perp[0] * 0.5 * span, mid[1] - perp[1] * 0.5 * span)
+		end_pt = (mid[0] + perp[0] * 0.5 * span, mid[1] + perp[1] * 0.5 * span)
+		return [_clamp_xy(start_pt, bounds), _clamp_xy(end_pt, bounds)]
+	else:
+		anchor_major = cy
+		if robot_start and robot_goal:
+			anchor_major = max(y0 + 0.4, min(y1 - 0.4, robot_start[1] + 0.35 * (robot_goal[1] - robot_start[1])))
+		near_side = min(x1 - margin, max(x0 + margin, cx - 0.3))
+		center_line = cx
+		if mode == "stand_near":
+			pt = _clamp_xy((near_side, anchor_major), bounds)
+			return [pt, pt]
+		if mode == "stand_in":
+			pt = _clamp_xy((center_line, anchor_major), bounds)
+			return [pt, pt]
+		if mode == "move_along":
+			dir_vec = robot_dir if robot_dir else (0.0, 1.0)
+			if robot_len is None:
+				robot_len = abs(y1 - y0)
+			offset = min(1.5, 0.2 * robot_len)
+			half_span = max(0.5, 0.5 * robot_len - offset)
+			mid = (center_line, anchor_major)
+			start_pt = (mid[0] - dir_vec[0] * half_span, mid[1] - dir_vec[1] * half_span)
+			end_pt = (mid[0] + dir_vec[0] * half_span, mid[1] + dir_vec[1] * half_span)
+			return [_clamp_xy(start_pt, bounds), _clamp_xy(end_pt, bounds)]
+		dir_vec = robot_dir if robot_dir else (0.0, 1.0)
+		if robot_len is None:
+			robot_len = abs(y1 - y0)
+		perp = (-dir_vec[1], dir_vec[0])
+		mid = (center_line, anchor_major)
+		span = robot_len
+		start_pt = (mid[0] - perp[0] * 0.5 * span, mid[1] - perp[1] * 0.5 * span)
+		end_pt = (mid[0] + perp[0] * 0.5 * span, mid[1] + perp[1] * 0.5 * span)
+		return [_clamp_xy(start_pt, bounds), _clamp_xy(end_pt, bounds)]
+
+def _apply_human_motion_intent(scn: Dict[str, Any], prompt: str, rate_hint: float | None = None) -> None:
+	mode = _human_motion_intent(prompt)
+	humans = scn.get("hazards", {}).get("human") or []
+	if len(humans) != 1:
+		return
+	if any(h.get("raw_coords") for h in humans):
+		return
+	pts = _waypoints_for_human_mode(mode, scn.get("layout", {}))
+	if not pts:
+		return
+	cfg = humans[0]
+	cfg["path"] = "waypoints"
+	cfg["waypoints"] = pts
+	cfg["raw_coords"] = True
+	cfg["group_size"] = 1
+	cfg["spawn_clearance_m"] = 0.1
+	cfg["start_delay_s"] = 0.0
+	cfg["start_delay_s_min"] = 0.0
+	cfg["start_delay_s_max"] = 0.0
+	cfg.pop("cross_x", None)
+	if mode in ("stand_near", "stand_in"):
+		cfg["motion_patterns"] = ["stationary"]
+		cfg["speed_mps"] = [0.0, 0.0]
+		cfg["rate_per_min"] = 0.0
+	else:
+		cfg["motion_patterns"] = ["linear", "start_stop"]
+		cfg["rate_per_min"] = float(rate_hint if rate_hint is not None else cfg.get("rate_per_min", 2.0))
+		cfg["loop"] = False
 
 
 def _add_behavior_tag(cfg: Dict[str, Any], tag: str) -> None:
@@ -947,6 +1293,49 @@ def parse_numbers(text: str) -> Dict[str, float]:
 
 	return out
 
+def _add_crosswalk_lane(layout: Dict[str, Any], prefer_axis: float | None = None) -> Dict[str, Any] | None:
+	aisles = layout.get("aisles") or []
+	if not aisles:
+		return None
+	main = aisles[0]
+	rect = main.get("rect")
+	if not rect or len(rect) != 4:
+		return None
+	Lx, Ly = map(float, layout.get("map_size_m", [20.0, 20.0]))
+	bounds = (Lx, Ly)
+	# reuse existing auto crosswalk if present
+	for a in aisles:
+		if a.get("id") == "A_cross_auto" or a.get("name") == "crosswalk_auto":
+			c_rect = a.get("rect")
+			if c_rect and len(c_rect) == 4:
+				return {"center": _rect_center(c_rect), "orientation": "vertical" if (abs(rect[2] - rect[0]) >= abs(rect[3] - rect[1])) else "horizontal"}
+	horizontal = abs(rect[2] - rect[0]) >= abs(rect[3] - rect[1])
+	width_minor = min(abs(rect[2] - rect[0]), abs(rect[3] - rect[1]))
+	cross_width = min(1.8, max(1.0, width_minor * 1.1))
+	span = max(2.5, width_minor * 4.0)
+	if horizontal:
+		cross_x = float(prefer_axis if prefer_axis is not None else 0.5 * (rect[0] + rect[2]))
+		cross_rect = _clamp_rect([cross_x - 0.5 * cross_width, max(0.0, rect[1] - span),
+		                          cross_x + 0.5 * cross_width, min(Ly, rect[3] + span)], bounds)
+		orientation = "vertical"
+	else:
+		cross_y = float(prefer_axis if prefer_axis is not None else 0.5 * (rect[1] + rect[3]))
+		cross_rect = _clamp_rect([max(0.0, rect[0] - span), cross_y - 0.5 * cross_width,
+		                          min(Lx, rect[2] + span), cross_y + 0.5 * cross_width], bounds)
+		orientation = "horizontal"
+	entry = {
+		"id": "A_cross_auto",
+		"name": "crosswalk_auto",
+		"rect": cross_rect,
+		"type": "cross",
+		"racking": False,
+		"pad": [0.1, 0.1, 0.1, 0.1],
+	}
+	layout.setdefault("aisles", []).append(entry)
+	geom = layout.setdefault("geometry", {})
+	_carve_racks_for_cut(geom, cross_rect, pad=0.1)
+	return {"center": _rect_center(cross_rect), "orientation": orientation}
+
 def _apply_single_straight_layout(scn: Dict[str, Any]) -> None:
 	layout = scn.setdefault("layout", {})
 	layout["map_size_m"] = [20.0, 12.0]
@@ -960,15 +1349,12 @@ def _apply_single_straight_layout(scn: Dict[str, Any]) -> None:
 	}
 	layout["aisles"] = [aisle]
 	layout["lock_aisles"] = True
+	layout["prevent_auto_crosswalk"] = True
 	layout["auto_aisles_from_paths"] = False
 	layout["paths_define_aisles"] = False
-	layout["start"] = [2.5, 5.2]
-	layout["goal"] = [17.5, 5.2]
-	# flank with racking bands
-	geom["racking"] = [
-		{"id": "Rack_above", "aabb": [2.0, 5.9, 18.0, 6.7], "height_m": 3.0},
-		{"id": "Rack_below", "aabb": [2.0, 3.7, 18.0, 4.5], "height_m": 3.0},
-	]
+	layout["start"] = [3.0, 5.2]
+	layout["goal"] = [17.0, 5.2]
+	geom["racking"] = []
 	layout["static_obstacles"] = []
 	scn.setdefault("hazards", {})["human"] = []
 	scn["hazards"]["vehicles"] = []
@@ -1061,24 +1447,21 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 	scn = new_scenario(n_runs)
 	text = prompt.lower()
 	nums = parse_numbers(prompt)
-	t_case = _is_t_intersection_prompt(text)
-	main_lr_case = _is_main_aisle_lr_prompt(text) and not t_case
-	simple_aisle_case = _is_simple_forklift_aisle_prompt(text) and not main_lr_case and not t_case
-	parallel_aisle_case = _wants_parallel_aisles(text) and not simple_aisle_case and not main_lr_case and not t_case
+	# Disable heavy templates (main LR, T) per request; treat prompts generically instead.
+	t_case = False
+	main_lr_case = False
+	simple_aisle_case = _is_simple_forklift_aisle_prompt(text)
+	parallel_aisle_case = _wants_parallel_aisles(text) and not simple_aisle_case
 	single_straight_case = _is_single_straight_prompt(text)
 	parallel_pass_case = _is_parallel_pass_prompt(text)
 	narrow_cross_case = _is_narrow_cross_prompt(text)
 	wide_main_case = _is_wide_main_prompt(text)
-	if t_case:
-		_apply_t_intersection_layout(scn)
-	elif main_lr_case:
-		_apply_main_aisle_lr_layout(scn)
-	elif simple_aisle_case:
-		_apply_simple_forklift_aisle_layout(scn)
-	elif parallel_aisle_case:
-		_apply_parallel_aisles_layout(scn)
-	elif single_straight_case:
+	if single_straight_case:
 		_apply_single_straight_layout(scn)
+	elif simple_aisle_case and not single_straight_case:
+		_apply_simple_forklift_aisle_layout(scn)
+	elif parallel_aisle_case and not single_straight_case:
+		_apply_parallel_aisles_layout(scn)
 	elif parallel_pass_case:
 		_apply_parallel_pass_layout(scn)
 	elif narrow_cross_case:
@@ -1093,6 +1476,16 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 	# convenience handle for overrides
 	def _so_root() -> Dict[str, Any]:
 		return scn.setdefault("site_overrides", {})
+
+	# Add walls flanking aisles only when explicitly requested
+	if _wants_walled_aisles(text):
+		layout_obj = scn.get("layout", {})
+		aisles = layout_obj.get("aisles") or []
+		for idx, aisle in enumerate(aisles):
+			rect = aisle.get("rect")
+			if not rect or len(rect) != 4:
+				continue
+			_add_walls_for_aisle(layout_obj, list(map(float, rect)), aisle.get("id") or f"Aisle_{idx:02d}")
 
 	# --- Visibility ---
 	if _has_any(text, KEYWORDS["visibility"]):
@@ -1121,16 +1514,26 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 	if _has_any(text, KEYWORDS["traction"]) and not coord_flags.get("traction") and not _has_any(text, KEYWORDS["blind_corner"]):
 		# prefer geometry-derived locations; fallback only if nothing else was added later
 		geom_center = None
+		patch_half = 1.5
+
+		def _center_and_half_from_rect(rect: List[float]) -> tuple[float, float, float]:
+			cx, cy = _rect_center(rect)
+			span = min(abs(rect[2] - rect[0]), abs(rect[3] - rect[1]))
+			half_local = min(1.5, max(0.35, 0.45 * span))
+			return cx, cy, half_local
+
 		geom = scn.get("layout", {}).get("geometry", {}) or {}
 		if scn.get("layout", {}).get("main_lr_case"):
 			cx = float(geom.get("main_aisle_lane_x", 10.0))
 			cy = float(geom.get("main_aisle_lane_y", 9.0))
 			geom_center = (cx, cy)
+			patch_half = 1.2
 		elif scn.get("layout", {}).get("t_case"):
 			juncs = scn.get("layout", {}).get("junctions") or []
 			if juncs and juncs[0].get("rect"):
 				x0, y0, x1, y1 = map(float, juncs[0]["rect"])
 				geom_center = ((x0 + x1) * 0.5, (y0 + y1) * 0.5)
+				patch_half = 1.2
 		else:
 			aisles = scn.get("layout", {}).get("aisles") or []
 			if len(aisles) >= 2 and aisles[0].get("rect") and aisles[1].get("rect"):
@@ -1138,8 +1541,12 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 				cx = 0.25 * (a0[0] + a0[2] + a1[0] + a1[2])
 				cy = 0.25 * (a0[1] + a0[3] + a1[1] + a1[3])
 				geom_center = (cx, cy)
+				_, _, patch_half = _center_and_half_from_rect(a0)
+			elif len(aisles) >= 1 and aisles[0].get("rect"):
+				cx, cy, patch_half = _center_and_half_from_rect(aisles[0]["rect"])
+				geom_center = (cx, cy)
 		if geom_center is not None:
-			_add_default_wet_patch_if_needed(geom_center, half=1.5)
+			_add_default_wet_patch_if_needed(geom_center, half=patch_half)
 		else:
 			_add_default_wet_patch_if_needed((13.0, 3.5), half=1.0)  # fallback only
 
@@ -1172,11 +1579,22 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 		cfg.update({
 			"path": "line",
 			"rate_per_min": float(rate),
-			"speed_mps": [0.8, 1.4],
+			"speed_mps": [0.9, 1.5],
 		})
+		cfg["start_delay_s"] = 0.0
+		cfg["start_delay_s_min"] = 0.0
+		cfg["start_delay_s_max"] = 0.0
 		cfg.setdefault("motion_patterns", ["linear", "start_stop", "hesitation", "emerge_from_occlusion"])
 		cfg.setdefault("interaction_modes", ["mutual_yield", "human_yield", "robot_yield", "close_pass"])
 		cfg.setdefault("visibility_awareness", "normal")
+		layout_obj = scn.get("layout", {})
+		if (not layout_obj.get("_raw_coord_aisles") and not cfg.get("raw_coords")
+		    and not layout_obj.get("prevent_auto_crosswalk", False)):
+			aisles = layout_obj.get("aisles") or []
+			if len(aisles) == 1 and aisles[0].get("rect"):
+				cross = _add_crosswalk_lane(layout_obj)
+				if cross and cross.get("orientation") == "vertical" and "cross_x" not in cfg:
+					cfg["cross_x"] = float(cross["center"][0])
 		scn["taxonomy"]["human_behavior"] = True
 
 	# --- Traffic / congestion keywords imply multi-actor environments ---
@@ -1248,7 +1666,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 			cfg.update({
 				"path": "line",
 				"rate_per_min": nums.get("human_rate_per_min", 2.0),
-				"speed_mps": [0.8, 1.4],
+				"speed_mps": [0.9, 1.5],
 			})
 			cfg.setdefault("motion_patterns", ["linear", "start_stop", "mutual_yield"])
 		scn["taxonomy"]["human_behavior"] = True
@@ -1304,13 +1722,14 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 		cfg = _ensure_human_entry(scn, 0)
 		_add_behavior_tag(cfg, "carry_payload")
 		cfg["carried_mass_kg"] = 12.0
+		cfg["speed_mps"] = [0.7, 1.2]
 		cfg["posture"] = "leaning"
 		_append_unique(cfg.setdefault("motion_patterns", []), "reduced_visibility")
 		scn["taxonomy"]["human_behavior"] = True
 
 	if _has_any(text, KEYWORDS["fast_walker"]):
 		cfg = _ensure_human_entry(scn, 0)
-		cfg["speed_mps"] = [1.4, 2.2]
+		cfg["speed_mps"] = [1.6, 2.2]
 		_add_behavior_tag(cfg, "fast_walk")
 		_append_unique(cfg.setdefault("motion_patterns", []), "zig_zag")
 		scn["taxonomy"]["human_behavior"] = True
@@ -1468,7 +1887,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 			"id": f"ForkliftRev_{len(scn.setdefault('hazards', {}).setdefault('vehicles', []))+1:02d}",
 			"type": "forklift",
 			"path": [[6.0, 4.0], [14.0, 4.0]],
-			"speed_mps": 1.0,
+			"speed_mps": 0.75,
 		})
 		for veh in scn["hazards"].setdefault("vehicles", []):
 			if veh.get("type") != "forklift":
@@ -1564,7 +1983,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 			cfg.update({
 				"path": "waypoints",
 				"rate_per_min": 2.0,
-				"speed_mps": [0.8, 1.4],
+				"speed_mps": [0.9, 1.5],
 				"group_size": 3,
 				"waypoints": [[10.0, 6.5], [10.0, 12.5]],
 			})
@@ -1624,6 +2043,8 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 			if cfg.get("raw_coords") or "cross_x" in cfg:
 				continue
 			cfg["cross_x"] = branch_x
+
+	_apply_human_motion_intent(scn, text, nums.get("human_rate_per_min"))
 
 	_ensure_map_bounds(layout, scn.get("hazards", {}))
 	_ensure_start_goal_open(layout, tuple(layout["map_size_m"]))

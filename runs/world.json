@@ -1,19 +1,19 @@
 {
   "version": 1,
   "start": [
-    2.0,
-    10.0
+    3.0,
+    5.2
   ],
   "goal": [
-    18.0,
-    10.0
+    17.0,
+    5.2
   ],
   "aabbs": [],
   "hazards": {
     "traction": [],
     "human": [
       {
-        "path": "line",
+        "path": "waypoints",
         "rate_per_min": 2.0,
         "speed_mps": [
           0.8,
@@ -21,8 +21,7 @@
         ],
         "motion_patterns": [
           "linear",
-          "start_stop",
-          "hesitation"
+          "start_stop"
         ],
         "interaction_modes": [
           "mutual_yield",
@@ -30,6 +29,23 @@
           "robot_yield"
         ],
         "visibility_awareness": "normal",
+        "start_delay_s": 0.0,
+        "start_delay_s_min": 0.0,
+        "start_delay_s_max": 0.0,
+        "waypoints": [
+          [
+            7.8999999999999995,
+            5.13
+          ],
+          [
+            7.8999999999999995,
+            5.2700000000000005
+          ]
+        ],
+        "raw_coords": true,
+        "group_size": 1,
+        "spawn_clearance_m": 0.1,
+        "loop": false,
         "slip_min_exposure_s": 0.6,
         "p_slip": 0.05
       }
@@ -50,24 +66,13 @@
       "mu": 0.85
     },
     {
-      "id": "PathAisle_01",
+      "id": "A_single",
       "type": "aisle_straight",
       "zone": [
         2.0,
-        9.375,
+        4.5,
         18.0,
-        10.625
-      ],
-      "mu": 0.88
-    },
-    {
-      "id": "PathAisle_02",
-      "type": "aisle_straight",
-      "zone": [
-        10.0,
-        0.6,
-        11.0,
-        20.4
+        5.9
       ],
       "mu": 0.88
     }
@@ -78,24 +83,13 @@
   "safety_zones": [],
   "aisles": [
     {
-      "id": "PathAisle_01",
+      "id": "A_single",
       "type": "aisle_straight",
       "zone": [
         2.0,
-        9.375,
+        4.5,
         18.0,
-        10.625
-      ],
-      "mu": 0.88
-    },
-    {
-      "id": "PathAisle_02",
-      "type": "aisle_straight",
-      "zone": [
-        10.0,
-        0.6,
-        11.0,
-        20.4
+        5.9
       ],
       "mu": 0.88
     }
@@ -109,10 +103,10 @@
       "mu_min": 0.85,
       "mu_max": 0.88,
       "wet_count": 0,
-      "zones": 3
+      "zones": 2
     },
     "layout_summary": {
-      "aisle_count": 2,
+      "aisle_count": 1,
       "junction_count": 0,
       "rack_area_m2": 0.0,
       "obstructed_area_m2": 0.0,

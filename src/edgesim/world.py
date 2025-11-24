@@ -701,8 +701,10 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 		patch_bodies.append(bid)
 		floor_meta.append(meta)
 		aisle_meta.append(meta)
-		if aisle.get("racking", True):
-			rack_cfg = aisle.get("racking") if isinstance(aisle.get("racking"), dict) else {}
+		# Solid geometry should come from explicit AABBs (geometry.racking/endcaps/static_obstacles).
+		allow_auto_racks = bool(aisle.get("spawn_racking_from_aisle") or aisle.get("allow_aisle_racking"))
+		if allow_auto_racks and aisle.get("racking"):
+			rack_cfg = aisle["racking"] if isinstance(aisle.get("racking"), dict) else {}
 			if "height_m" not in rack_cfg and aisle.get("rack_height_m"):
 				rack_cfg["height_m"] = aisle.get("rack_height_m")
 			if "type" not in rack_cfg:
