@@ -1,0 +1,113 @@
+Notes to Codex:
+EDGE-SIM PROJECT CONTEXT (READ FIRST)
+You are helping on EdgeSim, a PyBullet-based warehouse simulation environment for mobile robots.
+EdgeSim is an environment, not a planner. Your job is to design and fix geometry, actors, and sensors, not to make the robot “smart.”
+1. Core Purpose
+EdgeSim is meant to:
+Simulate realistic warehouse layouts: aisles, racks, intersections, docks, blind corners, open areas.
+Populate them with dynamic actors: AMR robot(s), forklifts, other vehicles, humans, carts, falling/ thrown objects.
+Model hazards and conditions:
+Floor traction (wet, oil, spills, smooth surfaces) and slip risk.
+Visibility (night / low-light, fog, sensor shadowing).
+Occlusions from racks, endcaps, forklifts, humans.
+Produce realistic sensor data (LiDAR, odom, IMU) and logs for RL, safety analysis, and coverage studies.
+The simulator is used to test how a controller would behave in a realistic, messy warehouse — but the controller itself is outside EdgeSim.
+2. Architecture Overview
+High-level flow:
+Natural language prompt → parser.py → scn dict
+parser.py takes a text prompt like
+"aisle near a forklift and group of workers crossing"
+plus keyword maps & templates.
+It outputs a scenario dict scn with:
+layout: map size, aisles, start/goal, intersections, safety zones, etc.
+hazards: humans, vehicles, traction zones, floor events, injectors, etc.
+taxonomy: tags like {"occlusion": True, "visibility": "low", ...}.
+site_overrides: tweaks that can override site profile defaults.
+Rule: parser.py is where scenario-specific layout decisions belong (waypoints, crossings, blind corners, etc.). It should avoid hardcoding behavior to one exact prompt string; use keywords, tags, and generic templates.
+world.py – build static and semi-static geometry
+build_world(scn, use_gui) creates the PyBullet world:
+Floor plane, walls, racks, endcaps, dock walls, columns, static obstacles.
+Aisles/junctions as rectangles, with metadata (aisles_meta).
+Floor zones with friction μ and effects (e.g. slip_boost, imu_vibe_g).
+Vehicle bodies & meta (vehicles_meta) with paths and dimensions.
+Returns an env dict with:
+client, plane_id, walls, static_obstacles
+bounds (Lx, Ly), aisles_meta, floor_zones, transition_zones
+vehicles_meta, patches, etc.
+Rule: All geometry (positions, sizes, AABBs) must be consistent:
+No racks inside walls, no aisles overlapping nonsensically.
+No actors should ever spawn inside static geometry.
+Racking must create occlusion and collision boundaries that sensors & actors respect.
+sim_one.py – run a single episode
+Takes prompt, scn, and env from build_world.
+Spawns the robot disc (AMR) with radius, height, start/goal from layout.
+Sets up humans and vehicles using hazards and env metadata.
+Applies tuned site profile (site_profiles/*.json) for:
+Traction ranges (μ for wet/ dry surfaces).
+Human slip probabilities & fall duration.
+LiDAR noise/dropout/jitter, odom & IMU bias/noise.
+Optional injectors: falling object, thrown object, lidar blackout.
+Steps physics in a loop:
+Simple PID-style controller from current pose → goal waypoint (no path planner).
+Updates humans (walking, groups, zig-zag, late-react, slipping, falling).
+Moves vehicles along their scripted paths.
+Computes LiDAR, odom, IMU measurements.
+Logs CSV rows (run_one.csv) and a world digest (world.json + manifest.json).
+Rule: sim_one.py is an executor + logger. It must not:
+Re-interpret natural language prompts.
+Implement obstacle avoidance, replanning, or “smart” navigation.
+Hardcode coordinates for particular prompt phrases.
+3. Global Design Rules
+Environment, not planner
+Do not add A*, RRT, “stop if obstacle” rules, or reactive obstacle avoidance into the sim.
+The robot’s commanded velocities must be applied; only physics & collisions decide what happens.
+A simple, generic PID to the goal is OK as a placeholder, but no clever pathfinding.
+Geometry first
+When fixing bugs, think:
+Shapes & positions of racks, walls, endcaps, aisles, docks.
+Actor spawn locations & sizes (robot, humans, forklifts, carts).
+Sensor geometry (raycasts, occlusions, reflective surfaces).
+Only after geometry is correct should you consider tweaking behavior parameters.
+No prompt-specific hardcoding
+Code must not special-case one English prompt or scenario.
+Instead use:
+Keyword maps (KEYWORDS) → taxonomy tags,
+Scenario templates,
+Generic “scene types” (e.g. “T-intersection”, “blind corner”) mapped to reusable geometry patterns.
+Any coordinates or objects you add must work for all prompts that use that pattern, not just the one we’re currently debugging.
+Respect raw_coords
+If cfg.get("raw_coords") (for humans/vehicles) or similar is true:
+Treat the provided waypoints/positions as authoritative.
+You may clamp to map bounds or do minimal collision-escape, but do not:
+Project paths into aisles,
+Snap to heuristic crosswalks,
+Auto-rotate or reorder waypoints.
+Projection to aisles, snapping, and path shaping is allowed only when raw_coords is false.
+Actors respect geometry (via physics and scripted paths)
+Robots, forklifts, humans must never spawn inside walls, racks, or other static geometry.
+Path following must keep them inside aisles and open areas, subject to:
+Clearance margins,
+Collision checks with static AABBs,
+Slip and friction effects.
+Hazards and floors are parameterized, not hacked
+Wet patches, spills, and slippery zones use:
+Friction coefficients μ,
+A probabilistic slip model based on μ and exposure time.
+New hazards (wet bands, events, injectors) must take their zones and coordinates from:
+scn["hazards"] (e.g. traction, floor_events),
+layout or aisles_meta,
+site_profiles JSON.
+Do not drop a spill at some hardcoded (x, y) just because of one prompt; use generic rules tied to geometry.
+Logging and digest must stay consistent
+Every run writes:
+run_one.csv with time series of pose, commands, sensors, events, TTC, proximity, wet/ not wet, human phases, etc.
+world.json / manifest.json with a digest of geometry & hazards.
+When changing world or hazard structure, ensure digest and CSV remain coherent: coordinates, AABBs, IDs, and event labels should match the simulation.
+4. Practical mindset for future edits
+When modifying or adding code in this project:
+Ask first:
+“Is this a geometry/layout issue, a spawn/size issue, or a behavior parameter issue?”
+Fix geometry and spawn logic before behavior.
+Never introduce logic that only makes sense for one specific English prompt.
+Ensure all new objects use sizes, positions, paths, and friction values that are consistent, generic, and driven by scn, env, or site profiles.
+This is the context you should assume for all future EdgeSim discussions.

@@ -164,7 +164,8 @@ def _spawn_aisle_racks(zone: Tuple[float, float, float, float],
 	dx, dy = (x1 - x0), (y1 - y0)
 	orientation = "horizontal" if abs(dx) >= abs(dy) else "vertical"
 	gap = float(rack_cfg.get("gap_m", 0.05))
-	depth = float(rack_cfg.get("depth_m", 0.45))
+	depth_default = 0.55 if max(abs(dx), abs(dy)) > 4.0 else 0.45
+	depth = float(rack_cfg.get("depth_m", depth_default))
 	height = float(rack_cfg.get("height_m", 3.0))
 	rack_type = rack_cfg.get("type", "rack")
 	reflective = bool(rack_cfg.get("reflective", rack_type == "high_bay"))

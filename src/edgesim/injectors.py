@@ -106,6 +106,80 @@ class LidarSectorBlackoutInjector(Injector):
         return None
 
 
+# ---------------------------------------------------------
+# Ghost / phantom obstacles in LiDAR
+# ---------------------------------------------------------
+
+@dataclass
+class GhostObstacleInjector(Injector):
+    """
+    Inserts short-lived phantom obstacle clusters into LiDAR scans to emulate
+    sensor ghosts / false positives. Clusters are defined in world-frame angle
+    and distance and decay over time.
+    """
+    name: str = "ghost_obstacle"
+    spawn_rate_hz: float = 0.25           # expected spawns per second
+    dist_range: Tuple[float, float] = (1.5, 6.0)
+    ttl_range: Tuple[float, float] = (0.6, 2.0)
+    width_deg: Tuple[float, float] = (8.0, 18.0)
+    range_jitter: float = 0.4
+    max_clusters: int = 4
+    rng_seed: Optional[int] = None
+    _rng: np.random.Generator = field(default_factory=np.random.default_rng, repr=False)
+    _clusters: List[Dict[str, float]] = field(default_factory=list)
+    _event_queue: List[Tuple[str, str]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.rng_seed is not None:
+            try:
+                self._rng = np.random.default_rng(int(self.rng_seed))
+            except Exception:
+                self._rng = np.random.default_rng()
+
+    def on_step(self, s: InjectorState) -> None:
+        # Drop expired clusters
+        if self._clusters:
+            for c in self._clusters:
+                c["ttl"] -= s.dt
+            self._clusters = [c for c in self._clusters if c["ttl"] > 0.0]
+        # Probabilistic spawn
+        if len(self._clusters) >= self.max_clusters:
+            return
+        if self._rng.random() < max(0.0, self.spawn_rate_hz) * s.dt:
+            ang = float(self._rng.uniform(-math.pi, math.pi))
+            dist = float(self._rng.uniform(*self.dist_range))
+            ttl = float(self._rng.uniform(*self.ttl_range))
+            width = float(self._rng.uniform(*self.width_deg))
+            self._clusters.append({"ang": ang, "dist": dist, "ttl": ttl, "width_deg": width})
+            self._event_queue.append(("sensor_fault_ghost", f"{dist:.1f}m@{math.degrees(ang):.0f}deg"))
+
+    def apply_lidar(self, s: InjectorState, ranges: Optional[np.ndarray], max_range: float) -> Optional[np.ndarray]:
+        if ranges is None or not self._clusters:
+            return None
+        n = len(ranges)
+        angles = np.linspace(-math.pi, math.pi, n, endpoint=False)
+        mod = ranges.copy()
+        changed = False
+        for c in self._clusters:
+            rel = _wrap_angle(c["ang"] - s.robot_yaw)
+            half = math.radians(c.get("width_deg", 10.0)) * 0.5
+            mask = np.abs(_wrap_angle(angles - rel)) <= half
+            if not np.any(mask):
+                continue
+            noise = self._rng.normal(0.0, self.range_jitter, size=np.count_nonzero(mask))
+            phantom = np.clip(c["dist"] + noise, 0.3, max_range * 0.9)
+            mod[mask] = phantom
+            changed = True
+        if changed:
+            return mod
+        return None
+
+    def pop_event(self) -> Optional[Tuple[str, str]]:
+        if self._event_queue:
+            return self._event_queue.pop(0)
+        return None
+
+
 # ---------------------------------------
 # Falling object (box) / shatter to puddle
 # ---------------------------------------

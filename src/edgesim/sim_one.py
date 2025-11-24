@@ -12,7 +12,7 @@ from .world import build_world, spawn_human
 from .world_digest import build_world_digest, write_world_digest
 from .injectors import (
 	LidarSectorBlackoutInjector, FallingObjectInjector, ThrownObjectInjector,
-	InjectorState, Injector
+	GhostObstacleInjector, InjectorState, Injector
 )
 
 _HERE = Path(__file__).resolve().parent
@@ -241,7 +241,7 @@ def _human_spawn_ok(start_xy: Tuple[float, float],
                     robot_radius: float,
                     vehicle_guards: List[Tuple[float, float, float]],
                     humans: List[Dict[str, Any]],
-                    clearance: float = 0.3) -> bool:
+                    clearance: float = 0.15) -> bool:
 	sx, sy = start_xy
 	clear = max(0.0, clearance)
 	if math.hypot(sx - robot_xy[0], sy - robot_xy[1]) < (robot_radius + human_radius + clear):
@@ -283,6 +283,12 @@ def _human_profile(cfg: Dict[str, Any]) -> Dict[str, Any]:
 	profile = _HUMAN_ROLE_PRESETS.get(role, _HUMAN_ROLE_PRESETS["picker"]).copy()
 	profile["radius"] = float(cfg.get("radius_m", profile["radius"]))
 	profile["length"] = float(cfg.get("length_m", profile["length"]))
+	scale = float(cfg.get("height_scale", 1.0))
+	if not math.isfinite(scale):
+		scale = 1.0
+	scale = max(0.55, min(1.5, scale))
+	profile["radius"] = max(0.14, profile["radius"] * scale)
+	profile["length"] = max(0.6, profile["length"] * scale)
 	speed_cfg = cfg.get("speed_mps", profile["speed"])
 	if isinstance(speed_cfg, (list, tuple)) and len(speed_cfg) == 2:
 		profile["speed"] = (float(speed_cfg[0]), float(speed_cfg[1]))
@@ -296,7 +302,7 @@ def _human_profile(cfg: Dict[str, Any]) -> Dict[str, Any]:
 	if cfg.get("zigzag"):
 		behaviors.add("zig_zag")
 	profile["behaviors"] = behaviors
-	profile["height_scale"] = float(cfg.get("height_scale", 1.0))
+	profile["height_scale"] = scale
 	return profile
 
 def _clamp_point(pt: List[float], bounds: Tuple[float, float], border: float) -> List[float]:
@@ -318,6 +324,8 @@ def _build_human_path(cfg: Dict[str, Any], bounds: Tuple[float, float], border: 
 	cross_x = max(border, min(Lx - border, float(cfg.get("cross_x", 0.5 * Lx))))
 	start_y = border if direction == 1 else (Ly - border)
 	end_y = (Ly - border) if direction == 1 else border
+	if abs(end_y - start_y) < 1e-3:
+		end_y = max(border, min(Ly - border, start_y + (1.5 if direction == 1 else -1.5)))
 	return [[cross_x, start_y], [cross_x, end_y]]
 
 def _segments_from_points(points: List[List[float]]) -> Tuple[List[Dict[str, Any]], float]:
@@ -932,7 +940,19 @@ def run_one(
 		# Human hazard (multiple actors)
 		human_cfgs = [cfg for cfg in (scn.get("hazards", {}).get("human") or []) if isinstance(cfg, dict)]
 		human_states: List[Dict[str, Any]] = []
-		global_wet = bool(scn.get("hazards", {}).get("traction"))
+
+		def _scenario_has_wet_surface() -> bool:
+			for surface in floor_zones_meta:
+				s_type = (surface.get("type") or "").lower()
+				effects = surface.get("effects") or {}
+				if (s_type in wet_like_types) or effects.get("slip_boost", 0.0) > 0.2:
+					return True
+			if scn.get("hazards", {}).get("traction"):
+				return True
+			if dynamic_wet_patches:
+				return True
+			return False
+
 		for cfg in human_cfgs:
 			profile = _human_profile(cfg)
 			base_path = _build_human_path(cfg, (Lx, Ly), border)
@@ -940,14 +960,16 @@ def run_one(
 				base_path = _project_path_into_rects(base_path, walkway_rects, profile["radius"], static_aabbs, (Lx, Ly), border)
 			base_segments, _ = _segments_from_points(base_path)
 			base_slip = float(cfg.get("p_slip", tuned_slip_prob))
-			use_local_wet = global_wet or bool(cfg.get("force_wet", False))
+			has_wet_surface = _scenario_has_wet_surface()
+			use_local_wet = bool(cfg.get("force_wet", False))
 			if taxonomy.get("occlusion"):
 				base_slip = min(0.75, base_slip)
 				cfg.setdefault("start_delay_s", 0.2 + rng.uniform(0.2, 0.6))
 				cfg.setdefault("slip_min_exposure_s", max(0.35, slip_min_exposure_s))
 			if not use_local_wet:
-				base_slip = min(0.05, base_slip * 0.2)
-				cfg["slip_min_exposure_s"] = max(cfg.get("slip_min_exposure_s", slip_min_exposure_s), 0.6)
+				if not has_wet_surface:
+					base_slip = min(0.05, base_slip * 0.2)
+					cfg["slip_min_exposure_s"] = max(cfg.get("slip_min_exposure_s", slip_min_exposure_s), 0.6)
 			cfg["p_slip"] = base_slip
 			local_wet_aabb = None
 			if use_local_wet and base_path:
@@ -1029,8 +1051,9 @@ def run_one(
 					"slip_min_exposure": float(cfg.get("slip_min_exposure_s", slip_min_exposure_s)),
 					"z_base": profile["radius"] + 0.5 * profile["length"],
 					"posture_state": "upright",
-					"posture_scale": 1.0,
+					"posture_scale": profile.get("height_scale", 1.0),
 					"props": {},
+					"reflectivity": float(cfg.get("reflectivity", 0.0)),
 					"last_pose": (-10.0, -10.0),
 					"hold_until": None,
 					"late_react_triggered": False,
@@ -1041,7 +1064,7 @@ def run_one(
 					heading0 = math.atan2(seg0["dir"][1], seg0["dir"][0])
 					state["last_pose"] = (start_pt[0], start_pt[1], heading0)
 					# Place body at start so it is visible even before stepping
-					_update_human_pose(hid, start_pt[0], start_pt[1], state["z_base"], heading0)
+					_update_human_pose(hid, start_pt[0], start_pt[1], state["z_base"], heading0, state.get("posture_scale", 1.0))
 					state["next_start_t"] = min(float(state.get("next_start_t", 0.0)), 0.1)
 				if "push_cart" in state_behaviors:
 					cart_id, cart_h = _spawn_cart_body()
@@ -1078,8 +1101,19 @@ def run_one(
 				"half_extents": half_ext,
 				"height": float(vmeta.get("base_z", half_ext[2])),
 				"reflective": bool(vmeta.get("reflective")),
+				"reversing_bias": bool(vmeta.get("reversing_bias", False)),
+				"reversing_mode": bool(vmeta.get("reversing_bias", False)),
+				"reverse_duty": float(vmeta.get("reverse_duty", 0.6)),
+				"reverse_period": float(vmeta.get("reverse_period_s", 6.0)),
+				"next_reverse_switch": float(rng.uniform(1.5, 3.5)),
+				"rear_occlusion_deg": float(vmeta.get("rear_occlusion_deg", 0.0)),
+				"alarm": vmeta.get("alarm"),
+				"carrying_pallet": bool(vmeta.get("carrying_pallet", False)),
+				"load_overhang_m": float(vmeta.get("load_overhang_m", 0.0)),
 			}
 			body_id = state["body_id"]
+			if state["rear_occlusion_deg"] <= 0.0 and state["reversing_bias"]:
+				state["rear_occlusion_deg"] = 70.0
 			if path_pts:
 				sx, sy = path_pts[0]
 			else:
@@ -1109,10 +1143,18 @@ def run_one(
 						pass
 				vehicle_states.append(state)
 
-		floor_event_states = [
-			{"cfg": evt, "spawned": False, "body_id": None}
-			for evt in hazards.get("floor_events", []) if isinstance(evt, dict)
-		]
+		floor_event_states: List[Dict[str, Any]] = []
+		for evt in hazards.get("floor_events", []):
+			if not isinstance(evt, dict):
+				continue
+			floor_event_states.append({
+				"cfg": evt,
+				"spawned": False,
+				"body_id": None,
+				"zone_current": evt.get("zone"),
+				"meta": None,
+				"dynamic_ref": None,
+			})
 
 		injectors: List[Injector] = []
 		inj_cfg = (_tuned.get("injectors") or {}) if isinstance(_tuned, dict) else {}
@@ -1127,6 +1169,19 @@ def run_one(
 					duration_s=float(c.get("duration_s", 4.0)),
 					sector_deg=float(c.get("sector_deg", 60.0)),
 					sector_offset_deg=float(c.get("sector_offset_deg", 0.0)),
+				))
+
+		if isinstance(inj_cfg.get("ghost_obstacle"), dict):
+			c = inj_cfg["ghost_obstacle"]
+			if rng.random() < float(c.get("p", 0.95)):
+				injectors.append(GhostObstacleInjector(
+					spawn_rate_hz=float(c.get("spawn_rate_hz", 0.25)),
+					dist_range=tuple(map(float, c.get("dist_range", [1.5, 6.0]))),
+					ttl_range=tuple(map(float, c.get("ttl_range", [0.6, 2.0]))),
+					width_deg=tuple(map(float, c.get("width_deg", [8.0, 18.0]))),
+					range_jitter=float(c.get("range_jitter", 0.4)),
+					max_clusters=int(c.get("max_clusters", 4)),
+					rng_seed=int(rng.integers(2**31 - 1)),
 				))
 
 		if isinstance(inj_cfg.get("falling_object"), dict):
@@ -1391,9 +1446,10 @@ def run_one(
 				x_end, y_end = seg["end"]
 				new_x = x_start + frac * (x_end - x_start)
 				new_y = y_start + frac * (y_end - y_start)
-				heading = math.atan2(y_end - y_start, x_end - x_start)
-				if v.get("direction", 1) < 0:
-					heading += math.pi
+				base_heading = math.atan2(y_end - y_start, x_end - x_start)
+				moving_forward = v.get("direction", 1) >= 0
+				flip = (not moving_forward) != bool(v.get("reversing_mode", False))
+				heading = base_heading + (math.pi if flip else 0.0)
 				aabb = _vehicle_aabb(v, new_x, new_y)
 				if any(_rect_overlap(aabb, obs) for obs in static_aabbs):
 					v["seg_idx"] = initial_seg_idx
@@ -1491,6 +1547,80 @@ def run_one(
 		min_clear_lidar = 10.0
 		vehicle_guard_boxes: List[Tuple[float, float, float, float]] = []
 
+		def _apply_vehicle_occlusion(ranges: np.ndarray, rx: float, ry: float, ryaw: float) -> np.ndarray:
+			if not vehicle_states:
+				return ranges
+			mod = ranges
+			cloned = False
+			for v in vehicle_states:
+				occ_deg = float(v.get("rear_occlusion_deg", 0.0))
+				if occ_deg <= 0.0:
+					continue
+				pose = v.get("last_pose")
+				if not pose:
+					continue
+				fx, fy, heading = pose
+				dist = math.hypot(fx - rx, fy - ry)
+				if dist > 6.0:
+					continue
+				sectors: List[float] = []
+				if v.get("carrying_pallet"):
+					sectors.append(heading)  # load blocks forward view
+				if v.get("reversing_mode"):
+					sectors.append(heading + math.pi)  # blind when backing
+				for center in sectors:
+					rel = ((center - ryaw + math.pi) % (2.0 * math.pi)) - math.pi
+					half = max(0.05, math.radians(occ_deg) * 0.5)
+					rel_angles = ((lidar.angles - rel + math.pi) % (2.0 * math.pi)) - math.pi
+					mask = np.abs(rel_angles) <= half
+					if not np.any(mask):
+						continue
+					if not cloned:
+						mod = mod.copy()
+						cloned = True
+					idx = np.nonzero(mask)[0]
+					drop_k = max(1, int(0.6 * len(idx)))
+					drop_idx = lidar_rng.choice(idx, size=drop_k, replace=False)
+					mod[drop_idx] = lidar.max_range
+			return mod
+
+		def _apply_human_reflectivity(ranges: np.ndarray, rx: float, ry: float, ryaw: float) -> np.ndarray:
+			if not human_states:
+				return ranges
+			mod = ranges
+			cloned = False
+			for h in human_states:
+				if h.get("phase") != "running":
+					continue
+				refl = float(h.get("reflectivity", 0.0))
+				if abs(refl) < 1e-3:
+					continue
+				last_pose = h.get("last_pose")
+				if not isinstance(last_pose, (list, tuple)) or len(last_pose) < 2:
+					continue
+				hx, hy = last_pose[0], last_pose[1]
+				dist = math.hypot(hx - rx, hy - ry)
+				if dist > 6.0:
+					continue
+				rel_ang = ((math.atan2(hy - ry, hx - rx) - ryaw + math.pi) % (2.0 * math.pi)) - math.pi
+				width = max(0.04, min(0.25, 0.06 + 0.02 * dist))
+				rel_angles = ((lidar.angles - rel_ang + math.pi) % (2.0 * math.pi)) - math.pi
+				mask = np.abs(rel_angles) <= width
+				if not np.any(mask):
+					continue
+				if not cloned:
+					mod = mod.copy()
+					cloned = True
+				idx = np.nonzero(mask)[0]
+				if refl > 0.0:
+					scale = np.clip(lidar_rng.uniform(0.2, 0.6, size=len(idx)), 0.1, 0.8)
+					mod[idx] = np.clip(mod[idx] * scale, 0.05, mod[idx])
+				else:
+					drop_k = max(1, int(0.5 * len(idx)))
+					drop_idx = lidar_rng.choice(idx, size=drop_k, replace=False)
+					mod[drop_idx] = lidar.max_range
+			return mod
+
 		# -------- main loop --------
 
 		while t < timeout:
@@ -1516,6 +1646,8 @@ def run_one(
 					continue
 				half_v = v.get("half_extents") or [0.5, 0.4, 0.4]
 				r_guard = max(abs(half_v[0]), abs(half_v[1])) + 0.4
+				if v.get("reversing_mode"):
+					r_guard += 0.3
 				vehicle_guards.append((pose[0], pose[1], r_guard))
 				vehicle_guard_boxes.append((pose[0] - r_guard, pose[1] - r_guard, pose[0] + r_guard, pose[1] + r_guard))
 			for evt_state in floor_event_states:
@@ -1523,7 +1655,7 @@ def run_one(
 					continue
 				spawn_t = float(evt_state["cfg"].get("spawn_time_s", 20.0))
 				if t >= spawn_t:
-					zone = evt_state["cfg"].get("zone")
+					zone = evt_state.get("zone_current") or evt_state["cfg"].get("zone")
 					if not isinstance(zone, (list, tuple)) or len(zone) != 4:
 						continue
 					x0, y0, x1, y1 = map(float, zone)
@@ -1531,19 +1663,66 @@ def run_one(
 					bid = _spawn_wet_patch(x0, y0, x1, y1, mu=mu_evt)
 					patch_ids.append(bid)
 					ignored_for_collision.add(bid)
-					dynamic_wet_patches.append({"aabb": (x0, y0, x1, y1), "mu": mu_evt})
-					floor_zones_meta.append({
+					dyn_rec = {"aabb": (x0, y0, x1, y1), "mu": mu_evt}
+					dynamic_wet_patches.append(dyn_rec)
+					meta_entry = {
 						"id": evt_state["cfg"].get("id"),
 						"type": evt_state["cfg"].get("type", "spill"),
 						"zone": zone,
 						"mu": mu_evt,
 						"body_id": bid,
 						"effects": {"brake_scale": 1.4, "slip_boost": 0.6},
-					})
+					}
+					floor_zones_meta.append(meta_entry)
 					evt_state["spawned"] = True
 					evt_state["body_id"] = bid
+					evt_state["zone_current"] = list(zone)
+					evt_state["meta"] = meta_entry
+					evt_state["dynamic_ref"] = dyn_rec
 					_log_row("floor_event_spawn", evt_state["cfg"].get("type", "spill"),
 					         position=(x, y, yaw), near_stop=int(v_cmd < 0.2))
+
+			# Expand any active spreading events (e.g., cleaning liquid)
+			for evt_state in floor_event_states:
+				if not evt_state.get("spawned"):
+					continue
+				spread = float(evt_state.get("cfg", {}).get("spread_rate_mps", 0.0))
+				if spread <= 1e-6:
+					continue
+				zone_cur = evt_state.get("zone_current")
+				if not isinstance(zone_cur, (list, tuple)) or len(zone_cur) != 4:
+					continue
+				grow = spread * dt
+				x0, y0, x1, y1 = map(float, zone_cur)
+				new_zone = [
+					max(0.0, min(Lx, x0 - grow)),
+					max(0.0, min(Ly, y0 - grow)),
+					max(0.0, min(Lx, x1 + grow)),
+					max(0.0, min(Ly, y1 + grow)),
+				]
+				if max(abs(new_zone[i] - zone_cur[i]) for i in range(4)) < 1e-5:
+					continue
+				# Replace patch body with expanded patch
+				old_bid = evt_state.get("body_id")
+				if isinstance(old_bid, int):
+					try:
+						p.removeBody(old_bid)
+					except Exception:
+						pass
+					ignored_for_collision.discard(old_bid)
+				mu_evt = float(evt_state.get("cfg", {}).get("mu", wet_mu))
+				new_bid = _spawn_wet_patch(*new_zone, mu=mu_evt)
+				patch_ids.append(new_bid)
+				ignored_for_collision.add(new_bid)
+				evt_state["body_id"] = new_bid
+				evt_state["zone_current"] = list(new_zone)
+				meta_entry = evt_state.get("meta")
+				if isinstance(meta_entry, dict):
+					meta_entry["zone"] = list(new_zone)
+					meta_entry["body_id"] = new_bid
+				dyn_rec = evt_state.get("dynamic_ref")
+				if isinstance(dyn_rec, dict):
+					dyn_rec["aabb"] = (new_zone[0], new_zone[1], new_zone[2], new_zone[3])
 
 			transition_here = _transition_at(x, y)
 			transition_shadow = bool(((transition_here or {}).get("attributes") or {}).get("sensor_shadow", False))
@@ -1563,7 +1742,7 @@ def run_one(
 							h["fallen_since"] = None
 							h["wet_since"] = None
 							h["next_start_t"] = t + float(cfg.get("recovery_delay_s", 6.0))
-							_update_human_pose(body_id, -10.0, -10.0, h["z_base"], 0.0)
+							_update_human_pose(body_id, -10.0, -10.0, h["z_base"], 0.0, h.get("posture_scale", 1.0))
 							payload = h.get("props", {}).get("payload")
 							if payload:
 								payload["dropped"] = True
@@ -1571,7 +1750,7 @@ def run_one(
 					if h["phase"] == "stationary":
 						if h.get("path"):
 							origin = h["path"][0]
-							_update_human_pose(body_id, origin[0], origin[1], h["z_base"], 0.0)
+							_update_human_pose(body_id, origin[0], origin[1], h["z_base"], 0.0, h.get("posture_scale", 1.0))
 							_update_human_props(h, origin[0], origin[1], 0.0)
 						continue
 					if h["phase"] == "running":
@@ -1629,7 +1808,7 @@ def run_one(
 											h["phase"] = "idle"
 											h["wet_since"] = None
 											h["next_start_t"] = t + max(2.0, 60.0 / max(0.1, float(cfg.get("rate_per_min", 2.0))))
-											_update_human_pose(body_id, -10.0, -10.0, h["z_base"], 0.0)
+											_update_human_pose(body_id, -10.0, -10.0, h["z_base"], 0.0, h.get("posture_scale", 1.0))
 											completed = True
 											break
 							else:
@@ -1674,7 +1853,12 @@ def run_one(
 						_update_human_props(h, xh, yh, heading)
 						h["last_pose"] = (xh, yh)
 						wet_band = h.get("wet_aabb")
+						in_wet_now = False
 						if wet_band and _pt_in_aabb(xh, yh, wet_band):
+							in_wet_now = True
+						elif _compute_in_wet(xh, yh):
+							in_wet_now = True
+						if in_wet_now:
 							if h["wet_since"] is None:
 								h["wet_since"] = t
 						else:
@@ -1689,7 +1873,7 @@ def run_one(
 							base_weight = max(0.1, min(1.0, ((0.42 - mu_here) / 0.1) + 0.2))
 							base_term = base_slip * base_weight
 							slip_prob = 1.0 - (1.0 - base_term) * (1.0 - mu_slip)
-							if surface is None and not wet_band:
+							if surface is None and not in_wet_now:
 								slip_prob = min(slip_prob, 0.05)
 							slip_prob = min(0.99, slip_prob + slip_boost)
 							if rng.random() < slip_prob:
@@ -1757,6 +1941,8 @@ def run_one(
 						mask = rng.choice(len(lr), size=max(1, len(lr)//12), replace=False)
 						lr = lr.copy()
 						lr[mask] = lidar.max_range
+				lr = _apply_human_reflectivity(lr, x, y, yaw)
+				lr = _apply_vehicle_occlusion(lr, x, y, yaw)
 				min_clear_lidar = float(np.min(lr))
 
 			# Integrate motion using commanded (ground-truth) velocities; sensors get noisy copies
@@ -1862,119 +2048,3 @@ def run_one(
 
 # Some improvements are present, but more are needed.
 # I need to go through all the key words one by one and ensure they work well and the code respects the global design rules.
-
-"""
-Notes to Codex:
-EDGE-SIM PROJECT CONTEXT (READ FIRST)
-You are helping on EdgeSim, a PyBullet-based warehouse simulation environment for mobile robots.
-EdgeSim is an environment, not a planner. Your job is to design and fix geometry, actors, and sensors, not to make the robot “smart.”
-1. Core Purpose
-EdgeSim is meant to:
-Simulate realistic warehouse layouts: aisles, racks, intersections, docks, blind corners, open areas.
-Populate them with dynamic actors: AMR robot(s), forklifts, other vehicles, humans, carts, falling/ thrown objects.
-Model hazards and conditions:
-Floor traction (wet, oil, spills, smooth surfaces) and slip risk.
-Visibility (night / low-light, fog, sensor shadowing).
-Occlusions from racks, endcaps, forklifts, humans.
-Produce realistic sensor data (LiDAR, odom, IMU) and logs for RL, safety analysis, and coverage studies.
-The simulator is used to test how a controller would behave in a realistic, messy warehouse — but the controller itself is outside EdgeSim.
-2. Architecture Overview
-High-level flow:
-Natural language prompt → parser.py → scn dict
-parser.py takes a text prompt like
-"aisle near a forklift and group of workers crossing"
-plus keyword maps & templates.
-It outputs a scenario dict scn with:
-layout: map size, aisles, start/goal, intersections, safety zones, etc.
-hazards: humans, vehicles, traction zones, floor events, injectors, etc.
-taxonomy: tags like {"occlusion": True, "visibility": "low", ...}.
-site_overrides: tweaks that can override site profile defaults.
-Rule: parser.py is where scenario-specific layout decisions belong (waypoints, crossings, blind corners, etc.). It should avoid hardcoding behavior to one exact prompt string; use keywords, tags, and generic templates.
-world.py – build static and semi-static geometry
-build_world(scn, use_gui) creates the PyBullet world:
-Floor plane, walls, racks, endcaps, dock walls, columns, static obstacles.
-Aisles/junctions as rectangles, with metadata (aisles_meta).
-Floor zones with friction μ and effects (e.g. slip_boost, imu_vibe_g).
-Vehicle bodies & meta (vehicles_meta) with paths and dimensions.
-Returns an env dict with:
-client, plane_id, walls, static_obstacles
-bounds (Lx, Ly), aisles_meta, floor_zones, transition_zones
-vehicles_meta, patches, etc.
-Rule: All geometry (positions, sizes, AABBs) must be consistent:
-No racks inside walls, no aisles overlapping nonsensically.
-No actors should ever spawn inside static geometry.
-Racking must create occlusion and collision boundaries that sensors & actors respect.
-sim_one.py – run a single episode
-Takes prompt, scn, and env from build_world.
-Spawns the robot disc (AMR) with radius, height, start/goal from layout.
-Sets up humans and vehicles using hazards and env metadata.
-Applies tuned site profile (site_profiles/*.json) for:
-Traction ranges (μ for wet/ dry surfaces).
-Human slip probabilities & fall duration.
-LiDAR noise/dropout/jitter, odom & IMU bias/noise.
-Optional injectors: falling object, thrown object, lidar blackout.
-Steps physics in a loop:
-Simple PID-style controller from current pose → goal waypoint (no path planner).
-Updates humans (walking, groups, zig-zag, late-react, slipping, falling).
-Moves vehicles along their scripted paths.
-Computes LiDAR, odom, IMU measurements.
-Logs CSV rows (run_one.csv) and a world digest (world.json + manifest.json).
-Rule: sim_one.py is an executor + logger. It must not:
-Re-interpret natural language prompts.
-Implement obstacle avoidance, replanning, or “smart” navigation.
-Hardcode coordinates for particular prompt phrases.
-3. Global Design Rules
-Environment, not planner
-Do not add A*, RRT, “stop if obstacle” rules, or reactive obstacle avoidance into the sim.
-The robot’s commanded velocities must be applied; only physics & collisions decide what happens.
-A simple, generic PID to the goal is OK as a placeholder, but no clever pathfinding.
-Geometry first
-When fixing bugs, think:
-Shapes & positions of racks, walls, endcaps, aisles, docks.
-Actor spawn locations & sizes (robot, humans, forklifts, carts).
-Sensor geometry (raycasts, occlusions, reflective surfaces).
-Only after geometry is correct should you consider tweaking behavior parameters.
-No prompt-specific hardcoding
-Code must not special-case one English prompt or scenario.
-Instead use:
-Keyword maps (KEYWORDS) → taxonomy tags,
-Scenario templates,
-Generic “scene types” (e.g. “T-intersection”, “blind corner”) mapped to reusable geometry patterns.
-Any coordinates or objects you add must work for all prompts that use that pattern, not just the one we’re currently debugging.
-Respect raw_coords
-If cfg.get("raw_coords") (for humans/vehicles) or similar is true:
-Treat the provided waypoints/positions as authoritative.
-You may clamp to map bounds or do minimal collision-escape, but do not:
-Project paths into aisles,
-Snap to heuristic crosswalks,
-Auto-rotate or reorder waypoints.
-Projection to aisles, snapping, and path shaping is allowed only when raw_coords is false.
-Actors respect geometry (via physics and scripted paths)
-Robots, forklifts, humans must never spawn inside walls, racks, or other static geometry.
-Path following must keep them inside aisles and open areas, subject to:
-Clearance margins,
-Collision checks with static AABBs,
-Slip and friction effects.
-Hazards and floors are parameterized, not hacked
-Wet patches, spills, and slippery zones use:
-Friction coefficients μ,
-A probabilistic slip model based on μ and exposure time.
-New hazards (wet bands, events, injectors) must take their zones and coordinates from:
-scn["hazards"] (e.g. traction, floor_events),
-layout or aisles_meta,
-site_profiles JSON.
-Do not drop a spill at some hardcoded (x, y) just because of one prompt; use generic rules tied to geometry.
-Logging and digest must stay consistent
-Every run writes:
-run_one.csv with time series of pose, commands, sensors, events, TTC, proximity, wet/ not wet, human phases, etc.
-world.json / manifest.json with a digest of geometry & hazards.
-When changing world or hazard structure, ensure digest and CSV remain coherent: coordinates, AABBs, IDs, and event labels should match the simulation.
-4. Practical mindset for future edits
-When modifying or adding code in this project:
-Ask first:
-“Is this a geometry/layout issue, a spawn/size issue, or a behavior parameter issue?”
-Fix geometry and spawn logic before behavior.
-Never introduce logic that only makes sense for one specific English prompt.
-Ensure all new objects use sizes, positions, paths, and friction values that are consistent, generic, and driven by scn, env, or site profiles.
-This is the context you should assume for all future EdgeSim discussions.
-"""
