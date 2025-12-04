@@ -529,10 +529,12 @@ def _spawn_vehicle_body(cfg: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
 		"body_id": body,
 		"base_z": base_z,
 		"path": path,
+		"raw_coords": bool(cfg.get("raw_coords", False)),
 		"speed_mps": cfg.get("speed_mps", 1.0),
 		"fork_height_m": cfg.get("fork_height_m", 0.0),
 		"carrying_pallet": cfg.get("carrying_pallet", False),
 		"reversing_bias": cfg.get("reversing_bias", False),
+		"reversing_mode": cfg.get("reversing_mode", False),
 		"warning_lights": cfg.get("warning_lights", False),
 		"half_extents": full_half,
 		"reflective": bool(cfg.get("reflective", False)),
@@ -609,7 +611,7 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 		zone = _clamp_zone(list(zone), (Lx, Ly), issues, label=f"transition:{tz.get('id')}")
 		mu = float(tz.get("mu", 0.8))
 		thickness = max(0.002, float(tz.get("threshold_cm", 0.0)) * 0.005)
-		rgba = (0.95, 0.95, 0.2, 0.35)
+		rgba = (0.95, 0.95, 0.2, 0.55)
 		tid = _spawn_floor_patch(zone, mu, rgba, thickness=thickness)
 		patch_bodies.append(tid)
 		transition_meta.append({
@@ -624,6 +626,50 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 			},
 			"body_id": tid,
 		})
+		# Optional door/dock plate geometry for fire doors / dock thresholds.
+		if (tz.get("type") or "").lower() in ("fire_door", "fire door", "doorway", "loading dock", "dock"):
+			door_rect = list(zone)
+			span_x = abs(door_rect[2] - door_rect[0])
+			span_y = abs(door_rect[3] - door_rect[1])
+			# Make door a thin slice along the aisle axis to look like a panel/frame instead of a block.
+			if span_x >= span_y:
+				thickness_door = max(0.08, min(0.25, span_x * 0.35))
+				door_rect = [door_rect[2] - thickness_door, door_rect[1], door_rect[2], door_rect[3]]
+			else:
+				thickness_door = max(0.08, min(0.25, span_y * 0.35))
+				door_rect = [door_rect[0], door_rect[3] - thickness_door, door_rect[2], door_rect[3]]
+			door_height = float(tz.get("door_height_m", 2.2))
+			door_id = _spawn_box_from_aabb(door_rect, door_height, rgba=(0.55, 0.5, 0.5, 1.0))
+			walls_extra.append(door_id)
+			static_meta.append({
+				"id": f"{tz.get('id', 'Door')}_panel",
+				"type": "door_panel",
+				"body_id": door_id,
+				"aabb": door_rect,
+				"height": door_height,
+				"occlusion": True,
+			})
+			# Dock plate slightly inset within the zone for occlusion/traction.
+			dx = max(0.05, 0.12 * (door_rect[2] - door_rect[0]))
+			dy = max(0.05, 0.12 * (door_rect[3] - door_rect[1]))
+			plate_rect = [
+				door_rect[0] + dx,
+				door_rect[1] + dy,
+				door_rect[2] - dx,
+				door_rect[3] - dy,
+			]
+			plate_height = float(tz.get("plate_height_m", 0.12))
+			plate_id = _spawn_box_from_aabb(plate_rect, plate_height, rgba=(0.65, 0.65, 0.7, 1.0))
+			walls_extra.append(plate_id)
+			static_meta.append({
+				"id": f"{tz.get('id', 'Door')}_dock_plate",
+				"type": "dock_plate",
+				"body_id": plate_id,
+				"aabb": plate_rect,
+				"height": plate_height,
+				"occlusion": True,
+				"reflective": False,
+			})
 
 	aisle_entries: List[Dict[str, Any]] = []
 	aisles_cfg = layout.get("aisles") or []
@@ -694,6 +740,7 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 			"center": (cx, cy),
 			"half_extents": (0.5 * (zone[2] - zone[0]), 0.5 * (zone[3] - zone[1])),
 			"yaw": float(aisle.get("yaw", 0.0)),
+			"width_m": min(zone[2] - zone[0], zone[3] - zone[1]),
 		})
 		meta.update({
 			"id": entry["id"],
@@ -724,6 +771,7 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 			"center": (cx, cy),
 			"half_extents": (0.5 * (zone[2] - zone[0]), 0.5 * (zone[3] - zone[1])),
 			"yaw": float(junction.get("yaw", 0.0)),
+			"width_m": min(zone[2] - zone[0], zone[3] - zone[1]),
 		})
 		meta.update({
 			"id": entry["id"],
@@ -964,7 +1012,7 @@ def build_world(scn: Dict[str, Any], use_gui: bool = False) -> Dict[str, Any]:
 		body_id, vmeta = _spawn_vehicle_body(veh)
 		vehicle_meta.append(vmeta)
 
-	if use_gui:
+	if use_gui and scn.get("debug_visuals", False):
 		_draw_debug_overlays(layout, hazards, bounds)
 
 	return {

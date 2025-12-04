@@ -1,62 +1,55 @@
 {
   "version": 1,
   "start": [
-    5.6,
-    12.5
+    2.0,
+    8.0
   ],
   "goal": [
-    9.4,
-    12.5
+    18.0,
+    8.0
   ],
-  "aabbs": [],
-  "hazards": {
-    "traction": [
-      {
-        "zone": [
-          5.0,
-          10.0,
-          10.0,
-          15.0
-        ],
-        "mu": 0.45
-      }
+  "aabbs": [
+    [
+      2.0,
+      6.15,
+      18.0,
+      7.05
     ],
+    [
+      2.0,
+      8.95,
+      18.0,
+      9.85
+    ]
+  ],
+  "hazards": {
+    "traction": [],
     "human": [
       {
         "path": "waypoints",
-        "rate_per_min": 2.0,
+        "waypoints": [
+          [
+            10.0,
+            7.0
+          ],
+          [
+            10.0,
+            9.0
+          ]
+        ],
+        "group_size": 1,
+        "rate_per_min": 1.0,
         "speed_mps": [
           0.9,
           1.5
         ],
         "motion_patterns": [
-          "linear",
-          "start_stop"
-        ],
-        "interaction_modes": [
-          "mutual_yield",
-          "human_yield",
-          "robot_yield"
-        ],
-        "visibility_awareness": "normal",
-        "start_delay_s": 0.0,
-        "start_delay_s_min": 0.0,
-        "start_delay_s_max": 0.0,
-        "waypoints": [
-          [
-            7.8100000000000005,
-            10.6
-          ],
-          [
-            7.8100000000000005,
-            14.4
-          ]
+          "linear"
         ],
         "raw_coords": true,
-        "group_size": 1,
-        "spawn_clearance_m": 0.1,
-        "loop": false,
-        "p_slip": 0.85
+        "start_delay_s": 0.5639943904526323,
+        "slip_min_exposure_s": 0.6,
+        "p_slip": 0.05
       }
     ],
     "floor_events": [],
@@ -75,30 +68,42 @@
       "mu": 0.85
     },
     {
-      "id": "Traction_01",
-      "type": "wet",
-      "zone": [
-        5.0,
-        10.0,
-        10.0,
-        15.0
-      ],
-      "mu": 0.45
-    },
-    {
       "id": "A_coord_01",
       "type": "aisle_straight",
       "zone": [
-        4.35,
-        9.35,
-        10.65,
-        15.65
+        1.95,
+        7.25,
+        18.05,
+        8.75
       ],
       "mu": 0.88
     }
   ],
   "transition_zones": [],
-  "static_obstacles": [],
+  "static_obstacles": [
+    {
+      "id": "Rack_01",
+      "type": "high_bay",
+      "aabb": [
+        2.0,
+        8.95,
+        18.0,
+        9.85
+      ],
+      "height": 5.0
+    },
+    {
+      "id": "Rack_02",
+      "type": "high_bay",
+      "aabb": [
+        2.0,
+        6.15,
+        18.0,
+        7.05
+      ],
+      "height": 5.0
+    }
+  ],
   "vehicles": [],
   "safety_zones": [],
   "aisles": [
@@ -106,33 +111,35 @@
       "id": "A_coord_01",
       "type": "aisle_straight",
       "zone": [
-        4.35,
-        9.35,
-        10.65,
-        15.65
+        1.95,
+        7.25,
+        18.05,
+        8.75
       ],
       "mu": 0.88
     }
   ],
   "environment": {
     "map_size_m": [
-      0.0,
-      0.0
+      18.0,
+      9.85
     ],
     "floor_summary": {
-      "mu_min": 0.45,
+      "mu_min": 0.85,
       "mu_max": 0.88,
-      "wet_count": 1,
-      "zones": 3
+      "wet_count": 0,
+      "zones": 2
     },
     "layout_summary": {
       "aisle_count": 1,
       "junction_count": 0,
       "rack_area_m2": 0.0,
-      "obstructed_area_m2": 0.0,
+      "obstructed_area_m2": 28.8,
       "endcaps": 0,
       "blind_corners": 0,
-      "static_obstacles": {}
+      "static_obstacles": {
+        "high_bay": 2
+      }
     }
   }
 }

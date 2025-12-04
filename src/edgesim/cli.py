@@ -204,6 +204,8 @@ def cmd_run_one(args: argparse.Namespace) -> int:
         os.environ["EDGESIM_SITE"] = str(args.site)
 
     scn = prompt_to_scenario(prompt, n_runs=1)
+    if getattr(args, "debug_visuals", False):
+        scn["debug_visuals"] = True
     run_dir = _make_run_dir(prompt, args.name)
     _write_core_files(run_dir, prompt, 1, args.seed, scn)
     out = run_one(prompt, scn, run_dir, dt=dt, realtime=realtime, gui=gui, sleep_scale=slowmo)
@@ -401,6 +403,7 @@ def build_parser() -> argparse.ArgumentParser:
     so.add_argument("--dt", type=float, default=0.05, help="Integrator timestep (seconds)")
     so.add_argument("--slowmo", type=float, default=1.0, help="Slow-motion multiplier for realtime sleep (requires --realtime)")
     so.add_argument("--site", type=str, default=None, help="Site profile slug (loads site_profiles/<site>.json via EDGESIM_SITE)")
+    so.add_argument("--debug-visuals", action="store_true", help="Draw debug overlays for aisles/paths (GUI only)")
     so.set_defaults(func=cmd_run_one)
 
     sv = sub.add_parser("verify", help="Verify reproducibility digests for a finished batch")

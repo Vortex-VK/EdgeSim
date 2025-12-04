@@ -515,6 +515,8 @@ def _apply_path_defined_aisles(prompt: str | None,
 		_add_path(path_pts, _BASE_PATH_AISLE_WIDTH, "robot", high_bay=False)
 
 	for veh in hazards.get("vehicles", []):
+		if veh.get("raw_coords"):
+			continue  # honor raw coordinate paths; do not infer aisles
 		path = _clamped_points(veh.get("path") or [])
 		if len(path) < 2:
 			continue
@@ -1025,10 +1027,11 @@ def run_one(
 					delay_max = delay_min
 				hid = spawn_human(radius=profile["radius"], length=profile["length"])
 				state_behaviors = set(profile["behaviors"])
+				max_speed = max(profile["speed"]) if isinstance(profile.get("speed"), (list, tuple)) else 0.0
 				state = {
 					"id": hid,
 					"cfg": dict(cfg),
-					"phase": "stationary" if "stationary" in state_behaviors else "idle",
+					"phase": "stationary" if ("stationary" in state_behaviors and max_speed <= 0.0) else "idle",
 					"behaviors": state_behaviors,
 					"path": member_path,
 					"segments": member_segments,
@@ -1102,7 +1105,7 @@ def run_one(
 				"height": float(vmeta.get("base_z", half_ext[2])),
 				"reflective": bool(vmeta.get("reflective")),
 				"reversing_bias": bool(vmeta.get("reversing_bias", False)),
-				"reversing_mode": bool(vmeta.get("reversing_bias", False)),
+				"reversing_mode": bool(vmeta.get("reversing_mode", False)),
 				"reverse_duty": float(vmeta.get("reverse_duty", 0.6)),
 				"reverse_period": float(vmeta.get("reverse_period_s", 6.0)),
 				"next_reverse_switch": float(rng.uniform(1.5, 3.5)),
@@ -1114,6 +1117,10 @@ def run_one(
 			body_id = state["body_id"]
 			if state["rear_occlusion_deg"] <= 0.0 and state["reversing_bias"]:
 				state["rear_occlusion_deg"] = 70.0
+			heading = float(vmeta.get("yaw", 0.0))
+			if segments:
+				first_dir = segments[0]["dir"]
+				heading = math.atan2(first_dir[1], first_dir[0])
 			if path_pts:
 				sx, sy = path_pts[0]
 			else:
@@ -1128,20 +1135,15 @@ def run_one(
 			robot_block = (start[0] - radius - 0.3, start[1] - radius - 0.3, start[0] + radius + 0.3, start[1] + radius + 0.3)
 			if not vmeta.get("raw_coords"):
 				sx, sy = _resolve_spawn_point(sx, sy, collision_radius, (Lx, Ly), border, static_aabbs + [robot_block])
-				if segments:
-					first_dir = segments[0]["dir"]
-					heading = math.atan2(first_dir[1], first_dir[0])
-				else:
-					heading = float(vmeta.get("yaw", 0.0))
-				state["last_pose"] = (sx, sy, heading)
-				state["aabb"] = _vehicle_aabb(state, sx, sy)
-				if body_id is not None:
-					try:
-						p.resetBasePositionAndOrientation(body_id, [sx, sy, state.get("height", 0.4)],
-						                                  p.getQuaternionFromEuler([0.0, 0.0, heading]))
-					except Exception:
-						pass
-				vehicle_states.append(state)
+			state["last_pose"] = (sx, sy, heading)
+			state["aabb"] = _vehicle_aabb(state, sx, sy)
+			if body_id is not None:
+				try:
+					p.resetBasePositionAndOrientation(body_id, [sx, sy, state.get("height", 0.4)],
+					                                  p.getQuaternionFromEuler([0.0, 0.0, heading]))
+				except Exception:
+					pass
+			vehicle_states.append(state)
 
 		floor_event_states: List[Dict[str, Any]] = []
 		for evt in hazards.get("floor_events", []):
@@ -2045,6 +2047,4 @@ def run_one(
 			pass
 
 
-
-# Some improvements are present, but more are needed.
-# I need to go through all the key words one by one and ensure they work well and the code respects the global design rules.
+# fixes needed: forklift movements, pallet jacks

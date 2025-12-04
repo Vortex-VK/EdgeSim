@@ -11,7 +11,7 @@ KEYWORDS = {
     "traction":   ["wet", "slippery", "spill", "spillage", "oil"],
     "visibility": ["night", "dim", "dark", "low light", "reflective"],
     "human":      ["human", "picker", "worker", "pedestrian", "crossing"],
-    "traffic":    ["high pallet traffic", "rush", "busy", "heavy traffic"],
+    "traffic":    ["high pallet traffic", "rush", "heavy traffic"],
     "overhang":   ["overhang", "irregular load"],
 
     # Existing special intents
@@ -43,7 +43,7 @@ KEYWORDS = {
     "transition": ["doorway", "fire door", "sliding door", "threshold bump", "loading dock", "dock plate"],
 
     # Geometry / occlusion
-    "high_shelf": ["high shelf", "high-bay", "high bay", "high rack", "high-shelf occlusion"],
+    "high_shelf": ["high shelf", "high-bay", "high bay", "high rack", "high-shelf occlusion", "tall rack", "tall racks", "tall shelf"],
 
     # Human posture/types
     "worker_carry": ["carrying box", "carrying tote", "carrying bin", "worker carrying"],
@@ -85,17 +85,19 @@ _NUM_RE = r"-?\d+(?:\.\d+)?"
 _SEG_RE = rf"(?P<x0>{_NUM_RE})\s*,\s*(?P<y0>{_NUM_RE})\s*(?:to|->|-)\s*(?P<x1>{_NUM_RE})\s*,\s*(?P<y1>{_NUM_RE})"
 _PT_RE = rf"(?P<x>{_NUM_RE})\s*,\s*(?P<y>{_NUM_RE})"
 
-_AISLE_SEG_RE = re.compile(rf"(?P<label>main\s+aisle|aisle)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
+_PASSAGE_LABEL_RE = r"(?P<label>(?:main\s+)?(?:aisle|corridor|crosswalk|lane|passage))"
+_PASSAGE_SEG_RE = re.compile(rf"{_PASSAGE_LABEL_RE}[^\n]*?(?:from|between)\s+{_SEG_RE}", re.IGNORECASE)
 _HUMAN_SEG_RE = re.compile(
-    rf"(?:human(?:\s+crossing)?|pedestrian)[^\n]*?(?:from|starting at|start at)\s+"
+    rf"(?:human(?:\s+crossing)?|pedestrian|worker|person|staff)[^\n]*?(?:from|starting at|start at)\s+"
     rf"(?P<x0>{_NUM_RE})\s*,\s*(?P<y0>{_NUM_RE})"
     rf"(?:[^\n]*?(?:to|->|-)\s*(?P<x1>{_NUM_RE})\s*,\s*(?P<y1>{_NUM_RE}))?",
     re.IGNORECASE,
 )
-_VEHICLE_SEG_RE = re.compile(rf"(forklift|vehicle|cart|tugger)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
+_VEHICLE_SEG_RE = re.compile(rf"(forklift|vehicle|cart|tugger|pallet jack)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
 _PATCH_SEG_RE = re.compile(rf"(wet\s+patch|spill|oil|traction)[^\n]*?(?:from|covering|zone)\s+{_SEG_RE}", re.IGNORECASE)
-_STATIC_PT_RE = re.compile(rf"(pallet|obstacle|cart block|column)[^\n]*?(?:at|center(?:ed)? at)\s+{_PT_RE}", re.IGNORECASE)
-_WALL_SEG_RE = re.compile(rf"(wall|barrier)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
+_STATIC_PT_RE = re.compile(rf"(pallet|obstacle|cart block|cart|column|cone)[^\n]*?(?:at|center(?:ed)? at)\s+{_PT_RE}", re.IGNORECASE)
+_WALL_SEG_RE = re.compile(rf"(?P<wlabel>high wall|tall wall|wall|barrier)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
+_RACK_SEG_RE = re.compile(rf"(rack|high rack|high shelf|high-bay|high bay)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
 
 _MAIN_AISLE_TERMS = [
     "main aisle",
@@ -117,12 +119,10 @@ def _is_main_aisle_lr_prompt(text: str) -> bool:
     return has_main and has_lr
 
 def _is_t_intersection_prompt(text: str) -> bool:
-    text_l = text.lower()
-    return any(term in text_l for term in _T_INTERSECTION_TERMS)
+    return False  # disabled: require coordinates/templates for T cases
 
 def _wants_parallel_aisles(text: str) -> bool:
-    text_l = text.lower()
-    return any(term in text_l for term in _PARALLEL_AISLE_TERMS)
+    return False  # parallel aisle presets disabled; use explicit coordinates instead
 
 def _is_no_human(text: str) -> bool:
     text_l = text.lower()
@@ -137,12 +137,20 @@ def _is_single_straight_prompt(text: str) -> bool:
     return ("single straight aisle" in text_l) or ("one aisle" in text_l)
 
 def _is_parallel_pass_prompt(text: str) -> bool:
+    return False  # disabled; require explicit coordinates for parallel aisles
+
+def _mentions_crossing(text: str) -> bool:
     text_l = text.lower()
-    return ("parallel warehouse aisles" in text_l) or ("parallel aisles" in text_l and "worker" in text_l)
+    if any(term in text_l for term in _HUMAN_MODE_TERMS["move_across"]):
+        return True
+    return ("crosswalk" in text_l) or ("crossing" in text_l) or ("cross aisle" in text_l) or ("across" in text_l)
+
+def _wants_crosswalk_geom(text: str) -> bool:
+    text_l = text.lower()
+    return ("crosswalk" in text_l) or ("cross aisle" in text_l) or ("cross-aisle" in text_l) or ("hidden crosswalk" in text_l)
 
 def _is_narrow_cross_prompt(text: str) -> bool:
-    text_l = text.lower()
-    return ("narrow aisle" in text_l and "crossing" in text_l)
+    return False  # disabled; require explicit coordinates
 
 def _is_wide_main_prompt(text: str) -> bool:
     text_l = text.lower()
@@ -200,21 +208,33 @@ def _shrink_rect_width(rect: List[float], scale: float = 0.7, min_span: float = 
         w_new = max(min_span, w * scale)
         return [cx - 0.5 * w_new, y0, cx + 0.5 * w_new, y1]
 
-def _apply_narrowing(layout: Dict[str, Any], scale: float = 0.65) -> None:
+def _apply_narrowing(layout: Dict[str, Any], scale: float = 0.65,
+                     aisle_indices: List[int] | None = None, include_junctions: bool = False) -> None:
+    """Scale aisle widths in-place. If aisle_indices is None, apply to all aisles."""
     if layout.get("_raw_coord_aisles"):
         return
     aisles = layout.get("aisles") or []
-    for aisle in aisles:
+    bounds = tuple(map(float, layout.get("map_size_m", [20.0, 20.0])))
+    if aisle_indices is None:
+        target_idxs = list(range(len(aisles)))
+    else:
+        target_idxs = [i for i in aisle_indices if 0 <= i < len(aisles)]
+    for idx in target_idxs:
+        aisle = aisles[idx]
         rect = aisle.get("rect")
         if not rect or len(rect) != 4:
             continue
-        aisle["rect"] = _shrink_rect_width(list(map(float, rect)), scale=scale)
-    junctions = layout.get("junctions") or []
-    for junc in junctions:
-        rect = junc.get("rect") or junc.get("zone")
-        if not rect or len(rect) != 4:
-            continue
-        junc["rect"] = _shrink_rect_width(list(map(float, rect)), scale=scale)
+        new_rect = _shrink_rect_width(list(map(float, rect)), scale=scale)
+        aisle["rect"] = _clamp_rect(new_rect, bounds)
+        width_axis = abs(aisle["rect"][3] - aisle["rect"][1]) if abs(aisle["rect"][2] - aisle["rect"][0]) >= abs(aisle["rect"][3] - aisle["rect"][1]) else abs(aisle["rect"][2] - aisle["rect"][0])
+        aisle["width_hint_m"] = float(width_axis)
+    if include_junctions:
+        junctions = layout.get("junctions") or []
+        for junc in junctions:
+            rect = junc.get("rect") or junc.get("zone")
+            if not rect or len(rect) != 4:
+                continue
+            junc["rect"] = _shrink_rect_width(list(map(float, rect)), scale=scale)
 
 def _split_rect(rect: List[float], cut: List[float], min_span: float = 0.05) -> List[List[float]]:
     rx0, ry0, rx1, ry1 = rect
@@ -876,10 +896,69 @@ def _ensure_start_goal_open(layout: Dict[str, Any], bounds: tuple[float, float])
         if isinstance(pt, (list, tuple)) and len(pt) == 2:
             layout[key] = _adjust([float(pt[0]), float(pt[1])])
 
+def _retreat_goal_from_transitions(layout: Dict[str, Any], margin_extra: float = 0.5) -> None:
+    """Pull goal back from transition/doorway zones along the primary aisle."""
+    ref = _primary_aisle_ref(layout)
+    if not ref:
+        return
+    goal = layout.get("goal")
+    if not (isinstance(goal, (list, tuple)) and len(goal) == 2):
+        return
+    tzs = layout.get("transition_zones") or []
+    if not tzs:
+        return
+    gx, gy = float(goal[0]), float(goal[1])
+    width = max(0.6, float(ref.get("width", 1.0)))
+    margin = max(0.8, width * 0.5 + margin_extra)
+    for tz in tzs:
+        zone = tz.get("zone")
+        if not zone or len(zone) != 4:
+            continue
+        x0, y0, x1, y1 = map(float, zone)
+        if ref["horizontal"]:
+            if not (y0 <= ref["center"][1] <= y1):
+                continue
+            if gx > x0 - margin:
+                gx = max(ref["rect"][0] + margin, min(x0 - margin, ref["rect"][2] - margin))
+        else:
+            if not (x0 <= ref["center"][0] <= x1):
+                continue
+            if gy > y0 - margin:
+                gy = max(ref["rect"][1] + margin, min(y0 - margin, ref["rect"][3] - margin))
+    layout["goal"] = [gx, gy]
+
+def _normalize_high_racks(layout: Dict[str, Any], min_height: float = 5.0) -> None:
+    """Ensure only one rack type when high racks are requested; unify to high_bay with taller height and dedupe."""
+    geom = layout.get("geometry", {}) or {}
+    racks = geom.get("racking")
+    if not isinstance(racks, list):
+        return
+    new_racks: List[Dict[str, Any]] = []
+    seen: List[tuple[float, float, float, float]] = []
+    for rack in racks:
+        if not isinstance(rack, dict):
+            continue
+        nr = dict(rack)
+        nr["type"] = "high_bay"
+        nr["reflective"] = True
+        nr["height_m"] = max(min_height, float(nr.get("height_m", min_height)))
+        aabb = nr.get("aabb")
+        if isinstance(aabb, (list, tuple)) and len(aabb) == 4:
+            key = tuple(round(float(v), 3) for v in aabb)
+            if key in seen:
+                continue
+            seen.append(key)
+        new_racks.append(nr)
+    geom["racking"] = new_racks
+
 def _align_start_goal_to_rect(rect: List[float], bounds: tuple[float, float],
-                              segment: tuple[tuple[float, float], tuple[float, float]] | None = None) -> tuple[List[float], List[float]]:
+                              segment: tuple[tuple[float, float], tuple[float, float]] | None = None,
+                              preserve_endpoints: bool = False) -> tuple[List[float], List[float]]:
     x0, y0, x1, y1 = map(float, rect)
     cx, cy = _rect_center(rect)
+    if preserve_endpoints and segment:
+        (sx, sy), (ex, ey) = segment
+        return _clamp_xy((sx, sy), bounds), _clamp_xy((ex, ey), bounds)
     if segment:
         (sx, sy), (ex, ey) = segment
     else:
@@ -887,7 +966,7 @@ def _align_start_goal_to_rect(rect: List[float], bounds: tuple[float, float],
     horizontal = abs(ex - sx) >= abs(ey - sy)
     span = abs(ex - sx) if horizontal else abs(ey - sy)
     span = max(span, abs(x1 - x0) if horizontal else abs(y1 - y0), 0.5)
-    inset = min(1.2, max(0.6, 0.2 * span))
+    inset = 0.35 if segment else min(1.2, max(0.6, 0.2 * span))
     if horizontal:
         left = min(sx, ex, x0, x1)
         right = max(sx, ex, x0, x1)
@@ -923,7 +1002,7 @@ def _collect_prompt_coords(prompt: str) -> tuple[float, float]:
         else:
             max_y = max(max_y, val)
 
-    for rg in (_AISLE_SEG_RE, _HUMAN_SEG_RE, _VEHICLE_SEG_RE, _PATCH_SEG_RE):
+    for rg in (_PASSAGE_SEG_RE, _HUMAN_SEG_RE, _VEHICLE_SEG_RE, _PATCH_SEG_RE, _RACK_SEG_RE):
         for m in rg.finditer(prompt):
             for key in ("x0", "x1", "y0", "y1"):
                 if key in m.groupdict() and m.group(key):
@@ -945,7 +1024,8 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
         Ly = max(Ly, max_prompt_y + 1.0)
         layout["map_size_m"] = [Lx, Ly]
     bounds = (float(Lx), float(Ly))
-    flags = {"aisle": False, "human": False, "vehicle": False, "traction": False, "static": False, "cart_block": False, "wall": False}
+    flags = {"aisle": False, "human": False, "vehicle": False, "traction": False, "static": False, "cart_block": False, "wall": False, "rack": False}
+    rack_entries: List[Dict[str, Any]] = []
 
     aisles: List[Dict[str, Any]] = []
     vehicle_entries: List[Dict[str, Any]] = []
@@ -953,26 +1033,53 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
     aisle_segments: List[tuple[tuple[float, float], tuple[float, float]]] = []
     wall_entries: List[Dict[str, Any]] = []
 
-    for m in _AISLE_SEG_RE.finditer(prompt):
+    for m in _PASSAGE_SEG_RE.finditer(prompt):
         snip = (m.group(0) or "").lower()
         if ("wall from" in snip or "barrier from" in snip) and ("with wall" not in snip and "with walls" not in snip):
             continue
+        label = (m.group("label") or "aisle").strip()
+        label_l = label.lower()
         x0 = float(m.group("x0")); y0 = float(m.group("y0"))
         x1 = float(m.group("x1")); y1 = float(m.group("y1"))
         start = tuple(_clamp_xy((x0, y0), bounds))
         end = tuple(_clamp_xy((x1, y1), bounds))
-        width = 1.4 if "main" in m.group("label").lower() else 1.2
+        width = 1.4 if "main" in label_l else 1.2
+        if "narrow" in snip:
+            width = min(width, 1.0)
+        aisle_type = "cross" if "crosswalk" in label_l else "straight"
         rect = _clamp_rect(_axis_aligned_rect_from_centerline(start, end, width), bounds)
         aisle_segments.append((start, end))
         aisles.append({
             "id": f"A_coord_{len(aisles)+1:02d}",
-            "name": m.group("label").strip().replace(" ", "_"),
+            "name": label.replace(" ", "_"),
             "rect": rect,
-            "type": "straight",
+            "type": aisle_type,
             "racking": False,
             "pad": [0.05, 0.05, 0.05, 0.05],
         })
     if aisles:
+        # If only cross aisles were provided, synthesize a simple through-aisle so crossings have something to span.
+        straight_idxs = [i for i, a in enumerate(aisles) if a.get("type") != "cross"]
+        if not straight_idxs and aisles and aisles[0].get("rect"):
+            rect = list(map(float, aisles[0]["rect"]))
+            horizontal = abs(rect[2] - rect[0]) >= abs(rect[3] - rect[1])
+            cx, cy = _rect_center(rect)
+            width_main = 1.2
+            if horizontal:
+                main_rect = _axis_aligned_rect_from_centerline((cx, 1.0), (cx, bounds[1] - 1.0), width_main)
+            else:
+                main_rect = _axis_aligned_rect_from_centerline((1.0, cy), (bounds[0] - 1.0, cy), width_main)
+            # keep a matching segment for alignment
+            aisle_segments.append(((main_rect[0], 0.5 * (main_rect[1] + main_rect[3])), (main_rect[2], 0.5 * (main_rect[1] + main_rect[3]))) if abs(main_rect[2] - main_rect[0]) >= abs(main_rect[3] - main_rect[1]) else ((0.5 * (main_rect[0] + main_rect[2]), main_rect[1]), (0.5 * (main_rect[0] + main_rect[2]), main_rect[3])))
+            aisles.append({
+                "id": "A_auto_main_from_cross",
+                "name": "main_from_cross",
+                "rect": _clamp_rect(main_rect, bounds),
+                "type": "straight",
+                "racking": False,
+                "pad": [0.05, 0.05, 0.05, 0.05],
+            })
+            straight_idxs.append(len(aisles) - 1)
         layout["aisles"] = aisles
         layout["lock_aisles"] = True
         layout["_raw_coord_aisles"] = True
@@ -983,10 +1090,14 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
         geom = layout.setdefault("geometry", {})
         for key in ("racking", "endcaps", "open_storage", "blind_corners"):
             geom[key] = []
-        # Align start/goal to the first user-provided aisle using its centerline
-        first_rect = aisles[0]["rect"]
-        seg = aisle_segments[0] if aisle_segments else None
-        layout["start"], layout["goal"] = _align_start_goal_to_rect(first_rect, bounds, seg)
+        # Align start/goal to the first straight aisle if available, otherwise the first aisle.
+        align_idx = straight_idxs[0] if straight_idxs else 0
+        first_rect = aisles[align_idx]["rect"]
+        seg = aisle_segments[align_idx] if align_idx < len(aisle_segments) else None
+        # avoid preserving crosswalk endpoints when aligning to synthesized main
+        if aisles[align_idx].get("type") == "cross":
+            seg = None
+        layout["start"], layout["goal"] = _align_start_goal_to_rect(first_rect, bounds, seg, preserve_endpoints=bool(seg))
 
     for m in _HUMAN_SEG_RE.finditer(prompt):
         x0 = float(m.group("x0")); y0 = float(m.group("y0"))
@@ -1072,18 +1183,41 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
         flags["static"] = True
 
     for m in _WALL_SEG_RE.finditer(prompt):
+        label = (m.group("wlabel") or "wall").lower()
         x0 = float(m.group("x0")); y0 = float(m.group("y0"))
         x1 = float(m.group("x1")); y1 = float(m.group("y1"))
         rect = _clamp_rect(_axis_aligned_rect_from_centerline(_clamp_xy((x0, y0), bounds), _clamp_xy((x1, y1), bounds), 0.3), bounds)
+        height = 2.2
+        if "high" in label or "tall" in label:
+            height = 3.6
         wall_entries.append({
             "id": f"Wall_{len(wall_entries)+1:02d}",
             "aabb": rect,
-            "height_m": 2.2,
+            "height_m": height,
         })
 
     if wall_entries:
         layout.setdefault("walls", []).extend(wall_entries)
         flags["wall"] = True
+
+    for m in _RACK_SEG_RE.finditer(prompt):
+        label = (m.group(1) or "").lower()
+        x0 = float(m.group("x0")); y0 = float(m.group("y0"))
+        x1 = float(m.group("x1")); y1 = float(m.group("y1"))
+        rect = _clamp_rect(_axis_aligned_rect_from_centerline(_clamp_xy((x0, y0), bounds), _clamp_xy((x1, y1), bounds), 0.9), bounds)
+        r_type = "high_bay" if "high" in label else "rack"
+        height = 5.0 if "high" in label else 3.0
+        rack_entries.append({
+            "id": f"Rack_{len(rack_entries)+1:02d}",
+            "aabb": rect,
+            "height_m": height,
+            "type": r_type,
+            "reflective": True if r_type == "high_bay" else False,
+        })
+
+    if rack_entries:
+        layout.setdefault("geometry", {}).setdefault("racking", []).extend(rack_entries)
+        flags["rack"] = True
 
     _ensure_map_bounds(layout, hazards)
     _ensure_start_goal_open(layout, tuple(layout["map_size_m"]))
@@ -1189,7 +1323,7 @@ def _waypoints_for_human_mode(mode: str, layout: Dict[str, Any]) -> List[List[fl
         cx, cy = _clamp_xy((0.5 * Lx, 0.5 * Ly), bounds)
         return [[cx, cy], [cx, cy]]
 
-    def _perp_anchor() -> float | None:
+    def _perp_anchor() -> tuple[float | None, List[float] | None]:
         # Prefer a perpendicular aisle/crosswalk when present to keep human crossings centered on geometry.
         aisles = layout.get("aisles") or []
         for aisle in aisles:
@@ -1201,17 +1335,18 @@ def _waypoints_for_human_mode(mode: str, layout: Dict[str, Any]) -> List[List[fl
             if a_horizontal == ref["horizontal"]:
                 continue
             cx_p, cy_p = _rect_center(rect_f)
-            return cx_p if ref["horizontal"] else cy_p
+            anchor_val = cx_p if ref["horizontal"] else cy_p
+            return anchor_val, rect_f
         # fall back to geometry hints when no perpendicular aisle is present
         geom = layout.get("geometry", {}) or {}
         keys = ("main_cross_x", "branch_lane_x", "forklift_aisle_lane_x", "blind_corner_lane_x") if ref["horizontal"] else ("main_cross_y", "branch_lane_y", "forklift_aisle_lane_y")
         for k in keys:
             if k in geom and geom[k] is not None:
                 try:
-                    return float(geom[k])
+                    return float(geom[k]), None
                 except Exception:
                     continue
-        return None
+        return None, None
 
     x0, y0, x1, y1 = ref["rect"]
     cx, cy = ref["center"]
@@ -1241,11 +1376,13 @@ def _waypoints_for_human_mode(mode: str, layout: Dict[str, Any]) -> List[List[fl
         robot_dir = None
     # Keep humans away from walls so spawn clearance checks succeed.
     margin = max(0.15, min(width * 0.5 - 0.05, max(0.4, width * 0.45)))
-    anchor_hint = _perp_anchor()
+    anchor_hint, cross_rect = _perp_anchor()
     if ref["horizontal"]:
         anchor_major = cx
         if anchor_hint is not None:
             anchor_major = max(x0 + margin, min(x1 - margin, anchor_hint))
+        if cross_rect:
+            anchor_major = max(cross_rect[0] + 0.15, min(cross_rect[2] - 0.15, anchor_major))
         elif robot_start and robot_goal:
             anchor_major = max(x0 + 0.4, min(x1 - 0.4, robot_start[0] + 0.35 * (robot_goal[0] - robot_start[0])))
         near_side = min(y1 - margin, max(y0 + margin, cy - 0.3))
@@ -1261,7 +1398,7 @@ def _waypoints_for_human_mode(mode: str, layout: Dict[str, Any]) -> List[List[fl
             dir_vec = robot_dir if robot_dir else (1.0, 0.0)
             if robot_len is None:
                 robot_len = abs(x1 - x0)
-            offset = min(1.5, 0.2 * robot_len)
+            offset = min(0.6, 0.08 * robot_len)
             half_span = max(0.5, 0.5 * robot_len - offset)
             mid = (anchor_major, center_line)
             start_pt = (mid[0] - dir_vec[0] * half_span, mid[1] - dir_vec[1] * half_span)
@@ -1273,14 +1410,27 @@ def _waypoints_for_human_mode(mode: str, layout: Dict[str, Any]) -> List[List[fl
             robot_len = abs(x1 - x0)
         perp = (-dir_vec[1], dir_vec[0])
         mid = (anchor_major, center_line)
-        span = robot_len
-        start_pt = (mid[0] - perp[0] * 0.5 * span, mid[1] - perp[1] * 0.5 * span)
-        end_pt = (mid[0] + perp[0] * 0.5 * span, mid[1] + perp[1] * 0.5 * span)
+        if cross_rect:
+            span_cross = max(0.2, float(cross_rect[3] - cross_rect[1]))
+            clear = max(0.08, min(0.25, 0.06 * span_cross))
+            start_pt = (mid[0], max(cross_rect[1] + clear, cross_rect[1]))
+            end_pt = (mid[0], min(cross_rect[3] - clear, cross_rect[3]))
+            span_actual = end_pt[1] - start_pt[1]
+            if span_actual < 0.8:
+                span = max(0.8, robot_len)
+                start_pt = (mid[0], mid[1] - 0.5 * span)
+                end_pt = (mid[0], mid[1] + 0.5 * span)
+        else:
+            span = robot_len
+            start_pt = (mid[0] - perp[0] * 0.5 * span, mid[1] - perp[1] * 0.5 * span)
+            end_pt = (mid[0] + perp[0] * 0.5 * span, mid[1] + perp[1] * 0.5 * span)
         return [_clamp_xy(start_pt, bounds), _clamp_xy(end_pt, bounds)]
     else:
         anchor_major = cy
         if anchor_hint is not None:
             anchor_major = max(y0 + margin, min(y1 - margin, anchor_hint))
+        if cross_rect:
+            anchor_major = max(cross_rect[1] + 0.15, min(cross_rect[3] - 0.15, anchor_major))
         elif robot_start and robot_goal:
             anchor_major = max(y0 + 0.4, min(y1 - 0.4, robot_start[1] + 0.35 * (robot_goal[1] - robot_start[1])))
         near_side = min(x1 - margin, max(x0 + margin, cx - 0.3))
@@ -1295,7 +1445,7 @@ def _waypoints_for_human_mode(mode: str, layout: Dict[str, Any]) -> List[List[fl
             dir_vec = robot_dir if robot_dir else (0.0, 1.0)
             if robot_len is None:
                 robot_len = abs(y1 - y0)
-            offset = min(1.5, 0.2 * robot_len)
+            offset = min(0.6, 0.08 * robot_len)
             half_span = max(0.5, 0.5 * robot_len - offset)
             mid = (center_line, anchor_major)
             start_pt = (mid[0] - dir_vec[0] * half_span, mid[1] - dir_vec[1] * half_span)
@@ -1306,9 +1456,20 @@ def _waypoints_for_human_mode(mode: str, layout: Dict[str, Any]) -> List[List[fl
             robot_len = abs(y1 - y0)
         perp = (-dir_vec[1], dir_vec[0])
         mid = (center_line, anchor_major)
-        span = robot_len
-        start_pt = (mid[0] - perp[0] * 0.5 * span, mid[1] - perp[1] * 0.5 * span)
-        end_pt = (mid[0] + perp[0] * 0.5 * span, mid[1] + perp[1] * 0.5 * span)
+        if cross_rect:
+            span_cross = max(0.2, float(cross_rect[2] - cross_rect[0]))
+            clear = max(0.08, min(0.25, 0.06 * span_cross))
+            start_pt = (max(cross_rect[0] + clear, cross_rect[0]), mid[1])
+            end_pt = (min(cross_rect[2] - clear, cross_rect[2]), mid[1])
+            span_actual = end_pt[0] - start_pt[0]
+            if span_actual < 0.8:
+                span = max(0.8, robot_len)
+                start_pt = (mid[0] - 0.5 * span, mid[1])
+                end_pt = (mid[0] + 0.5 * span, mid[1])
+        else:
+            span = robot_len
+            start_pt = (mid[0] - perp[0] * 0.5 * span, mid[1] - perp[1] * 0.5 * span)
+            end_pt = (mid[0] + perp[0] * 0.5 * span, mid[1] + perp[1] * 0.5 * span)
         return [_clamp_xy(start_pt, bounds), _clamp_xy(end_pt, bounds)]
 
 def _apply_human_motion_intent(scn: Dict[str, Any], prompt: str, rate_hint: float | None = None) -> None:
@@ -1369,8 +1530,8 @@ def _ensure_base_layout(scn: Dict[str, Any]) -> None:
 	if aisles:
 		return
 	layout.setdefault("map_size_m", [20.0, 20.0])
-	# Simple straight aisle centered vertically
-	aisle_rect = [3.0, 8.0, 17.0, 12.0]
+	# Simple straight aisle centered vertically, moderate width
+	aisle_rect = [3.0, 9.4, 17.0, 10.6]
 	aisles.append({"id": "Aisle_Default", "rect": aisle_rect, "type": "straight", "racking": False})
 	layout["aisles"] = aisles
 	layout.setdefault("start", [4.0, 10.0])
@@ -1402,6 +1563,152 @@ def _ensure_default_human_paths(scn: Dict[str, Any]) -> None:
 		end_y = (Ly - border) if start_y <= border + 1e-3 else border
 		cfg["waypoints"] = [[cross_x, start_y], [cross_x, end_y]]
 		cfg["path"] = "waypoints"
+
+def _assemble_passages_from_intent(scn: Dict[str, Any], intent: Dict[str, Any]) -> None:
+    layout = scn.setdefault("layout", {})
+    if layout.get("aisles"):
+        return
+    map_size = layout.get("map_size_m", [20.0, 20.0])
+    try:
+        Lx, Ly = float(map_size[0]), float(map_size[1])
+    except Exception:
+        Lx, Ly = 20.0, 20.0
+    wants_any_passage = (
+        intent.get("wants_long_main_passage")
+        or intent.get("wants_parallel_passages")
+        or intent.get("wants_passage_generic")
+        or intent.get("mentions_forklift")
+        or intent.get("mentions_humans")
+        or intent.get("traffic_heavy")
+    )
+    if not wants_any_passage:
+        _ensure_base_layout(scn)
+        return
+    aisles = layout.setdefault("aisles", [])
+    width = 1.0 if intent.get("wants_narrow_passage") else 1.2
+    start_margin = max(0.6, 0.08 * Lx)
+    end_margin = max(0.6, 0.08 * Lx)
+    x0 = start_margin
+    x1 = max(x0 + 4.0, Lx - end_margin)
+    if intent.get("wants_parallel_passages"):
+        gap = max(2.5, 0.18 * Ly)
+        mid = 0.5 * Ly
+        centers = [max(width, mid - 0.5 * gap), min(Ly - width, mid + 0.5 * gap)]
+        for idx, cy in enumerate(centers):
+            rect = _axis_aligned_rect_from_centerline((x0, cy), (x1, cy), width)
+            aisles.append({"id": f"A_auto_{idx+1:02d}", "name": f"aisle_{idx+1}", "rect": rect, "type": "straight", "racking": False})
+    else:
+        cy = 0.5 * Ly
+        if intent.get("wants_long_main_passage"):
+            x0 = max(0.6, 0.05 * Lx)
+            x1 = max(x0 + 6.0, Lx - 0.6)
+        rect = _axis_aligned_rect_from_centerline((x0, cy), (x1, cy), width)
+        aisles.append({"id": "A_auto_main", "name": "aisle_main", "rect": rect, "type": "straight", "racking": False})
+    layout["aisles"] = aisles
+    layout["lock_aisles"] = True
+    layout["auto_aisles_from_paths"] = False
+    layout["paths_define_aisles"] = False
+    bounds = (float(Lx), float(Ly))
+    layout["start"], layout["goal"] = _align_start_goal_to_rect(aisles[0]["rect"], bounds)
+
+def _decorate_passages(scn: Dict[str, Any], intent: Dict[str, Any], prompt: str = "") -> None:
+    layout = scn.setdefault("layout", {})
+    if layout.get("_raw_coord_aisles"):
+        return
+    aisles = layout.get("aisles") or []
+    if not aisles:
+        return
+    map_size = layout.get("map_size_m", [20.0, 20.0])
+    try:
+        Lx, Ly = float(map_size[0]), float(map_size[1])
+    except Exception:
+        Lx, Ly = 20.0, 20.0
+    geom = layout.setdefault("geometry", {})
+    if intent.get("endcap_rack"):
+        rect = aisles[0].get("rect")
+        if rect and len(rect) == 4:
+            x0, y0, x1, y1 = map(float, rect)
+            horizontal = abs(x1 - x0) >= abs(y1 - y0)
+            endcaps = geom.setdefault("endcaps", [])
+            if horizontal:
+                endcaps.append({"id": f"Endcap_{len(endcaps)+1:02d}", "aabb": _clamp_rect([x0 - 0.4, y0, x0 + 0.4, y1], (Lx, Ly)), "height_m": 2.4})
+                endcaps.append({"id": f"Endcap_{len(endcaps)+1:02d}", "aabb": _clamp_rect([x1 - 0.4, y0, x1 + 0.4, y1], (Lx, Ly)), "height_m": 2.4})
+            else:
+                endcaps.append({"id": f"Endcap_{len(endcaps)+1:02d}", "aabb": _clamp_rect([x0, y0 - 0.4, x1, y0 + 0.4], (Lx, Ly)), "height_m": 2.4})
+                endcaps.append({"id": f"Endcap_{len(endcaps)+1:02d}", "aabb": _clamp_rect([x0, y1 - 0.4, x1, y1 + 0.4], (Lx, Ly)), "height_m": 2.4})
+    wall_color = (0.55, 0.35, 0.2, 1.0) if intent.get("wants_between_racks") else None
+    narrow_already = bool(layout.get("narrow_aisle_hint") or layout.get("narrow_cross_case"))
+    if intent.get("wants_walls"):
+        for idx, aisle in enumerate(aisles):
+            rect = aisle.get("rect")
+            if not rect or len(rect) != 4:
+                continue
+            if _has_any(prompt, KEYWORDS["narrow"]) and not narrow_already:
+                x0, y0, x1, y1 = map(float, rect)
+                horizontal = abs(x1 - x0) >= abs(y1 - y0)
+                if horizontal:
+                    cy = 0.5 * (y0 + y1)
+                    rect = [x0, cy - 0.5, x1, cy + 0.5]
+                else:
+                    cx = 0.5 * (x0 + x1)
+                    rect = [cx - 0.5, y0, cx + 0.5, y1]
+                aisle["rect"] = rect
+            _add_walls_for_aisle(layout, list(map(float, rect)), aisle.get("id") or f"Aisle_{idx:02d}", color=wall_color)
+
+def _add_blind_corner_occluder(layout: Dict[str, Any]) -> tuple[str, float] | None:
+    aisles = layout.get("aisles") or []
+    if not aisles:
+        return None
+    rect = aisles[0].get("rect")
+    if not rect or len(rect) != 4:
+        return None
+    Lx, Ly = map(float, layout.get("map_size_m", [20.0, 20.0]))
+    geom = layout.setdefault("geometry", {})
+    endcaps = geom.setdefault("endcaps", [])
+    horizontal = abs(rect[2] - rect[0]) >= abs(rect[3] - rect[1])
+    pad = 0.4
+    if horizontal:
+        occl = _clamp_rect([rect[0] - pad, rect[3], rect[0] + 0.8, rect[3] + 1.2], (Lx, Ly))
+        lane_val = float(rect[0] + 0.8)
+        geom["blind_corner_lane_x"] = lane_val
+    else:
+        occl = _clamp_rect([rect[2], rect[1] - pad, rect[2] + 1.2, rect[1] + 0.8], (Lx, Ly))
+        lane_val = float(rect[1] + 0.8)
+        geom["blind_corner_lane_y"] = lane_val
+    endcaps.append({"id": f"BlindCornerCap_{len(endcaps)+1:02d}", "aabb": occl, "height_m": 2.4})
+    return ("x" if horizontal else "y", lane_val)
+
+def _add_high_racks_from_primary(layout: Dict[str, Any], height: float = 5.0,
+                                 gap_m: float = 0.2, depth_m: float = 0.95,
+                                 rid_prefix: str = "HighRack") -> bool:
+    aisles = layout.get("aisles") or []
+    if not aisles:
+        return False
+    rect = aisles[0].get("rect")
+    if not rect or len(rect) != 4:
+        return False
+    Lx, Ly = map(float, layout.get("map_size_m", [20.0, 20.0]))
+    rack_cfg = {"gap_m": gap_m, "depth_m": depth_m, "height_m": height, "type": "high_bay", "reflective": True}
+    _add_racking_bands_from_aisle(layout.setdefault("geometry", {}), list(map(float, rect)), rack_cfg, (Lx, Ly), rid_prefix)
+    return True
+
+def _anchor_point_from_layout(layout: Dict[str, Any]) -> tuple[float, float]:
+    map_size = layout.get("map_size_m", [20.0, 20.0])
+    try:
+        Lx, Ly = float(map_size[0]), float(map_size[1])
+    except Exception:
+        Lx, Ly = 20.0, 20.0
+    aisles = layout.get("aisles") or []
+    for aisle in aisles:
+        rect = aisle.get("rect")
+        if rect and len(rect) == 4:
+            return _rect_center(list(map(float, rect)))
+    junctions = layout.get("junctions") or []
+    for junc in junctions:
+        rect = junc.get("rect") or junc.get("zone")
+        if rect and len(rect) == 4:
+            return _rect_center(list(map(float, rect)))
+    return (0.5 * Lx, 0.5 * Ly)
 
 def _append_unique(lst: List[Any], val: Any) -> None:
     if val not in lst:
@@ -1447,6 +1754,53 @@ def parse_numbers(text: str) -> Dict[str, float]:
         out["human_rate_per_min"] = float(m.group("rpm"))
 
     return out
+
+def _detect_coord_mentions(prompt: str) -> Dict[str, bool]:
+    return {
+        "aisle": bool(_PASSAGE_SEG_RE.search(prompt)),
+        "human": bool(_HUMAN_SEG_RE.search(prompt)),
+        "vehicle": bool(_VEHICLE_SEG_RE.search(prompt)),
+        "traction": bool(_PATCH_SEG_RE.search(prompt)),
+        "static": bool(_STATIC_PT_RE.search(prompt)),
+        "wall": bool(_WALL_SEG_RE.search(prompt)),
+        "rack": bool(_RACK_SEG_RE.search(prompt)),
+    }
+
+def _extract_intent(prompt: str, coord_flags: Dict[str, bool] | None = None) -> Dict[str, Any]:
+    text_l = prompt.lower()
+    coord = coord_flags or _detect_coord_mentions(prompt)
+    wants_passage_terms = any(term in text_l for term in ("aisle", "aisles", "corridor", "crosswalk", "lane", "passage"))
+    intent = {
+        "wants_long_main_passage": _is_main_aisle_lr_prompt(prompt) or "long corridor" in text_l or "long aisle" in text_l,
+        "wants_narrow_passage": _has_any(text_l, KEYWORDS["narrow"]),
+        "wants_parallel_passages": _wants_parallel_aisles(prompt) or _is_parallel_pass_prompt(text_l),
+        "has_coordinate_passages": coord.get("aisle", False),
+        "mentions_humans": _has_any(text_l, KEYWORDS["human"]) or coord.get("human", False),
+        "busy_crossing": _has_any(text_l, KEYWORDS["busy_crossing"]),
+        "distracted_worker": _has_any(text_l, KEYWORDS["distracted"]),
+        "mentions_crossing": _mentions_crossing(text_l),
+        "no_humans_global": _is_no_human(text_l),
+        "mentions_forklift": _has_any(text_l, KEYWORDS["forklift"]) or coord.get("vehicle", False),
+        "mentions_pallet_jack": _has_any(text_l, KEYWORDS["pallet_jack"]),
+        "traffic_heavy": _has_any(text_l, KEYWORDS["traffic"]) or _has_any(text_l, KEYWORDS["congestion"]) or _has_any(text_l, KEYWORDS["busy_aisle"]),
+        "no_vehicles_global": _is_no_vehicle(text_l),
+        "forklift_reverse": _has_any(text_l, KEYWORDS["forklift_reverse"]),
+        "slippery_surface": _has_any(text_l, KEYWORDS["traction"]),
+        "cleaning_in_progress": _has_any(text_l, KEYWORDS["cleaning"]),
+        "blind_corner": _has_any(text_l, KEYWORDS["blind_corner"]),
+        "high_racks": (_has_any(text_l, KEYWORDS["high_shelf"]) or _wants_between_racks(text_l)) and not coord.get("rack", False),
+        "endcap_rack": "endcap" in text_l,
+        "low_visibility": _has_any(text_l, KEYWORDS["visibility"]),
+        "reflective_clothing": _has_any(text_l, KEYWORDS["reflective"]),
+        "dark_clothing": _has_any(text_l, KEYWORDS["dark_clothing"]),
+        "sensor_fault": _has_any(text_l, KEYWORDS["sensor_fault"]),
+        "degraded_mode": _has_any(text_l, KEYWORDS["degraded_mode"]),
+        "falling_object": _has_any(text_l, KEYWORDS["falling"]),
+        "wants_walls": _wants_walled_aisles(text_l),
+        "wants_between_racks": _wants_between_racks(text_l),
+        "wants_passage_generic": wants_passage_terms,
+    }
+    return intent
 
 def _add_crosswalk_lane(layout: Dict[str, Any], prefer_axis: float | None = None) -> Dict[str, Any] | None:
     aisles = layout.get("aisles") or []
@@ -1598,30 +1952,22 @@ def _apply_wide_main_layout(scn: Dict[str, Any]) -> None:
     haz["human"] = []
     haz["vehicles"] = []
 
-def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
+def prompt_to_scenario_legacy(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
     scn = new_scenario(n_runs)
     text = prompt.lower()
     nums = parse_numbers(prompt)
     # Disable heavy templates (main LR, T) per request; treat prompts generically instead.
     t_case = False
     main_lr_case = False
-    simple_aisle_case = _is_simple_forklift_aisle_prompt(text)
-    parallel_aisle_case = _wants_parallel_aisles(text) and not simple_aisle_case
+    simple_aisle_case = False
+    parallel_aisle_case = False
     single_straight_case = _is_single_straight_prompt(text)
     parallel_pass_case = _is_parallel_pass_prompt(text)
-    narrow_cross_case = _is_narrow_cross_prompt(text)
+    narrow_cross_case = False
     wide_main_case = _is_wide_main_prompt(text)
     overhang_flag = False
     if single_straight_case:
         _apply_single_straight_layout(scn)
-    elif simple_aisle_case and not single_straight_case:
-        _apply_simple_forklift_aisle_layout(scn)
-    elif parallel_aisle_case and not single_straight_case:
-        _apply_parallel_aisles_layout(scn)
-    elif parallel_pass_case:
-        _apply_parallel_pass_layout(scn)
-    elif narrow_cross_case:
-        _apply_narrow_cross_layout(scn)
     elif wide_main_case:
         _apply_wide_main_layout(scn)
     _ensure_base_layout(scn)
@@ -1629,6 +1975,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
     # honor explicit exclusions
     if _is_no_human(text):
         scn.setdefault("hazards", {})["human"] = []
+        scn.setdefault("taxonomy", {})["no_humans"] = True
     if _is_no_vehicle(text):
         scn.setdefault("hazards", {})["vehicles"] = []
     if ("aisle" in text and "no aisle" not in text and "without aisle" not in text and
@@ -1639,9 +1986,10 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
     def _so_root() -> Dict[str, Any]:
         return scn.setdefault("site_overrides", {})
 
-    # Add walls flanking aisles only when explicitly requested
-    wants_walls = _wants_walled_aisles(text) or _wants_between_racks(text)
-    wall_color = (0.55, 0.35, 0.2, 1.0) if _wants_between_racks(text) else None
+    # Add walls flanking aisles only when explicitly requested (not just "between racks")
+    wants_walls = _wants_walled_aisles(text)
+    wants_between = _wants_between_racks(text)
+    wall_color = (0.55, 0.35, 0.2, 1.0) if wants_walls else None
     if wants_walls:
         # If no aisles are defined yet and the user just asked for a walled/between-racks aisle, build a minimal straight aisle to hang the walls on.
         layout_obj = scn.get("layout", {})
@@ -1664,6 +2012,10 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
                     cx = 0.5 * (x0 + x1)
                     aisle["rect"] = [cx - 0.5, y0, cx + 0.5, y1]
             _add_walls_for_aisle(layout_obj, list(map(float, rect)), aisle.get("id") or f"Aisle_{idx:02d}", color=wall_color)
+    else:
+        # If high racks/ between racks were requested but walls were not, ensure no stray walls remain.
+        if _has_any(text, KEYWORDS["high_shelf"]) or wants_between:
+            scn.get("layout", {}).pop("walls", None)
 
     # --- Visibility ---
     if _has_any(text, KEYWORDS["visibility"]):
@@ -1761,7 +2113,8 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 
     # --- Human crossing (generic, single stream) ---
     if (_has_any(text, KEYWORDS["human"]) and not scn["layout"].get("main_lr_case")
-        and not scn["layout"].get("t_case") and not coord_flags.get("human") and not _has_any(text, KEYWORDS["blind_corner"])):
+        and not scn["layout"].get("t_case") and not coord_flags.get("human")
+        and not _has_any(text, KEYWORDS["blind_corner"]) and not _is_no_human(text)):
         rate = nums.get("human_rate_per_min", 2.0)  # every 30s default
         cfg = _ensure_human_entry(scn, len(scn["hazards"]["human"]))
         cfg.update({
@@ -1776,7 +2129,8 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
         cfg.setdefault("interaction_modes", ["mutual_yield", "human_yield", "robot_yield", "close_pass"])
         cfg.setdefault("visibility_awareness", "normal")
         layout_obj = scn.get("layout", {})
-        if (not layout_obj.get("_raw_coord_aisles") and not cfg.get("raw_coords")
+        wants_crosswalk_geom = _wants_crosswalk_geom(text)
+        if (wants_crosswalk_geom and not layout_obj.get("_raw_coord_aisles") and not cfg.get("raw_coords")
             and not layout_obj.get("prevent_auto_crosswalk", False)):
             aisles = layout_obj.get("aisles") or []
             if len(aisles) == 1 and aisles[0].get("rect"):
@@ -1786,97 +2140,11 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
         scn["taxonomy"]["human_behavior"] = True
 
     # --- Traffic / congestion keywords imply multi-actor environments ---
-    if (_has_any(text, KEYWORDS["traffic"]) or
+    if ((_has_any(text, KEYWORDS["traffic"]) or
         _has_any(text, KEYWORDS["busy_aisle"]) or
-        _has_any(text, KEYWORDS["congestion"])):
+        _has_any(text, KEYWORDS["congestion"])) and not scn.setdefault("hazards", {}).get("vehicles")):
         scn["taxonomy"]["multi_actor"] = True
-        layout_obj = scn.get("layout", {})
-        # Avoid auto-populating "busy aisle" so users can script their own congestion without overlap.
-        if _has_any(text, KEYWORDS["busy_aisle"]):
-            pass  # no auto actors; still mark multi_actor
-        elif layout_obj.get("main_lr_case") and not coord_flags.get("vehicle"):
-            if layout_obj.get("main_lr_case") and not coord_flags.get("vehicle"):
-                vehicles = scn.setdefault("hazards", {}).setdefault("vehicles", [])
-                # Two forklifts with pallets, opposing directions along the main aisle
-                if not any(v.get("id") == "Forklift_Main_East" for v in vehicles):
-                    vehicles.append({
-                    "id": "Forklift_Main_East",
-                    "type": "forklift",
-                    "path": [[4.0, 9.1], [16.0, 9.1]],
-                    "speed_mps": 0.85,
-                    "warning_lights": True,
-                    "reversing_bias": False,
-                    "reflective": True,
-                    "ping_pong": True,
-                    "carrying_pallet": True,
-                })
-            if not any(v.get("id") == "Forklift_Main_West" for v in vehicles):
-                vehicles.append({
-                    "id": "Forklift_Main_West",
-                    "type": "forklift",
-                    "path": [[16.5, 8.9], [3.5, 8.9]],
-                    "speed_mps": 0.85,
-                    "warning_lights": True,
-                    "reversing_bias": False,
-                    "reflective": True,
-                    "ping_pong": True,
-                    "carrying_pallet": True,
-                })
-            static_obs = _layout_list(scn, "static_obstacles")
-            if not any(o.get("id") == "PalletStack_Congest_01" for o in static_obs):
-                static_obs.append({"id": "PalletStack_Congest_01", "type": "standing_pallet", "aabb": [8.0, 5.2, 9.0, 6.2], "height": 1.2})
-            if not any(o.get("id") == "PalletStack_Congest_02" for o in static_obs):
-                static_obs.append({"id": "PalletStack_Congest_02", "type": "standing_pallet", "aabb": [12.0, 11.0, 13.0, 12.0], "height": 1.2})
-        elif scn.get("layout", {}).get("simple_forklift_aisle"):
-            # Dedicated forklift aisle already has a forklift; avoid duplicating vehicles from congestion keywords.
-            pass
-        else:
-            map_size = layout_obj.get("map_size_m", [20.0, 20.0])
-            Lx = float(map_size[0]) if isinstance(map_size, (list, tuple)) else 20.0
-            Ly = float(map_size[1]) if isinstance(map_size, (list, tuple)) else 20.0
-            y_mid = max(1.5, min(Ly - 1.5, Ly * 0.55))
-            x_mid = max(1.5, min(Lx - 1.5, Lx * 0.45))
-            aisles = layout_obj.get("aisles") or []
-            if aisles and isinstance(aisles[0].get("rect"), (list, tuple)) and len(aisles[0]["rect"]) == 4:
-                rect = list(map(float, aisles[0]["rect"]))
-                horizontal = abs(rect[2] - rect[0]) >= abs(rect[3] - rect[1])
-                if horizontal:
-                    y_mid = 0.5 * (rect[1] + rect[3])
-                    x_mid = max(1.5, min(Lx - 1.5, 0.5 * (rect[0] + rect[2])))
-                else:
-                    x_mid = 0.5 * (rect[0] + rect[2])
-                    y_mid = max(1.5, min(Ly - 1.5, 0.5 * (rect[1] + rect[3])))
-            start = layout_obj.get("start", [2.0, 10.0])
-            goal = layout_obj.get("goal", [18.0, 10.0])
-            if isinstance(start, (list, tuple)) and len(start) == 2:
-                if abs(y_mid - float(start[1])) < 0.8:
-                    y_mid = min(Ly - 1.0, max(1.0, y_mid + 1.4))
-                if abs(x_mid - float(start[0])) < 0.8:
-                    x_mid = min(Lx - 1.0, max(1.0, x_mid + 1.4))
-            veh_speed = 0.85
-            if _has_any(text, KEYWORDS["congestion"]):
-                veh_speed = 0.6
-            _ensure_vehicle(scn, {
-                "id": f"Forklift_Traffic_{len(scn.setdefault('hazards', {}).setdefault('vehicles', []))+1:02d}",
-                "type": "forklift",
-                "path": [[1.5, y_mid], [Lx - 1.5, y_mid]],
-                "speed_mps": veh_speed,
-                "ping_pong": True,
-                "carrying_pallet": True,
-                "warning_lights": True,
-            })
-            _ensure_vehicle(scn, {
-                "id": f"PalletJack_Traffic_{len(scn['hazards']['vehicles'])+1:02d}",
-                "type": "pallet_jack",
-                "path": [[x_mid, 1.5], [x_mid, Ly - 1.5]],
-                "speed_mps": 0.75 if veh_speed < 0.7 else 0.9,
-                "ping_pong": True,
-            })
-            static_obs = _layout_list(scn, "static_obstacles")
-            if not any(o.get("id") == "TrafficPallet_01" for o in static_obs):
-                static_obs.append({"id": "TrafficPallet_01", "type": "standing_pallet", "aabb": [max(0.5, x_mid - 0.6), max(0.5, y_mid - 2.0), x_mid + 0.4, y_mid - 1.2], "height": 1.2})
-            if _has_any(text, KEYWORDS["busy_aisle"]):
-                pass
+        # Do not auto-spawn vehicle fleets; leave vehicles empty unless explicitly specified.
 
     # --- Overhangs / irregular loads increase occlusion pressure ---
     if _has_any(text, KEYWORDS["overhang"]):
@@ -1915,7 +2183,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
         scn["layout"]["narrow_aisle_hint"] = True  # advisory flag for world builder
         # note: taxonomy doesn't have "narrow" in schema, but dict is open
         scn["taxonomy"]["narrow"] = True  # type: ignore[index]
-        _apply_narrowing(scn["layout"], scale=0.65)
+        _apply_narrowing(scn["layout"], scale=0.65, aisle_indices=[0])
         # add racking flanking the primary aisle when "between racks" is implied
         if _wants_between_racks(text):
             layout_obj = scn.get("layout", {})
@@ -1973,7 +2241,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
         # more likely to slip when distracted
         h.setdefault("slip_prob", 0.95)
 
-    if _has_any(text, KEYWORDS["worker_carry"]):
+    if _has_any(text, KEYWORDS["worker_carry"]) and not _is_no_human(text):
         cfg = _ensure_human_entry(scn, 0)
         _add_behavior_tag(cfg, "carry_payload")
         cfg["carried_mass_kg"] = 12.0
@@ -1982,7 +2250,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
         _append_unique(cfg.setdefault("motion_patterns", []), "reduced_visibility")
         scn["taxonomy"]["human_behavior"] = True
 
-    if _has_any(text, KEYWORDS["fast_walker"]):
+    if _has_any(text, KEYWORDS["fast_walker"]) and not _is_no_human(text):
         cfg = _ensure_human_entry(scn, 0)
         cfg["speed_mps"] = [1.6, 2.2]
         _add_behavior_tag(cfg, "fast_walk")
@@ -1996,7 +2264,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
             cfg["loop"] = False
         scn["taxonomy"]["human_behavior"] = True
 
-    if _has_any(text, KEYWORDS["child_actor"]):
+    if _has_any(text, KEYWORDS["child_actor"]) and not _is_no_human(text):
         if not coord_flags.get("human"):
             scn.setdefault("hazards", {})["human"] = []
         cfg = _ensure_human_entry(scn, len(scn["hazards"]["human"]))
@@ -2017,7 +2285,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
             cfg["loop"] = False
 
     # --- Busy crossing / groups / platoons ---
-    if _has_any(text, KEYWORDS["busy_crossing"]):
+    if _has_any(text, KEYWORDS["busy_crossing"]) and not _is_no_human(text):
         scn["taxonomy"]["human_behavior"] = True
         scn["taxonomy"]["multi_actor"] = True
         if not scn.setdefault("hazards", {}).get("human"):
@@ -2043,15 +2311,6 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
         blk = so_inj.setdefault("lidar_blackout", {})
         blk.setdefault("p", 0.60)
     if _has_any(text, KEYWORDS["high_shelf"]):
-        racks = _geom_list(scn, "racking")
-        racks.append({
-            "id": f"HighShelf_{len(racks)+1:02d}",
-            "aabb": [13.0, 4.0, 15.0, 12.5],
-            "levels": 4,
-            "height_m": 6.0,
-            "type": "high_bay",
-            "occlusion": {"reflectivity": 0.8, "lidar_shadow_deg": 90},
-        })
         scn["taxonomy"]["occlusion"] = True
 
     # --- Forklift-related chaos (load overhangs, drops) ---
@@ -2060,6 +2319,8 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
         not scn["layout"].get("t_case") and
         not scn["layout"].get("simple_forklift_aisle") and
         not coord_flags.get("vehicle") and
+        not _is_no_vehicle(text) and
+        not scn.setdefault("hazards", {}).get("vehicles") and
         not _has_any(text, KEYWORDS["forklift_reverse"]) and
         not overhang_flag):
         scn["taxonomy"]["multi_actor"] = True
@@ -2107,13 +2368,23 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
             f_default["reversing_bias"] = False
         _ensure_vehicle(scn, f_default)
 
-    if _has_any(text, KEYWORDS["forklift_reverse"]) and not coord_flags.get("vehicle"):
+    if (_has_any(text, KEYWORDS["forklift_reverse"]) and not coord_flags.get("vehicle")
+        and not scn.setdefault("hazards", {}).get("vehicles") and not _is_no_vehicle(text)):
+        ref = _primary_aisle_ref(scn.get("layout", {}))
+        path_rev = [[6.0, 4.0], [14.0, 4.0]]
+        if ref:
+            inset = 0.6
+            if ref["horizontal"]:
+                path_rev = [[ref["rect"][0] + inset, ref["center"][1]], [ref["rect"][2] - inset, ref["center"][1]]]
+            else:
+                path_rev = [[ref["center"][0], ref["rect"][1] + inset], [ref["center"][0], ref["rect"][3] - inset]]
         _ensure_vehicle(scn, {
             "id": f"ForkliftRev_{len(scn.setdefault('hazards', {}).setdefault('vehicles', []))+1:02d}",
             "type": "forklift",
-            "path": [[6.0, 4.0], [14.0, 4.0]],
+            "path": path_rev,
             "speed_mps": 0.75,
             "reversing_mode": True,
+            "raw_coords": True,
         })
         for veh in scn["hazards"].setdefault("vehicles", []):
             if veh.get("type") != "forklift":
@@ -2125,7 +2396,8 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
         scn["taxonomy"]["multi_actor"] = True
 
     # --- Pallet jack / hand-cart => denser clutter & more nonhuman contacts ---
-    if _has_any(text, KEYWORDS["pallet_jack"]) and not coord_flags.get("vehicle"):
+    if (_has_any(text, KEYWORDS["pallet_jack"]) and not coord_flags.get("vehicle")
+        and not scn.setdefault("hazards", {}).get("vehicles") and not _is_no_vehicle(text)):
         scn["taxonomy"]["multi_actor"] = True
         _ensure_vehicle(scn, {
             "id": f"PalletJack_{len(scn.setdefault('hazards', {}).setdefault('vehicles', []))+1:02d}",
@@ -2254,7 +2526,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
 
     # Re-apply narrowing after any template aisles were created
     if scn.get("layout", {}).get("narrow_aisle_hint"):
-        _apply_narrowing(scn["layout"], scale=0.65)
+        _apply_narrowing(scn["layout"], scale=0.65, aisle_indices=[0])
 
     _align_vehicle_paths(scn)
 
@@ -2315,11 +2587,488 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
     if layout.get("walls"):
         _carve_wall_gaps(layout, pad=0.08)
         geom = layout.setdefault("geometry", {})
-        if not _wants_between_racks(text):
+        if not _wants_between_racks(text) and not _has_any(text, KEYWORDS["high_shelf"]) and not coord_flags.get("rack", False):
             geom["racking"] = []  # walls handle occlusion; drop stray rack bands that look like purple walls
+    if intent.get("high_racks"):
+        _normalize_high_racks(layout)
 
     _ensure_map_bounds(layout, scn.get("hazards", {}))
+    _retreat_goal_from_transitions(layout)
     _ensure_start_goal_open(layout, tuple(layout["map_size_m"]))
+    return scn
+
+
+# --- New object-first parser entrypoint ---
+def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
+    scn = new_scenario(n_runs)
+    text = prompt.lower()
+    nums = parse_numbers(prompt)
+    coord_detect = _detect_coord_mentions(prompt)
+    intent = _extract_intent(prompt, coord_detect)
+
+    coord_flags = _apply_coordinate_overrides(scn, prompt, nums)
+    for k, v in coord_flags.items():
+        if v:
+            coord_detect[k] = True
+    intent["has_coordinate_passages"] = intent.get("has_coordinate_passages") or coord_detect.get("aisle", False)
+    if intent.get("no_humans_global"):
+        scn.setdefault("taxonomy", {})["no_humans"] = True
+
+    # Prefer explicit templates for canonical demo phrases when no coordinate aisles are provided.
+    layout_obj = scn.get("layout", {})
+    template_applied = False
+    if not coord_flags.get("aisle"):
+        if _is_single_straight_prompt(text):
+            _apply_single_straight_layout(scn)
+            layout_obj = scn.get("layout", {})
+            layout_obj["single_case"] = True
+            template_applied = True
+        elif _is_wide_main_prompt(text):
+            _apply_wide_main_layout(scn)
+            layout_obj = scn.get("layout", {})
+            layout_obj["wide_main_case"] = True
+            template_applied = True
+
+    if not template_applied and not coord_flags.get("aisle"):
+        _assemble_passages_from_intent(scn, intent)
+    if not template_applied:
+        _decorate_passages(scn, intent, text)
+    blind_lane_hint = None
+    if intent.get("blind_corner"):
+        # Avoid hardcoded blind-corner geometry; leave layout to coordinates/templates.
+        scn["taxonomy"]["occlusion"] = True
+        scn["taxonomy"]["visibility"] = True
+        so_root = scn.setdefault("site_overrides", {})
+        so_inj = so_root.setdefault("injectors", {})
+        blk = so_inj.setdefault("lidar_blackout", {})
+        blk.setdefault("p", 0.60)
+    _ensure_map_bounds(scn["layout"], scn.get("hazards", {}))
+    _retreat_goal_from_transitions(scn["layout"])
+    _ensure_start_goal_open(scn["layout"], tuple(scn["layout"]["map_size_m"]))
+
+    if intent.get("low_visibility"):
+        scn["taxonomy"]["visibility"] = True
+        lid = scn.setdefault("site_overrides", {}).setdefault("lidar", {})
+        lid.setdefault("noise_sigma", 0.03)
+        lid.setdefault("dropout", 0.05)
+        lid.setdefault("latency_ms_max", 70)
+
+    layout_obj = scn.get("layout", {})
+    hazards = scn.setdefault("hazards", {})
+    anchor = _anchor_point_from_layout(layout_obj)
+    primary_rect = None
+    if layout_obj.get("aisles") and layout_obj["aisles"][0].get("rect"):
+        primary_rect = list(map(float, layout_obj["aisles"][0]["rect"]))
+
+    def _patch_from_rect(rect: List[float]) -> tuple[List[float], float]:
+        cx, cy = _rect_center(rect)
+        span_minor = min(abs(rect[2] - rect[0]), abs(rect[3] - rect[1]))
+        half_local = min(1.2, max(0.5, 0.35 * span_minor))
+        return [cx - half_local, cy - half_local, cx + half_local, cy + half_local], half_local
+
+    clean_zone = None
+    if intent.get("cleaning_in_progress"):
+        clean_zone = [max(0.5, anchor[0] - 2.0), max(0.5, anchor[1] - 1.0), anchor[0] + 2.0, anchor[1] + 1.0]
+        if primary_rect:
+            horizontal = abs(primary_rect[2] - primary_rect[0]) >= abs(primary_rect[3] - primary_rect[1])
+            if horizontal:
+                cx = 0.5 * (primary_rect[0] + primary_rect[2])
+                clean_zone = [cx - 2.0, primary_rect[1], cx + 2.0, primary_rect[3]]
+            else:
+                cy = 0.5 * (primary_rect[1] + primary_rect[3])
+                clean_zone = [primary_rect[0], cy - 2.0, primary_rect[2], cy + 2.0]
+        floor_list = _layout_list(scn, "floor_surfaces")
+        floor_list.append({
+            "id": f"cleaning_{len(floor_list)+1:02d}",
+            "type": "cleaning_liquid",
+            "zone": clean_zone,
+            "mu": 0.33,
+            "brake_scale": 1.7,
+            "slip_boost": 0.6,
+            "imu_vibe_g": 0.4,
+        })
+        _add_floor_event(scn, {
+            "type": "cleaning_liquid",
+            "zone": clean_zone,
+            "spawn_time_s": 5.0,
+            "spread_rate_mps": 0.12,
+            "mu": 0.33,
+        })
+        _add_transition_zone(scn, {
+            "type": "threshold_bump",
+            "zone": clean_zone,
+            "threshold_cm": 2.0,
+            "slope_deg": 4.0,
+            "sensor_shadow": False,
+        })
+        scn["taxonomy"]["traction"] = True
+
+    if intent.get("slippery_surface") and not coord_flags.get("traction"):
+        if primary_rect:
+            patch_rect, _ = _patch_from_rect(primary_rect)
+        elif clean_zone:
+            patch_rect = list(clean_zone)
+        else:
+            half = 1.0
+            patch_rect = [anchor[0] - half, anchor[1] - half, anchor[0] + half, anchor[1] + half]
+        patches = hazards.setdefault("traction", [])
+        mu_val = nums.get("mu", 0.45 if not clean_zone else min(0.45, 0.33))
+        patches.append({
+            "id": f"Traction_{len(patches)+1:02d}",
+            "type": "wet",
+            "zone": patch_rect,
+            "mu": float(mu_val),
+        })
+        scn["taxonomy"]["traction"] = True
+
+    wants_generic_humans = intent.get("mentions_humans") or intent.get("busy_crossing") or intent.get("distracted_worker")
+    if wants_generic_humans and not coord_flags.get("human") and not hazards.get("human") and not intent.get("no_humans_global"):
+        rate = nums.get("human_rate_per_min", 2.0)
+        cfg = _ensure_human_entry(scn, len(hazards.get("human", [])))
+        cfg.update({
+            "path": "line",
+            "rate_per_min": float(rate),
+            "speed_mps": [0.9, 1.5],
+        })
+        cfg["start_delay_s"] = 0.0
+        cfg["start_delay_s_min"] = 0.0
+        cfg["start_delay_s_max"] = 0.0
+        cfg.setdefault("motion_patterns", ["linear", "start_stop", "hesitation", "emerge_from_occlusion"])
+        cfg.setdefault("interaction_modes", ["mutual_yield", "human_yield", "robot_yield", "close_pass"])
+        cfg.setdefault("visibility_awareness", "normal")
+        wants_crosswalk_geom = _wants_crosswalk_geom(text)
+        wants_crosswalk = wants_crosswalk_geom or bool(blind_lane_hint)
+        if (wants_crosswalk and not layout_obj.get("_raw_coord_aisles") and not cfg.get("raw_coords")
+            and not layout_obj.get("prevent_auto_crosswalk", False)):
+            cross = _add_crosswalk_lane(layout_obj)
+            if cross:
+                if cross.get("orientation") == "vertical":
+                    cfg["cross_x"] = float(cross["center"][0])
+                else:
+                    cfg["cross_y"] = float(cross["center"][1])
+        if blind_lane_hint:
+            axis, val = blind_lane_hint
+            if axis == "x":
+                cfg["cross_x"] = val
+            else:
+                cfg["cross_y"] = val
+            _append_unique(cfg.setdefault("motion_patterns", []), "emerge_from_occlusion")
+        scn["taxonomy"]["human_behavior"] = True
+
+    wants_vehicle = (intent.get("mentions_forklift") or intent.get("traffic_heavy") or intent.get("mentions_pallet_jack"))
+    if wants_vehicle and not coord_flags.get("vehicle") and not intent.get("no_vehicles_global") and not hazards.get("vehicles"):
+        ref = _primary_aisle_ref(layout_obj)
+        Lx, Ly = map(float, layout_obj.get("map_size_m", [20.0, 20.0]))
+        def _path_along(ref_info: Dict[str, Any] | None) -> List[List[float]]:
+            if ref_info:
+                if ref_info["horizontal"]:
+                    return [[ref_info["rect"][0] + 0.6, ref_info["center"][1]], [ref_info["rect"][2] - 0.6, ref_info["center"][1]]]
+                return [[ref_info["center"][0], ref_info["rect"][1] + 0.6], [ref_info["center"][0], ref_info["rect"][3] - 0.6]]
+            return [[1.5, 0.5 * Ly], [Lx - 1.5, 0.5 * Ly]]
+
+        forklift_path = _path_along(ref)
+        pallet_only = intent.get("mentions_pallet_jack") and not intent.get("mentions_forklift") and not intent.get("traffic_heavy")
+        if not intent.get("forklift_reverse") and not pallet_only:
+            _ensure_vehicle(scn, {
+                "id": f"Forklift_{len(hazards.setdefault('vehicles', []))+1:02d}",
+                "type": "forklift",
+                "path": forklift_path,
+                "speed_mps": 1.0 if intent.get("traffic_heavy") else 1.2,
+                "warning_lights": True,
+                "ping_pong": True,
+            })
+        if intent.get("mentions_pallet_jack") or intent.get("traffic_heavy"):
+            pj_path = _path_along(ref)
+            _ensure_vehicle(scn, {
+                "id": f"PalletJack_{len(hazards.setdefault('vehicles', []))+1:02d}",
+                "type": "pallet_jack",
+                "path": pj_path,
+                "speed_mps": 0.9,
+                "ping_pong": True,
+            })
+        if intent.get("traffic_heavy"):
+            scn["taxonomy"]["multi_actor"] = True
+
+    if _has_any(text, KEYWORDS["overhang"]):
+        scn["taxonomy"]["occlusion"] = True
+        veh_list = scn.setdefault("hazards", {}).setdefault("vehicles", [])
+        if not veh_list and not coord_flags.get("vehicle"):
+            map_size = scn.get("layout", {}).get("map_size_m", [20.0, 20.0])
+            Lx = float(map_size[0]) if isinstance(map_size, (list, tuple)) else 20.0
+            Ly = float(map_size[1]) if isinstance(map_size, (list, tuple)) else 20.0
+            _ensure_vehicle(scn, {
+                "id": "Forklift_Overhang_01",
+                "type": "forklift",
+                "path": [[2.0, 0.5 * Ly], [Lx - 2.0, 0.5 * Ly]],
+                "speed_mps": 0.85,
+                "ping_pong": True,
+                "warning_lights": True,
+                "reversing_bias": False,
+            })
+            veh_list = scn["hazards"]["vehicles"]
+        for veh in veh_list:
+            if veh.get("type") != "forklift" or veh.get("raw_coords"):
+                continue
+            half = list(map(float, veh.get("half_extents", [0.55, 0.45, 0.55])))
+            half[0] = max(0.85, half[0] + 0.25)
+            veh["half_extents"] = half
+            veh["carrying_pallet"] = True
+            veh["reflective"] = True
+            veh.setdefault("load_overhang_m", 0.4)
+            veh.setdefault("rear_occlusion_deg", 80.0)
+
+    if _has_any(text, KEYWORDS["forklift_reverse"]) and not coord_flags.get("vehicle"):
+        ref = _primary_aisle_ref(layout_obj)
+        path_rev = [[6.0, 4.0], [14.0, 4.0]]
+        if ref:
+            inset = 0.6
+            if ref["horizontal"]:
+                path_rev = [[ref["rect"][0] + inset, ref["center"][1]], [ref["rect"][2] - inset, ref["center"][1]]]
+            else:
+                path_rev = [[ref["center"][0], ref["rect"][1] + inset], [ref["center"][0], ref["rect"][3] - inset]]
+        _ensure_vehicle(scn, {
+            "id": f"ForkliftRev_{len(scn.setdefault('hazards', {}).setdefault('vehicles', []))+1:02d}",
+            "type": "forklift",
+            "path": path_rev,
+            "speed_mps": 0.75,
+            "reversing_mode": True,
+        })
+        for veh in scn["hazards"].setdefault("vehicles", []):
+            if veh.get("type") != "forklift":
+                continue
+            veh["reversing_bias"] = True
+            veh["warning_lights"] = True
+            veh["alarm"] = "backup_beeper"
+            veh["rear_occlusion_deg"] = 70.0
+        scn["taxonomy"]["multi_actor"] = True
+
+    if _has_any(text, KEYWORDS["cart_block"]):
+        if coord_flags.get("cart_block"):
+            pass
+        else:
+            aisles = layout_obj.get("aisles") or []
+            aabb = [max(0.5, anchor[0] - 0.6), max(0.5, anchor[1] - 0.6), anchor[0] + 0.6, anchor[1] + 0.6]
+            if aisles and isinstance(aisles[0].get("rect"), (list, tuple)) and len(aisles[0]["rect"]) == 4:
+                rect = list(map(float, aisles[0]["rect"]))
+                horizontal = abs(rect[2] - rect[0]) >= abs(rect[3] - rect[1])
+                if horizontal:
+                    cx = 0.5 * (rect[0] + rect[2])
+                    span = min(1.2, max(0.8, abs(rect[3] - rect[1]) * 0.9))
+                    aabb = [cx - 0.6, anchor[1] - 0.5 * span, cx + 0.6, anchor[1] + 0.5 * span]
+                else:
+                    cy = 0.5 * (rect[1] + rect[3])
+                    span = min(1.2, max(0.8, abs(rect[2] - rect[0]) * 0.9))
+                    aabb = [anchor[0] - 0.5 * span, cy - 0.6, anchor[0] + 0.5 * span, cy + 0.6]
+            _add_static_obstacle(scn, {
+                "type": "cart_block",
+                "shape": "box",
+                "aabb": aabb,
+                "height": 1.2,
+                "occlusion": True,
+            })
+        scn["taxonomy"]["multi_actor"] = True
+
+    if _has_any(text, KEYWORDS["transition"]):
+        zone = [anchor[0] - 0.5, max(0.0, anchor[1] - 1.0), anchor[0] + 0.5, anchor[1] + 0.5]
+        aisles = layout_obj.get("aisles") or []
+        horizontal = True
+        if aisles and isinstance(aisles[0].get("rect"), (list, tuple)) and len(aisles[0]["rect"]) == 4:
+            rect = list(map(float, aisles[0]["rect"]))
+            horizontal = abs(rect[2] - rect[0]) >= abs(rect[3] - rect[1])
+            if horizontal:
+                zone = [rect[2] - 0.8, rect[1], rect[2] + 0.6, rect[3]]
+            else:
+                zone = [rect[0], rect[3] - 0.8, rect[2], rect[3] + 0.6]
+        _add_transition_zone(scn, {
+            "type": "fire_door",
+            "zone": zone,
+            "threshold_cm": 2.0,
+            "slope_deg": 4.0,
+            "sensor_shadow": True,
+        })
+        scn["taxonomy"]["occlusion"] = True
+
+    if intent.get("wants_narrow_passage"):
+        scn["layout"]["narrow_aisle_hint"] = True
+        scn["taxonomy"]["narrow"] = True  # type: ignore[index]
+        _apply_narrowing(scn["layout"], scale=0.65, aisle_indices=[0])
+
+    if intent.get("falling_object"):
+        so_root = scn.setdefault("site_overrides", {})
+        so_inj = so_root.setdefault("injectors", {})
+        f = so_inj.setdefault("falling_object", {})
+        f["p"] = 1.0
+        drop_xy = anchor
+        if primary_rect:
+            cx, cy = _rect_center(primary_rect)
+            horizontal = abs(primary_rect[2] - primary_rect[0]) >= abs(primary_rect[3] - primary_rect[1])
+            offset = min(0.8, max(0.35, 0.25 * (abs(primary_rect[3] - primary_rect[1]) if horizontal else abs(primary_rect[2] - primary_rect[0]))))
+            if horizontal:
+                cy = cy + offset
+            else:
+                cx = cx + offset
+            drop_xy = (cx, cy)
+        map_size = layout_obj.get("map_size_m", [20.0, 20.0])
+        Lx = float(map_size[0]) if isinstance(map_size, (list, tuple)) else 20.0
+        Ly = float(map_size[1]) if isinstance(map_size, (list, tuple)) else 20.0
+        drop_xy = (max(0.8, min(Lx - 0.8, drop_xy[0])), max(0.8, min(Ly - 0.8, drop_xy[1])))
+        f.setdefault("drop_x", drop_xy[0])
+        f.setdefault("drop_y", drop_xy[1])
+        f.setdefault("drop_z", 3.2)
+        f.setdefault("puddle_half", [1.2, 0.7])
+        # Ensure high racks exist for occlusion if none present.
+        geom = layout_obj.setdefault("geometry", {})
+        if not geom.get("racking"):
+            _add_high_racks_from_primary(layout_obj, height=5.0, rid_prefix="HighRackFall")
+
+    if intent.get("distracted_worker"):
+        scn["taxonomy"]["human_behavior"] = True
+        so_root = scn.setdefault("site_overrides", {})
+        h = so_root.setdefault("human", {})
+        h.setdefault("slip_prob", 0.95)
+
+    if _has_any(text, KEYWORDS["worker_carry"]) and not intent.get("no_humans_global"):
+        cfg = _ensure_human_entry(scn, 0)
+        _add_behavior_tag(cfg, "carry_payload")
+        cfg["carried_mass_kg"] = 12.0
+        cfg["speed_mps"] = [0.7, 1.2]
+        cfg["posture"] = "leaning"
+        _append_unique(cfg.setdefault("motion_patterns", []), "reduced_visibility")
+        scn["taxonomy"]["human_behavior"] = True
+
+    if _has_any(text, KEYWORDS["fast_walker"]) and not intent.get("no_humans_global"):
+        cfg = _ensure_human_entry(scn, 0)
+        cfg["speed_mps"] = [1.6, 2.2]
+        _add_behavior_tag(cfg, "fast_walk")
+        _append_unique(cfg.setdefault("motion_patterns", []), "zig_zag")
+        pts_fw = _waypoints_for_human_mode("move_along", scn.get("layout", {}))
+        if pts_fw and len(pts_fw) >= 2:
+            cfg["path"] = "waypoints"
+            cfg["waypoints"] = pts_fw
+            cfg["raw_coords"] = True
+            cfg["loop"] = False
+        scn["taxonomy"]["human_behavior"] = True
+
+    if _has_any(text, KEYWORDS["child_actor"]) and not intent.get("no_humans_global"):
+        if not coord_flags.get("human"):
+            scn.setdefault("hazards", {})["human"] = []
+        cfg = _ensure_human_entry(scn, len(scn["hazards"]["human"]))
+        cfg.update({
+            "path": "line",
+            "rate_per_min": 1.0,
+            "speed_mps": [0.6, 1.0],
+            "height_scale": 0.6,
+            "visibility_awareness": "reduced",
+        })
+        _add_behavior_tag(cfg, "child_height")
+        scn["taxonomy"]["human_behavior"] = True
+        pts_child = _waypoints_for_human_mode("move_across", scn.get("layout", {}))
+        if pts_child and len(pts_child) >= 2:
+            cfg["path"] = "waypoints"
+            cfg["waypoints"] = pts_child
+            cfg["raw_coords"] = True
+            cfg["loop"] = False
+
+    if intent.get("busy_crossing") and not intent.get("no_humans_global"):
+        scn["taxonomy"]["human_behavior"] = True
+        scn["taxonomy"]["multi_actor"] = True
+        if not scn.setdefault("hazards", {}).get("human"):
+            cfg = _ensure_human_entry(scn, 0)
+            cfg.update({
+                "path": "line",
+                "rate_per_min": max(nums.get("human_rate_per_min", 2.0), 3.0),
+                "speed_mps": [0.8, 1.2],
+            })
+        for idx in range(len(scn["hazards"]["human"])):
+            cfg = _ensure_human_entry(scn, idx)
+            cfg["group_size"] = max(3, int(cfg.get("group_size", 4)))
+            cfg["group_size_range"] = [cfg["group_size"], max(cfg["group_size"], 6)]
+            _append_unique(cfg.setdefault("motion_patterns", []), "close_pass")
+            _append_unique(cfg.setdefault("interaction_modes", []), "mutual_yield")
+
+    if _has_any(text, KEYWORDS["high_shelf"]):
+        scn["taxonomy"]["occlusion"] = True
+
+    if intent.get("reflective_clothing"):
+        scn["taxonomy"]["visibility"] = True
+        cfg = _ensure_human_entry(scn, 0)
+        cfg["reflectivity"] = 0.8
+        cfg.setdefault("visibility_awareness", "normal")
+        lid = scn.setdefault("site_overrides", {}).setdefault("lidar", {})
+        lid.setdefault("noise_sigma", 0.01)
+        lid.setdefault("dropout", 0.005)
+
+    if intent.get("dark_clothing"):
+        scn["taxonomy"]["visibility"] = True
+        cfg = _ensure_human_entry(scn, 0)
+        cfg["reflectivity"] = -0.6
+        cfg.setdefault("visibility_awareness", "reduced")
+        lid = scn.setdefault("site_overrides", {}).setdefault("lidar", {})
+        lid.setdefault("noise_sigma", 0.03)
+        lid.setdefault("dropout", 0.08)
+
+    if intent.get("sensor_fault"):
+        scn["taxonomy"]["sensor_fault"] = True
+        lid = scn.setdefault("site_overrides", {}).setdefault("lidar", {})
+        lid.setdefault("noise_sigma", 0.05)
+        lid.setdefault("dropout", 0.15)
+        lid.setdefault("latency_ms_max", 120)
+        so_inj = scn.setdefault("site_overrides", {}).setdefault("injectors", {})
+        blk = so_inj.setdefault("lidar_blackout", {})
+        blk.setdefault("p", 0.60)
+        blk.setdefault("duration_s", 5.0)
+        blk.setdefault("sector_deg", 120.0)
+        so_inj.setdefault("ghost_obstacle", {}).setdefault("spawn_rate_hz", 0.35)
+
+    if intent.get("degraded_mode"):
+        scn["taxonomy"]["sensor_fault"] = True
+        scn["sensors"].setdefault("lidar", {})["hz"] = 5.0
+        lid = scn.setdefault("site_overrides", {}).setdefault("lidar", {})
+        lid.setdefault("latency_ms_max", 150)
+
+    if "duration_s" in nums:
+        scn["runtime"]["duration_s"] = int(nums["duration_s"])
+
+    if hazards.get("vehicles") or len(hazards.get("human") or []) > 1:
+        scn["taxonomy"]["multi_actor"] = True
+
+    _align_vehicle_paths(scn)
+    _ensure_default_human_paths(scn)
+    _apply_human_motion_intent(scn, text, nums.get("human_rate_per_min"))
+
+    if intent.get("no_humans_global"):
+        humans = hazards.get("human", [])
+        keep = [h for h in humans if h.get("raw_coords")]
+        if len(keep) != len(humans):
+            scn.setdefault("_debug", {})["humans_removed_no_humans"] = len(humans) - len(keep)
+        hazards["human"] = keep
+    if intent.get("no_vehicles_global"):
+        vehicles = hazards.get("vehicles", [])
+        keep_v = [v for v in vehicles if v.get("raw_coords")]
+        if len(keep_v) != len(vehicles):
+            scn.setdefault("_debug", {})["vehicles_removed_no_vehicles"] = len(vehicles) - len(keep_v)
+        hazards["vehicles"] = keep_v
+
+    if layout_obj.get("walls"):
+        _carve_wall_gaps(layout_obj, pad=0.08)
+        geom = layout_obj.setdefault("geometry", {})
+        if not intent.get("wants_between_racks") and not intent.get("high_racks") and not coord_flags.get("rack", False):
+            geom["racking"] = []
+
+    _ensure_map_bounds(layout_obj, hazards)
+    _retreat_goal_from_transitions(layout_obj)
+    _ensure_start_goal_open(layout_obj, tuple(layout_obj["map_size_m"]))
+
+    scn.setdefault("_debug", {})["parser_intent"] = {
+        "intent": intent,
+        "coord_flags": coord_detect,
+        "counts": {
+            "aisles": len(layout_obj.get("aisles") or []),
+            "humans": len(hazards.get("human") or []),
+            "vehicles": len(hazards.get("vehicles") or []),
+            "traction": len(hazards.get("traction") or []),
+        },
+    }
     return scn
 
 def _align_vehicle_paths(scn: Dict[str, Any]) -> None:
