@@ -1,0 +1,84 @@
+TODOs for EdgeSim (what’s still missing vs. current baseline)
+============================================================
+
+High-level targets
+- Keep data quality high.
+- Make geometry warehouse-realistic but driven by explicit coordinates/sizes (no hidden presets).
+- Expose a user-friendly interface (CLI first, no “main aisle” magic).
+- Improve explainability (edgesim-report).
+- Add a Waymo-like viewer for recorded data.
+
+1) Logging & ML dataset gaps
+-----------------------------
+- Add a gated full LiDAR logging mode:
+  - Per-run lidar.npz with ranges (and optional XYZ) over time, plus beam angles.
+  - Optionally “event-window only” logging to cap size (slips, near-misses, collisions).
+- Log per-actor trajectories:
+  - actors.csv: t, actor_id, type (human/forklift/cart/object), x, y, yaw, phase; optionally velocities.
+  - Keep human_phase in run_one.csv as a coarse summary.
+- Time/frames discipline:
+  - Ensure run_one.csv timestamps are consistent.
+  - Add frames.json with static transforms (world->base, base->laser, etc.) for sensor alignment.
+- Enrich events in run_one.csv:
+  - Derived flags: near_miss (TTC threshold), occluded_hazard, sensor_fault_* active, hard_brake/near_stop.
+  - Interaction cue column (none/robot_yielding/human_yielding/forced_stop_for_human) derived from scripted actors vs robot motion.
+- Dataset manifest per batch:
+  - dataset_manifest.json with scenario tags, event counts (collisions, slips, near_misses, occluded_hazard), and basic stats (duration, avg speed, min TTC) for stratified splits.
+- Mirror domain-randomization knobs into manifest for filtering:
+  - μ per patch, LiDAR noise/dropout settings, clutter level, behavior preset IDs (already in scenario.yaml; surface in manifest).
+
+2) Data quality checks
+----------------------
+- Tool (tools/check_data_quality.py):
+  - Validate run_one.csv: no NaN/inf, non-negative clearances/TTC, consistent timestamps.
+  - in_wet == 1 only when robot footprint overlaps a traction patch (world.json).
+  - Events align with geometry: collisions when AABBs intersect; slips on low-μ.
+  - Actors never spawn outside map or inside racks/walls (using world.json and actors.csv if present).
+  - Summary report with anomaly counts (text is fine).
+- Basic tests/smoke:
+  - Determinism: same scenario+seed → identical key outputs.
+  - Invariants: no static overlap; robot starts valid.
+  - No hidden presets: prompts without coordinates shouldn’t silently add geometry.
+
+3) Geometry fidelity (atomic, realistic defaults)
+-------------------------------------------------
+- Geometry profiles file for dimensions only (aisle widths, rack depths/heights, pallet footprints, crosswalk widths, buffers, dock door sizes).
+- Use profiles only as defaults; explicit coords/sizes remain authoritative.
+- Improve static geometry options: rack end caps, wall stubs for blind corners, safety zones, dock doors; all as coordinate-defined objects.
+- Extend world.json metadata: id, type, role tags, (x1,y1,x2,y2), height, AABB for each object to aid checks/visuals.
+
+4) User-friendly interface (CLI first)
+--------------------------------------
+- CLI entrypoint:
+  - edgesim new (prompt→scenario + seeds).
+  - edgesim run (single/multi seed; flags for full-lidar logging, headless).
+  - edgesim replay (load run, open viewer or simple GIF).
+  - edgesim report (regen edgesim-report).
+  - Expose knobs: μ ranges, LiDAR noise/dropout, clutter level, behavior presets. No hidden “scenario type” shortcuts.
+- (Optional later) lightweight web UI wrapping the CLI.
+
+5) Explainable reports (edgesim-report)
+---------------------------------------
+- Top-down map from world.json: aisles, racks, walls, traction patches, crosswalks.
+- Overlay robot trajectory and event markers (collisions, slips, near_misses, occluded_hazard).
+- Time-series plots: min_clearance_lidar/geom, min_ttc with event markers.
+- Actors section (if actors.csv): trajectories and phases.
+- Domain-randomization summary: friction profile, LiDAR noise/dropout, behavior preset IDs.
+- Edge-case summary table: event type, timestamp, min_clearance/TTC, short explanation.
+
+6) Waymo-like viewer
+--------------------
+- edgesim_viewer.py (after full LiDAR logging exists):
+  - Inputs: world.json, run_one.csv, actors.csv, lidar.npz (if logged), frames.json.
+  - Reconstruct pose over time; render geometry + robot + LiDAR points (top-down 2D to start).
+  - Playback controls: play/pause, step, slider; color by type or wet/dry.
+  - Optional 3D mode (e.g., Open3D) behind a flag.
+  - Integrate with CLI: edgesim replay <run_dir> --viewer [--follow-robot].
+
+7) Suggested order
+------------------
+- Step 1: Logging/frames + geometry metadata (1 & 3 basics) to support checks.
+- Step 2: Data-quality tool/tests (2).
+- Step 3: Basic 2D viewer (6) to see geometry/log issues quickly.
+- Step 4: Upgrade edgesim-report (5) reusing viewer visuals.
+- Step 5: CLI (4) once pipeline is stable; optional web UI later.
