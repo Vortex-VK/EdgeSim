@@ -95,7 +95,7 @@ _HUMAN_SEG_RE = re.compile(
 )
 _VEHICLE_SEG_RE = re.compile(rf"(forklift|vehicle|cart|tugger|pallet jack)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
 _PATCH_SEG_RE = re.compile(rf"(wet\s+patch|spill|oil|traction)[^\n]*?(?:from|covering|zone)\s+{_SEG_RE}", re.IGNORECASE)
-_STATIC_PT_RE = re.compile(rf"(pallet|obstacle|cart block|cart|column|cone)[^\n]*?(?:at|center(?:ed)? at)\s+{_PT_RE}", re.IGNORECASE)
+_STATIC_PT_RE = re.compile(rf"(pallet|obstacle|box|cart block|cart|column|cone)[^\n]*?(?:at|center(?:ed)? at)\s+{_PT_RE}", re.IGNORECASE)
 _WALL_SEG_RE = re.compile(rf"(?P<wlabel>high wall|tall wall|wall|barrier)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
 _RACK_SEG_RE = re.compile(rf"(rack|high rack|high shelf|high-bay|high bay)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
 
@@ -1033,6 +1033,26 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
     aisle_segments: List[tuple[tuple[float, float], tuple[float, float]]] = []
     wall_entries: List[Dict[str, Any]] = []
 
+    def _extra_segments(span: str) -> List[List[float]]:
+        extras: List[List[float]] = []
+        for em in re.finditer(rf"\band\s+(?P<x0>{_NUM_RE})\s*,\s*(?P<y0>{_NUM_RE})\s*(?:to|->|-)\s*(?P<x1>{_NUM_RE})\s*,\s*(?P<y1>{_NUM_RE})", span, re.IGNORECASE):
+            extras.append([float(em.group("x0")), float(em.group("y0")), float(em.group("x1")), float(em.group("y1"))])
+        return extras
+
+    def _extra_points(span: str) -> List[List[float]]:
+        extras: List[List[float]] = []
+        for em in re.finditer(rf"\band\s+(?P<x>{_NUM_RE})\s*,\s*(?P<y>{_NUM_RE})", span, re.IGNORECASE):
+            extras.append([float(em.group("x")), float(em.group("y"))])
+        return extras
+
+    stop_re = re.compile(r"\b(wall|rack|aisle|cross|crosswalk|junction|human|pedestrian|worker|forklift|pallet|cart|tugger|wet\s+patch|spill|doorway|threshold|box|cone|column)\b", re.IGNORECASE)
+
+    def _tail_until_stop(start_idx: int) -> str:
+        tail = prompt[start_idx:]
+        m = stop_re.search(tail)
+        cut = m.start() if m else len(tail)
+        return tail[:cut]
+
     for m in _PASSAGE_SEG_RE.finditer(prompt):
         snip = (m.group(0) or "").lower()
         if ("wall from" in snip or "barrier from" in snip) and ("with wall" not in snip and "with walls" not in snip):
@@ -1127,18 +1147,35 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
         hazards.setdefault("human", []).append(hcfg)
         flags["human"] = True
 
+    prompt_lower = prompt.lower()
     for m in _VEHICLE_SEG_RE.finditer(prompt):
-        x0 = float(m.group("x0")); y0 = float(m.group("y0"))
-        x1 = float(m.group("x1")); y1 = float(m.group("y1"))
-        path = [_clamp_xy((x0, y0), bounds), _clamp_xy((x1, y1), bounds)]
-        vehicle_entries.append({
-            "id": f"Veh_coord_{len(vehicle_entries)+1:02d}",
-            "type": m.group(1).lower(),
-            "path": path,
-            "speed_mps": 1.0,
-            "ping_pong": True,
-            "raw_coords": True,
-        })
+        text_span = (m.group(0) or "").lower()
+        vtype = (m.group(1) or "").lower()
+        # Avoid mis-parsing "cart blocking ..." followed by unrelated "from ..." (e.g., wet patch)
+        if vtype == "cart" and ("block" in text_span or "blocking" in text_span):
+            continue
+        tail = _tail_until_stop(m.end())
+        seg_list = [[float(m.group("x0")), float(m.group("y0")), float(m.group("x1")), float(m.group("y1"))]]
+        seg_list.extend(_extra_segments(tail))
+        for (x0, y0, x1, y1) in seg_list:
+            path = [_clamp_xy((x0, y0), bounds), _clamp_xy((x1, y1), bounds)]
+            entry: Dict[str, Any] = {
+                "id": f"Veh_coord_{len(vehicle_entries)+1:02d}",
+                "type": vtype,
+                "path": path,
+                "speed_mps": 1.0,
+                "ping_pong": True,
+                "raw_coords": True,
+            }
+            # Respect reversing intent even for raw-coordinate forklifts; look in local window too
+            window = prompt_lower[max(0, m.start() - 12):min(len(prompt_lower), m.end() + 12)]
+            if entry["type"] == "forklift" and ("revers" in text_span or "revers" in window):
+                entry["reversing_mode"] = True
+                entry["reversing_bias"] = True
+                entry["warning_lights"] = True
+                entry["alarm"] = entry.get("alarm") or "backup_beeper"
+                entry["rear_occlusion_deg"] = entry.get("rear_occlusion_deg", 70.0)
+            vehicle_entries.append(entry)
     if vehicle_entries:
         hazards.setdefault("vehicles", []).extend(vehicle_entries)
         flags["vehicle"] = True
@@ -1158,43 +1195,48 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
         flags["traction"] = True
 
     for m in _STATIC_PT_RE.finditer(prompt):
-        x = float(m.group("x")); y = float(m.group("y"))
-        sx, sy = _clamp_xy((x, y), bounds)
-        size = 0.6
-        aabb = _clamp_rect([sx - 0.5 * size, sy - 0.5 * size, sx + 0.5 * size, sy + 0.5 * size], bounds)
         match_type = m.group(1).lower()
-        obs_type = "standing_pallet"
-        obs_extra: Dict[str, Any] = {}
-        if "cart block" in match_type:
-            obs_type = "cart_block"
-            obs_extra = {"occlusion": True}
-            flags["cart_block"] = True
-        elif "column" in match_type:
-            obs_type = "column"
-            obs_extra = {"shape": "cylinder", "radius": 0.2, "height": 2.4}
-        obs_list = layout.setdefault("static_obstacles", [])
-        obs_list.append({
-            "id": f"Static_{len(obs_list)+1:02d}",
-            "type": obs_type,
-            "aabb": aabb,
-            "height": obs_extra.pop("height", 1.0),
-            **obs_extra,
-        })
-        flags["static"] = True
+        tail = _tail_until_stop(m.end())
+        point_list = [[float(m.group("x")), float(m.group("y"))]]
+        point_list.extend(_extra_points(tail))
+        for (x, y) in point_list:
+            sx, sy = _clamp_xy((x, y), bounds)
+            size = 0.6
+            aabb = _clamp_rect([sx - 0.5 * size, sy - 0.5 * size, sx + 0.5 * size, sy + 0.5 * size], bounds)
+            obs_type = "standing_pallet"
+            obs_extra: Dict[str, Any] = {}
+            if "cart block" in match_type:
+                obs_type = "cart_block"
+                obs_extra = {"occlusion": True}
+                flags["cart_block"] = True
+            elif "column" in match_type:
+                obs_type = "column"
+                obs_extra = {"shape": "cylinder", "radius": 0.2, "height": 2.4}
+            obs_list = layout.setdefault("static_obstacles", [])
+            obs_list.append({
+                "id": f"Static_{len(obs_list)+1:02d}",
+                "type": obs_type,
+                "aabb": aabb,
+                "height": obs_extra.pop("height", 1.0),
+                **obs_extra,
+            })
+            flags["static"] = True
 
     for m in _WALL_SEG_RE.finditer(prompt):
         label = (m.group("wlabel") or "wall").lower()
-        x0 = float(m.group("x0")); y0 = float(m.group("y0"))
-        x1 = float(m.group("x1")); y1 = float(m.group("y1"))
-        rect = _clamp_rect(_axis_aligned_rect_from_centerline(_clamp_xy((x0, y0), bounds), _clamp_xy((x1, y1), bounds), 0.3), bounds)
-        height = 2.2
-        if "high" in label or "tall" in label:
-            height = 3.6
-        wall_entries.append({
-            "id": f"Wall_{len(wall_entries)+1:02d}",
-            "aabb": rect,
-            "height_m": height,
-        })
+        tail = _tail_until_stop(m.end())
+        seg_list = [[float(m.group("x0")), float(m.group("y0")), float(m.group("x1")), float(m.group("y1"))]]
+        seg_list.extend(_extra_segments(tail))
+        for (x0, y0, x1, y1) in seg_list:
+            rect = _clamp_rect(_axis_aligned_rect_from_centerline(_clamp_xy((x0, y0), bounds), _clamp_xy((x1, y1), bounds), 0.3), bounds)
+            height = 2.2
+            if "high" in label or "tall" in label:
+                height = 3.6
+            wall_entries.append({
+                "id": f"Wall_{len(wall_entries)+1:02d}",
+                "aabb": rect,
+                "height_m": height,
+            })
 
     if wall_entries:
         layout.setdefault("walls", []).extend(wall_entries)
@@ -1202,18 +1244,20 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
 
     for m in _RACK_SEG_RE.finditer(prompt):
         label = (m.group(1) or "").lower()
-        x0 = float(m.group("x0")); y0 = float(m.group("y0"))
-        x1 = float(m.group("x1")); y1 = float(m.group("y1"))
-        rect = _clamp_rect(_axis_aligned_rect_from_centerline(_clamp_xy((x0, y0), bounds), _clamp_xy((x1, y1), bounds), 0.9), bounds)
-        r_type = "high_bay" if "high" in label else "rack"
-        height = 5.0 if "high" in label else 3.0
-        rack_entries.append({
-            "id": f"Rack_{len(rack_entries)+1:02d}",
-            "aabb": rect,
-            "height_m": height,
-            "type": r_type,
-            "reflective": True if r_type == "high_bay" else False,
-        })
+        tail = _tail_until_stop(m.end())
+        seg_list = [[float(m.group("x0")), float(m.group("y0")), float(m.group("x1")), float(m.group("y1"))]]
+        seg_list.extend(_extra_segments(tail))
+        for (x0, y0, x1, y1) in seg_list:
+            rect = _clamp_rect(_axis_aligned_rect_from_centerline(_clamp_xy((x0, y0), bounds), _clamp_xy((x1, y1), bounds), 0.9), bounds)
+            r_type = "high_bay" if "high" in label else "rack"
+            height = 5.0 if "high" in label else 3.0
+            rack_entries.append({
+                "id": f"Rack_{len(rack_entries)+1:02d}",
+                "aabb": rect,
+                "height_m": height,
+                "type": r_type,
+                "reflective": True if r_type == "high_bay" else False,
+            })
 
     if rack_entries:
         layout.setdefault("geometry", {}).setdefault("racking", []).extend(rack_entries)

@@ -252,8 +252,13 @@ def _human_spawn_ok(start_xy: Tuple[float, float],
 	for other in humans:
 		other_r = float(other.get("radius", human_radius))
 		if other.get("phase") == "running":
-			lx, ly = other.get("last_pose", (-999.0, -999.0))
-			if lx < -100 or ly < -100:
+			last_pose = other.get("last_pose", (-999.0, -999.0))
+			try:
+				lx = float(last_pose[0])
+				ly = float(last_pose[1])
+			except Exception:
+				continue
+			if lx < -100 or ly < -100 or not math.isfinite(lx) or not math.isfinite(ly):
 				continue
 			if math.hypot(sx - lx, sy - ly) < (other_r + human_radius + clear):
 				return False

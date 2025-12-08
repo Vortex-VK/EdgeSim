@@ -1,40 +1,50 @@
 {
   "version": 1,
   "start": [
-    2.0,
-    8.0
+    1.0,
+    8.5
   ],
   "goal": [
-    18.0,
-    8.0
+    19.0,
+    8.5
   ],
   "aabbs": [
     [
       2.0,
-      6.15,
+      11.05,
       18.0,
-      7.05
+      11.95
     ],
     [
-      2.0,
-      8.95,
-      18.0,
-      9.85
+      3.7,
+      6.9,
+      4.3,
+      7.5
     ]
   ],
   "hazards": {
-    "traction": [],
+    "traction": [
+      {
+        "zone": [
+          11.0,
+          6.2,
+          13.0,
+          7.0
+        ],
+        "mu": 0.45
+      }
+    ],
     "human": [
       {
         "path": "waypoints",
         "waypoints": [
           [
             10.0,
-            7.0
+            8.5
           ],
           [
             10.0,
-            9.0
+            5.5
           ]
         ],
         "group_size": 1,
@@ -47,13 +57,51 @@
           "linear"
         ],
         "raw_coords": true,
-        "start_delay_s": 0.5639943904526323,
-        "slip_min_exposure_s": 0.6,
-        "p_slip": 0.05
+        "p_slip": 0.85
+      },
+      {
+        "path": "waypoints",
+        "waypoints": [
+          [
+            13.0,
+            5.5
+          ],
+          [
+            13.0,
+            8.5
+          ]
+        ],
+        "group_size": 1,
+        "rate_per_min": 1.0,
+        "speed_mps": [
+          0.9,
+          1.5
+        ],
+        "motion_patterns": [
+          "linear"
+        ],
+        "raw_coords": true,
+        "p_slip": 0.85
       }
     ],
     "floor_events": [],
-    "vehicles": []
+    "vehicles": [
+      {
+        "id": "Veh_coord_01",
+        "type": "forklift",
+        "path_len": 2
+      },
+      {
+        "id": "Veh_coord_02",
+        "type": "tugger",
+        "path_len": 2
+      },
+      {
+        "id": "Veh_coord_03",
+        "type": "pallet jack",
+        "path_len": 2
+      }
+    ]
   },
   "floor_zones": [
     {
@@ -68,13 +116,35 @@
       "mu": 0.85
     },
     {
+      "id": "Traction_01",
+      "type": "wet",
+      "zone": [
+        11.0,
+        6.2,
+        13.0,
+        7.0
+      ],
+      "mu": 0.45
+    },
+    {
       "id": "A_coord_01",
       "type": "aisle_straight",
       "zone": [
-        1.95,
-        7.25,
-        18.05,
-        8.75
+        0.95,
+        7.75,
+        19.05,
+        9.25
+      ],
+      "mu": 0.88
+    },
+    {
+      "id": "A_coord_02",
+      "type": "aisle_straight",
+      "zone": [
+        0.95,
+        4.85,
+        19.05,
+        6.15
       ],
       "mu": 0.88
     }
@@ -83,38 +153,95 @@
   "static_obstacles": [
     {
       "id": "Rack_01",
-      "type": "high_bay",
+      "type": "rack",
       "aabb": [
         2.0,
-        8.95,
+        11.05,
         18.0,
-        9.85
+        11.95
       ],
-      "height": 5.0
+      "height": 3.0
     },
     {
-      "id": "Rack_02",
-      "type": "high_bay",
+      "id": "Static_01",
+      "type": "standing_pallet",
       "aabb": [
-        2.0,
-        6.15,
-        18.0,
-        7.05
+        3.7,
+        6.9,
+        4.3,
+        7.5
       ],
-      "height": 5.0
+      "height": 1.0
     }
   ],
-  "vehicles": [],
+  "vehicles": [
+    {
+      "id": "Veh_coord_01",
+      "type": "forklift",
+      "path": [
+        [
+          2.5,
+          8.5
+        ],
+        [
+          17.5,
+          8.5
+        ]
+      ],
+      "speed_mps": 1.0
+    },
+    {
+      "id": "Veh_coord_02",
+      "type": "tugger",
+      "path": [
+        [
+          17.5,
+          5.5
+        ],
+        [
+          2.5,
+          5.5
+        ]
+      ],
+      "speed_mps": 1.0
+    },
+    {
+      "id": "Veh_coord_03",
+      "type": "pallet jack",
+      "path": [
+        [
+          6.0,
+          5.5
+        ],
+        [
+          14.0,
+          5.5
+        ]
+      ],
+      "speed_mps": 1.0
+    }
+  ],
   "safety_zones": [],
   "aisles": [
     {
       "id": "A_coord_01",
       "type": "aisle_straight",
       "zone": [
-        1.95,
-        7.25,
-        18.05,
-        8.75
+        0.95,
+        7.75,
+        19.05,
+        9.25
+      ],
+      "mu": 0.88
+    },
+    {
+      "id": "A_coord_02",
+      "type": "aisle_straight",
+      "zone": [
+        0.95,
+        4.85,
+        19.05,
+        6.15
       ],
       "mu": 0.88
     }
@@ -122,23 +249,24 @@
   "environment": {
     "map_size_m": [
       18.0,
-      9.85
+      11.95
     ],
     "floor_summary": {
-      "mu_min": 0.85,
+      "mu_min": 0.45,
       "mu_max": 0.88,
-      "wet_count": 0,
-      "zones": 2
+      "wet_count": 1,
+      "zones": 4
     },
     "layout_summary": {
-      "aisle_count": 1,
+      "aisle_count": 2,
       "junction_count": 0,
-      "rack_area_m2": 0.0,
-      "obstructed_area_m2": 28.8,
+      "rack_area_m2": 14.4,
+      "obstructed_area_m2": 14.76,
       "endcaps": 0,
       "blind_corners": 0,
       "static_obstacles": {
-        "high_bay": 2
+        "rack": 1,
+        "standing_pallet": 1
       }
     }
   }
