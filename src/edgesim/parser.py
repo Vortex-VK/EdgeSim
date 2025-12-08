@@ -1260,7 +1260,20 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
             })
 
     if rack_entries:
-        layout.setdefault("geometry", {}).setdefault("racking", []).extend(rack_entries)
+        # Deduplicate by AABB, keeping the last definition (so lower racks replace stray duplicates)
+        dedup: Dict[tuple[float, float, float, float], Dict[str, Any]] = {}
+        for r in rack_entries:
+            aabb = r.get("aabb")
+            if not aabb or len(aabb) != 4:
+                continue
+            key = tuple(round(float(v), 3) for v in aabb)
+            dedup[key] = dict(r)
+        final_racks: List[Dict[str, Any]] = []
+        for idx, r in enumerate(dedup.values()):
+            r = dict(r)
+            r["id"] = f"Rack_{idx+1:02d}"
+            final_racks.append(r)
+        layout.setdefault("geometry", {}).setdefault("racking", []).extend(final_racks)
         flags["rack"] = True
 
     _ensure_map_bounds(layout, hazards)

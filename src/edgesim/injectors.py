@@ -229,8 +229,11 @@ class FallingObjectInjector(Injector):
             for cp in cps:
                 # Any contact with plane or floor is enough
                 if cp[3] < 0.05:  # contact distance
+                    x, y, z = p.getBasePositionAndOrientation(self.body_id)[0]
+                    # Ignore spurious early contacts while object is still high
+                    if z > max(0.6, 0.15 * self.drop_z):
+                        continue
                     if self.shatter_on_impact and self.spawn_wet_patch_cb is not None:
-                        x, y, z = p.getBasePositionAndOrientation(self.body_id)[0]
                         hx, hy = self.puddle_half
                         x0, y0 = _clip(x - hx, 0.0, s.bounds[0]), _clip(y - hy, 0.0, s.bounds[1])
                         x1, y1 = _clip(x + hx, 0.0, s.bounds[0]), _clip(y + hy, 0.0, s.bounds[1])

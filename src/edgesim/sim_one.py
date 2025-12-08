@@ -2050,6 +2050,3 @@ def run_one(
 			p.disconnect(client_id)
 		except Exception:
 			pass
-
-
-# fixes needed: forklift movements, pallet jacks
