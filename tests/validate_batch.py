@@ -4,7 +4,13 @@ import sys, csv, json, hashlib, os, math
 from pathlib import Path
 from typing import List, Dict, Tuple
 
-EXPECTED_HEADER = ["t","x","y","yaw","v_cmd","w_cmd","min_clearance","event","event_detail","in_wet","human_phase","near_stop"]
+EXPECTED_HEADER = [
+	"t","x","y","yaw","v_cmd","w_cmd",
+	"min_clearance_lidar","min_clearance_geom",
+	"event","event_detail","in_wet","human_phase","near_stop","hard_brake",
+	"near_miss","occluded_hazard","interaction","sensor_faults",
+	"min_ttc","odom_v","odom_w","imu_ax","imu_ay","imu_wz"
+]
 
 def die(msg: str, code: int = 2):
 	print(f"[FAIL] {msg}")
@@ -50,7 +56,7 @@ def check_csv_invariants(csv_path: Path) -> Dict[str, int | float | bool]:
 	# Column indices
 	col = {name:i for i, name in enumerate(hdr)}
 	last_t = -1.0
-	last_min = float("inf")
+	last_min_geom = float("inf")
 	seen_success = False
 	seen_collision_human = False
 	seen_slip = 0
@@ -65,12 +71,12 @@ def check_csv_invariants(csv_path: Path) -> Dict[str, int | float | bool]:
 			die(f"{csv_path}: time not non-decreasing at row {r_i} ({t} < {last_t})")
 		last_t = t
 
-		# min_clearance monotone non-increasing
-		mc = float_or_nan(r[col["min_clearance"]])
-		if math.isnan(mc): die(f"{csv_path}: row {r_i} has non-float min_clearance")
-		if mc > last_min + 1e-6:
-			die(f"{csv_path}: min_clearance increased at row {r_i} ({mc} > {last_min})")
-		last_min = min(last_min, mc)
+		# geom clearance monotone non-increasing
+		mc_geom = float_or_nan(r[col["min_clearance_geom"]])
+		if math.isnan(mc_geom): die(f"{csv_path}: row {r_i} has non-float min_clearance_geom")
+		if mc_geom > last_min_geom + 1e-6:
+			die(f"{csv_path}: min_clearance_geom increased at row {r_i} ({mc_geom} > {last_min_geom})")
+		last_min_geom = min(last_min_geom, mc_geom)
 
 		# human phase semantics:
 		phase = r[col["human_phase"]]
@@ -85,16 +91,16 @@ def check_csv_invariants(csv_path: Path) -> Dict[str, int | float | bool]:
 
 		# events semantics
 		event = r[col["event"]]
-		if event == "success":
+		if event == "mission_success":
 			seen_success = True
 			# success should be terminal (no rows after with events)
 			if r_i != len(rows) - 1:
-				die(f"{csv_path}: 'success' not terminal (rows continue after success)")
+				die(f"{csv_path}: 'mission_success' not terminal (rows continue after success)")
 		elif event == "collision_human":
 			seen_collision_human = True
 			if phase not in ("running","fallen"):
 				die(f"{csv_path}: collision_human without human present (phase={phase})")
-		elif event == "slip":
+		elif event == "floor_slip":
 			seen_slip += 1
 
 		# near_stop accounting

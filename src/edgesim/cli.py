@@ -33,6 +33,11 @@ except Exception:
     build_coverage = None  # type: ignore
 
 try:
+    from .dataset_manifest import build_dataset_manifest
+except Exception:
+    build_dataset_manifest = None  # type: ignore
+
+try:
     from .report_html import generate_report
 except Exception:
     generate_report = None  # type: ignore
@@ -52,11 +57,33 @@ def _make_run_dir(prompt: str, name: str | None) -> Path:
     ensure_dir(run_dir)
     return run_dir
 
+def _enable_full_lidar_logging(scn: dict) -> None:
+	"""Toggle full lidar logging on in the scenario dict."""
+	logging_cfg = scn.setdefault("logging", {})
+	logging_cfg["full_lidar"] = True
+	sensors = scn.setdefault("sensors", {})
+    lidar = sensors.setdefault("lidar", {})
+	log = lidar.setdefault("log", {})
+	log["full"] = True
+	# leave events_only as provided; default to False for full capture
+	log.setdefault("events_only", False)
+
+def _enable_event_lidar_logging(scn: dict) -> None:
+	"""Toggle event-window-only lidar logging."""
+	logging_cfg = scn.setdefault("logging", {})
+	logging_cfg["lidar_events_only"] = True
+	sensors = scn.setdefault("sensors", {})
+	lidar = sensors.setdefault("lidar", {})
+	log = lidar.setdefault("log", {})
+	# explicit event-window only; do not force full logging
+	log["events_only"] = True
+	log.setdefault("full", False)
+
 def _write_core_files(run_dir: Path, prompt: str, n_runs: int, seed_base: int, scn: dict) -> dict:
-    seeds = {"base_seed": seed_base, "seeds": [seed_base + i for i in range(n_runs)]}
-    manifest = {
-        "prompt": prompt,
-        "n_runs": n_runs,
+	seeds = {"base_seed": seed_base, "seeds": [seed_base + i for i in range(n_runs)]}
+	manifest = {
+		"prompt": prompt,
+		"n_runs": n_runs,
         "seed_base": seed_base,
         "version": __version__,
         "git": git_hash_fallback(),
@@ -120,6 +147,10 @@ def cmd_run_batch(args: argparse.Namespace) -> int:
 
     # Parse and prep
     scn = prompt_to_scenario(prompt, n_runs=n_runs)
+    if getattr(args, "lidar_events_only", False):
+        _enable_event_lidar_logging(scn)
+    elif getattr(args, "lidar_logging", False):
+        _enable_full_lidar_logging(scn)
     run_dir = _make_run_dir(prompt, args.name)
     files = _write_core_files(run_dir, prompt, n_runs, seed_base, scn)
     seeds = files["seeds"]["seeds"]
@@ -150,6 +181,12 @@ def cmd_run_batch(args: argparse.Namespace) -> int:
         summary = {"runs": 0, "successes": 0, "failures": 0, "avg_time": 0.0, "avg_steps": 0}
     if write_summary is not None:
         write_summary(run_dir, summary)
+
+    if build_dataset_manifest is not None:
+        try:
+            build_dataset_manifest(run_dir, scn)
+        except Exception as e:
+            print(f"[EdgeSim][WARN] Failed to build dataset_manifest: {e}")
 
     # Digests (per_run CSVs + world)
     man_path = run_dir / "manifest.json"
@@ -193,22 +230,32 @@ def cmd_run_batch(args: argparse.Namespace) -> int:
     return 0
 
 def cmd_run_one(args: argparse.Namespace) -> int:
-    prompt: str = args.prompt
-    gui: bool = bool(args.gui)
-    realtime: bool = bool(args.realtime)
-    dt: float = float(args.dt)
+	prompt: str = args.prompt
+	gui: bool = bool(args.gui)
+	realtime: bool = bool(args.realtime)
+	dt: float = float(args.dt)
     slowmo: float = float(args.slowmo)
 
     # Pass site via env if provided
-    if getattr(args, "site", None):
-        os.environ["EDGESIM_SITE"] = str(args.site)
+	if getattr(args, "site", None):
+		os.environ["EDGESIM_SITE"] = str(args.site)
 
-    scn = prompt_to_scenario(prompt, n_runs=1)
-    if getattr(args, "debug_visuals", False):
-        scn["debug_visuals"] = True
-    run_dir = _make_run_dir(prompt, args.name)
-    _write_core_files(run_dir, prompt, 1, args.seed, scn)
-    out = run_one(prompt, scn, run_dir, dt=dt, realtime=realtime, gui=gui, sleep_scale=slowmo)
+	scn = prompt_to_scenario(prompt, n_runs=1)
+	if getattr(args, "debug_visuals", False):
+		scn["debug_visuals"] = True
+	if getattr(args, "lidar_events_only", False):
+		_enable_event_lidar_logging(scn)
+	elif getattr(args, "lidar_logging", False):
+		_enable_full_lidar_logging(scn)
+	run_dir = _make_run_dir(prompt, args.name)
+	_write_core_files(run_dir, prompt, 1, args.seed, scn)
+	out = run_one(prompt, scn, run_dir, dt=dt, realtime=realtime, gui=gui, sleep_scale=slowmo)
+
+    if build_dataset_manifest is not None:
+        try:
+            build_dataset_manifest(run_dir, scn)
+        except Exception as e:
+            print(f"[EdgeSim][WARN] Failed to build dataset_manifest: {e}")
 
     # Digests for single run (csv + world)
     man_path = run_dir / "manifest.json"
@@ -387,24 +434,28 @@ def build_parser() -> argparse.ArgumentParser:
     sb.add_argument("--seed", type=int, default=42)
     sb.add_argument("--name", type=str, default=None)
     sb.add_argument("--profile", type=str, default="minimal", choices=["minimal", "robot", "full"])
-    sb.add_argument("--site", type=str, default=None, help="Site profile slug (loads site_profiles/<site>.json via EDGESIM_SITE)")
-    sb.add_argument("--time-budget-min", type=float, default=None,
-                    help="Soft wall-clock budget (minutes). If ETA exceeds and --auto-degrade is set, stop early.")
-    sb.add_argument("--auto-degrade", action="store_true",
-                    help="Stop early when the budget would be exceeded.")
-    sb.set_defaults(func=cmd_run_batch)
+	sb.add_argument("--site", type=str, default=None, help="Site profile slug (loads site_profiles/<site>.json via EDGESIM_SITE)")
+	sb.add_argument("--time-budget-min", type=float, default=None,
+	                help="Soft wall-clock budget (minutes). If ETA exceeds and --auto-degrade is set, stop early.")
+	sb.add_argument("--auto-degrade", action="store_true",
+	                help="Stop early when the budget would be exceeded.")
+	sb.add_argument("--lidar-logging", action="store_true", help="Enable full LiDAR logging (writes lidar.npz per run)")
+	sb.add_argument("--lidar-events-only", action="store_true", help="Log LiDAR event windows only (writes lidar.npz, windowed)")
+	sb.set_defaults(func=cmd_run_batch)
 
-    so = sub.add_parser("run-one", help="Run a single PyBullet rollout (V0)")
-    so.add_argument("prompt", type=str)
-    so.add_argument("--seed", type=int, default=42)
+	so = sub.add_parser("run-one", help="Run a single PyBullet rollout (V0)")
+	so.add_argument("prompt", type=str)
+	so.add_argument("--seed", type=int, default=42)
     so.add_argument("--name", type=str, default=None)
     so.add_argument("--gui", action="store_true", help="Open PyBullet GUI")
     so.add_argument("--realtime", action="store_true", help="Sleep to realtime")
     so.add_argument("--dt", type=float, default=0.05, help="Integrator timestep (seconds)")
-    so.add_argument("--slowmo", type=float, default=1.0, help="Slow-motion multiplier for realtime sleep (requires --realtime)")
-    so.add_argument("--site", type=str, default=None, help="Site profile slug (loads site_profiles/<site>.json via EDGESIM_SITE)")
-    so.add_argument("--debug-visuals", action="store_true", help="Draw debug overlays for aisles/paths (GUI only)")
-    so.set_defaults(func=cmd_run_one)
+	so.add_argument("--slowmo", type=float, default=1.0, help="Slow-motion multiplier for realtime sleep (requires --realtime)")
+	so.add_argument("--site", type=str, default=None, help="Site profile slug (loads site_profiles/<site>.json via EDGESIM_SITE)")
+	so.add_argument("--debug-visuals", action="store_true", help="Draw debug overlays for aisles/paths (GUI only)")
+	so.add_argument("--lidar-logging", action="store_true", help="Enable full LiDAR logging (writes lidar.npz)")
+	so.add_argument("--lidar-events-only", action="store_true", help="Log LiDAR event windows only (writes lidar.npz, windowed)")
+	so.set_defaults(func=cmd_run_one)
 
     sv = sub.add_parser("verify", help="Verify reproducibility digests for a finished batch")
     sv.add_argument("batch", type=str, help="Path to runs/<batch_dir>")

@@ -94,9 +94,9 @@ def build_coverage(per_run_dir: Path) -> Dict[str, Any]:
                 detail = row[idx_outcome] if idx_outcome is not None and idx_outcome < len(row) else ""
                 if ev == "collision_human":
                     outcome = "collision_human"
-                elif ev == "success":
+                elif ev in ("success", "mission_success"):
                     outcome = "success"
-                elif detail in ("collision_human", "success"):
+                elif detail in ("collision_human", "success", "mission_success"):
                     outcome = detail
 
         # tally

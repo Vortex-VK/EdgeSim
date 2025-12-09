@@ -58,8 +58,9 @@ KEYWORDS = {
     "dark_clothing": ["dark clothing", "dark hoodie", "black jacket", "no vest"],
 
     # Sensor / lidar issues
-    "sensor_fault": ["lidar fault", "sensor glitch", "ghost obstacle",
-                     "false obstacle", "false positive", "sensor issue"],
+    "sensor_fault": ["lidar fault", "sensor fault", "sensor glitch", "ghost obstacle",
+                     "false obstacle", "false positive", "sensor issue",
+                     "lidar blackout", "sensor blackout", "blackout"],
     "degraded_mode": ["degraded mode", "reduced lidar", "low sensor", "cpu overload",
                       "failsafe mode", "degraded sensing"],
 }

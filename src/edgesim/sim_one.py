@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Dict, Any, List, Tuple, Optional
 from pathlib import Path
 import csv, math, time, os, json
+from collections import deque
 
 import numpy as np
 import pybullet as p
@@ -674,6 +675,67 @@ class _LidarSim:
 			return self._queue.pop(0)[1]
 		return None
 
+
+class _LidarLogger:
+	def __init__(self, angles: np.ndarray, enabled: bool, log_xyz: bool, events_only: bool,
+	             pre_event_s: float, post_event_s: float, dt: float):
+		self.enabled = bool(enabled)
+		self.log_xyz = bool(log_xyz)
+		self.events_only = bool(events_only)
+		self.angles = np.asarray(angles, dtype=np.float32) if angles is not None else np.array([], dtype=np.float32)
+		self.dt = float(dt)
+		self.pre_steps = int(max(0, round(pre_event_s / max(1e-6, self.dt))))
+		self.post_steps = int(max(0, round(post_event_s / max(1e-6, self.dt))))
+		# keep a short buffer so we can dump a window around interesting events
+		self._buffer: deque[Tuple[float, Tuple[float, float, float], np.ndarray]] = deque(maxlen=max(1, self.pre_steps))
+		self._frames: List[Tuple[float, Tuple[float, float, float], np.ndarray]] = []
+		self._active_steps = 0
+
+	def record(self, t: float, pose: Tuple[float, float, float], ranges: np.ndarray | None) -> None:
+		if (not self.enabled) or ranges is None:
+			return
+		scan = np.asarray(ranges, dtype=np.float32)
+		frame = (float(t), (float(pose[0]), float(pose[1]), float(pose[2])), scan.copy())
+		if self.events_only:
+			self._buffer.append(frame)
+			if self._active_steps > 0:
+				self._frames.append(frame)
+				self._active_steps -= 1
+		else:
+			self._frames.append(frame)
+
+	def mark_event(self) -> None:
+		if (not self.enabled) or (not self.events_only):
+			return
+		if self._buffer:
+			self._frames.extend(list(self._buffer))
+			self._buffer.clear()
+		self._active_steps = max(self._active_steps, self.post_steps if self.post_steps > 0 else 1)
+
+	def write(self, path: Path) -> None:
+		if (not self.enabled) or (not self._frames):
+			return
+		t = np.array([f[0] for f in self._frames], dtype=np.float32)
+		pose = np.array([f[1] for f in self._frames], dtype=np.float32)
+		ranges = np.stack([f[2] for f in self._frames]).astype(np.float32)
+		obj: Dict[str, Any] = {
+			"t": t,
+			"pose": pose,
+			"ranges": ranges,
+			"angles": self.angles,
+		}
+		if self.log_xyz and len(self.angles) and len(self._frames):
+			points: List[np.ndarray] = []
+			for scan in ranges:
+				x = scan * np.cos(self.angles)
+				y = scan * np.sin(self.angles)
+				z = np.zeros_like(x, dtype=np.float32)
+				points.append(np.stack([x, y, z], axis=1))
+			obj["xyz"] = np.stack(points).astype(np.float32)
+		path.parent.mkdir(parents=True, exist_ok=True)
+		np.savez_compressed(path, **obj)
+
+
 class _OdomSim:
 	def __init__(self, bias_v: float = 0.02, bias_w: float = 0.01, noise_v: float = 0.02, noise_w: float = 0.01,
 	             rng: np.random.Generator | None = None):
@@ -772,6 +834,11 @@ def run_one(
 					aabb = None
 			if aabb:
 				static_aabbs.append((float(aabb[0]), float(aabb[1]), float(aabb[2]), float(aabb[3])))
+		static_clearance_body_ids: list[int] = [wid for wid in wall_ids if wid not in vehicle_body_ids]
+		for sobj in env.get("static_obstacles", []) or []:
+			bid = sobj.get("body_id")
+			if isinstance(bid, int) and bid not in vehicle_body_ids:
+				static_clearance_body_ids.append(bid)
 		walkway_rects: List[Tuple[float, float, float, float]] = []
 		for meta in env.get("aisles_meta", []):
 			if not isinstance(meta, dict):
@@ -779,6 +846,39 @@ def run_one(
 			zone = meta.get("zone")
 			if isinstance(zone, (list, tuple)) and len(zone) == 4:
 				walkway_rects.append((float(zone[0]), float(zone[1]), float(zone[2]), float(zone[3])))
+
+		# Fallback: if static_aabbs somehow stayed empty, backfill from env metadata to keep clearance valid
+		if not static_aabbs:
+			for sobj in env.get("static_obstacles", []) or []:
+				if not isinstance(sobj, dict):
+					continue
+				aa = sobj.get("aabb")
+				if isinstance(aa, (list, tuple)) and len(aa) == 4:
+					static_aabbs.append((float(aa[0]), float(aa[1]), float(aa[2]), float(aa[3])))
+			if not static_aabbs:
+				for wid in wall_ids:
+					if wid in vehicle_body_ids:
+						continue
+					try:
+						a0, a1 = p.getAABB(wid)
+						static_aabbs.append((a0[0], a0[1], a1[0], a1[1]))
+					except Exception:
+						continue
+		# Also fold in layout-defined AABBs so clearance never loses fixed geometry
+		layout = scn.get("layout", {}) or {}
+		for wall in layout.get("walls", []) or []:
+			aa = wall.get("aabb")
+			if isinstance(aa, (list, tuple)) and len(aa) == 4:
+				static_aabbs.append((float(aa[0]), float(aa[1]), float(aa[2]), float(aa[3])))
+		for obs in layout.get("static_obstacles", []) or []:
+			aa = obs.get("aabb")
+			if isinstance(aa, (list, tuple)) and len(aa) == 4:
+				static_aabbs.append((float(aa[0]), float(aa[1]), float(aa[2]), float(aa[3])))
+		for rack in (layout.get("geometry", {}) or {}).get("racking", []) or []:
+			aa = rack.get("aabb")
+			if isinstance(aa, (list, tuple)) and len(aa) == 4:
+				static_aabbs.append((float(aa[0]), float(aa[1]), float(aa[2]), float(aa[3])))
+		geom_clearance_aabbs = list(static_aabbs)
 
 		_tuned = _load_site_tuned()
 		if not isinstance(_tuned, dict):
@@ -1238,21 +1338,29 @@ def run_one(
 				))
 
 		# Logging
+		log_cfg = (scn.get("logging") or {})
 		out_dir.mkdir(parents=True, exist_ok=True)
 		rows: List[List[float | str]] = []
 		header = [
 			"t", "x", "y", "yaw", "v_cmd", "w_cmd",
 			"min_clearance_lidar", "min_clearance_geom",
-			"event", "event_detail", "in_wet", "human_phase", "near_stop",
+			"event", "event_detail", "in_wet", "human_phase", "near_stop", "hard_brake",
+			"near_miss", "occluded_hazard", "interaction", "sensor_faults",
 			"min_ttc", "odom_v", "odom_w", "imu_ax", "imu_ay", "imu_wz"
 		]
 
 		odom_meas = (0.0, 0.0)
 		imu_meas = (0.0, 0.0, 0.0)
+		actor_rows: List[List[float | str]] = []
+		actor_header = ["t", "actor_id", "type", "x", "y", "yaw", "phase", "vx", "vy"]
+		actor_prev: Dict[str, Tuple[float, float]] = {}
+		log_actors = bool(log_cfg.get("log_actors", True))
 
 		def _log_row(event: str, detail: str, *, human_phase: str | None = None,
-		             near_stop: int = 0, position: Tuple[float, float, float] | None = None,
-		             wet_flag: int | None = None) -> None:
+		             near_stop: int = 0, hard_brake: int = 0, near_miss: int = 0,
+		             occluded: int = 0, interaction: str = "none", sensor_faults: str = "",
+		             position: Tuple[float, float, float] | None = None,
+		             wet_flag: int | None = None, min_ttc_step: float | None = None) -> None:
 			px, py, pyaw = position if position is not None else (new_x, new_y, new_yaw)
 			in_wet_flag = wet_flag if wet_flag is not None else int(_compute_in_wet(px, py))
 			rows.append([
@@ -1262,10 +1370,27 @@ def run_one(
 				in_wet_flag,
 				human_phase or _human_phase_str(),
 				near_stop,
-				min_ttc if min_ttc < 1e8 else "",
+				hard_brake,
+				near_miss,
+				occluded,
+				interaction,
+				sensor_faults,
+				(min_ttc_step if (min_ttc_step is not None and min_ttc_step < 1e8) else (min_ttc if min_ttc < 1e8 else "")),
 				odom_meas[0], odom_meas[1],
 				imu_meas[0], imu_meas[1], imu_meas[2],
 			])
+
+		def _log_actor_row(t_now: float, actor_id: str, a_type: str, x: float, y: float,
+		                   yaw_val: float, phase: str) -> None:
+			if not log_actors:
+				return
+			prev = actor_prev.get(actor_id)
+			vx = vy = 0.0
+			if prev:
+				vx = (x - prev[0]) / max(1e-6, dt)
+				vy = (y - prev[1]) / max(1e-6, dt)
+			actor_prev[actor_id] = (x, y)
+			actor_rows.append([t_now, actor_id, a_type, x, y, yaw_val, phase, vx, vy])
 
 		reflective_regions: List[Dict[str, Any]] = []
 		for sobj in env.get("static_obstacles", []) or []:
@@ -1288,7 +1413,7 @@ def run_one(
 						for z in scn.get("hazards", {}).get("traction", []) if isinstance(z, dict)
 						for zone in [z.get("zone")] if isinstance(zone, (list, tuple)) and len(zone) == 4
 					],
-					"human": (scn.get("hazards", {}).get("human") or [{}]),
+					"human": (scn.get("hazards", {}).get("human") or []),
 					"floor_events": [
 						{key: evt.get(key) for key in ("id", "type", "zone", "spawn_time_s")}
 						for evt in (scn.get("hazards", {}).get("floor_events", []) or []) if isinstance(evt, dict)
@@ -1303,6 +1428,7 @@ def run_one(
 					hazards_digest,
 					(start[0], start[1]),
 					(goal[0], goal[1]),
+					map_size_m=(Lx, Ly),
 					floor_zones=floor_zones_meta,
 					transition_zones=transition_zones_meta,
 					static_objects=list(env.get("static_obstacles", [])),
@@ -1340,12 +1466,20 @@ def run_one(
 		prev_err = np.array([0.0, 0.0])
 		wp_idx = 0
 		success = False
-		t = 0.0
 		timeout = float(scn.get("runtime", {}).get("duration_s", 90.0))
+		max_steps = int(math.ceil(timeout / max(1e-6, dt))) + 1
+		step_idx = 0
 		min_clear_geom = 10.0
 		min_ttc: float = 1e9
+		ttc_step: float = 1e9
 		v_cmd = 0.0
 		w_cmd = 0.0
+		near_stop_flag = 0
+		near_miss_flag = 0
+		hard_brake_flag = 0
+		occluded_flag = 0
+		interaction = "none"
+		sensor_faults = ""
 
 		def _human_phase_str() -> str:
 			if any(h["phase"] == "fallen" for h in human_states):
@@ -1353,6 +1487,10 @@ def run_one(
 			if any(h["phase"] == "running" for h in human_states):
 				return "running"
 			return "none"
+
+		near_miss_ttc_thresh = float(log_cfg.get("near_miss_ttc_s", 2.0))
+		hard_brake_thresh = float(log_cfg.get("hard_brake_decel_mps2", 1.2))
+		interaction_dist = float(log_cfg.get("interaction_radius_m", 2.0))
 
 		def _compute_in_wet(xr: float, yr: float) -> bool:
 			for surface in floor_zones_meta:
@@ -1389,6 +1527,18 @@ def run_one(
 				if zone and _pt_in_aabb(xr, yr, tuple(zone)):
 					return tz
 			return None
+
+		def _sensor_faults(t_now: float, shadow_flag: bool) -> str:
+			tags: List[str] = []
+			if shadow_flag:
+				tags.append("sensor_shadow")
+			for inj in injectors:
+				if isinstance(inj, LidarSectorBlackoutInjector) and inj.active_until >= t_now >= 0.0:
+					tags.append(inj.name)
+				elif isinstance(inj, GhostObstacleInjector) and getattr(inj, "_clusters", None):
+					if len(getattr(inj, "_clusters", [])) > 0:
+						tags.append(inj.name)
+			return ";".join(tags)
 
 		def _update_vehicles(dt: float, t_cur: float) -> None:
 			for v in vehicle_states:
@@ -1478,7 +1628,7 @@ def run_one(
 		last_xy: Optional[Tuple[float, float]] = None
 		last_hxy: Dict[int, Tuple[float, float]] = {}
 
-		def _update_min_ttc(x: float, y: float) -> None:
+		def _update_min_ttc(x: float, y: float) -> float:
 			nonlocal min_ttc, last_xy, last_hxy
 			h_positions: List[Tuple[int, float, float]] = []
 			for h in human_states:
@@ -1494,6 +1644,7 @@ def run_one(
 				vy_r = (y - last_xy[1]) / max(1e-6, dt)
 			else:
 				vx_r = vy_r = 0.0
+			step_min = float("inf")
 			for hid, hx, hy in h_positions:
 				last_h = last_hxy.get(hid)
 				if last_h is not None:
@@ -1510,8 +1661,10 @@ def run_one(
 					if rel_v < -1e-3:
 						ttc = L / (-rel_v)
 						min_ttc = min(min_ttc, ttc)
+						step_min = min(step_min, ttc)
 				last_hxy[hid] = (hx, hy)
 			last_xy = (x, y)
+			return step_min
 
 		# Sensors
 		lidar_cfg = ((scn.get("sensors", {}) or {}).get("lidar") or {})
@@ -1522,6 +1675,13 @@ def run_one(
 			fog_density = max(fog_density, 0.3)
 		lidar_noise = float(lidar_cfg.get("noise_sigma", tuned_lidar_noise))
 		lidar_dropout = float(lidar_cfg.get("dropout_pct", tuned_lidar_dropout))
+		lidar_log_cfg = (lidar_cfg.get("log") or {})
+		log_full_lidar = bool(lidar_log_cfg.get("full", log_cfg.get("full_lidar", False)))
+		log_lidar_events_only = bool(lidar_log_cfg.get("events_only", log_cfg.get("lidar_events_only", False)))
+		log_lidar_xyz = bool(lidar_log_cfg.get("xyz", log_cfg.get("lidar_xyz", False)))
+		pre_event_s = float(lidar_log_cfg.get("pre_event_s", log_cfg.get("lidar_pre_event_s", 1.0)))
+		post_event_s = float(lidar_log_cfg.get("post_event_s", log_cfg.get("lidar_post_event_s", 2.0)))
+		lidar_log_enabled = log_full_lidar or log_lidar_events_only
 		lidar_rng = _child_rng(rng)
 		odom_rng = _child_rng(rng)
 		imu_rng = _child_rng(rng)
@@ -1535,6 +1695,15 @@ def run_one(
 			fog_density=fog_density,
 			reflective_zones=reflective_regions,
 			rng=lidar_rng,
+		)
+		lidar_logger = _LidarLogger(
+			lidar.angles,
+			lidar_log_enabled,
+			log_lidar_xyz,
+			log_lidar_events_only,
+			pre_event_s,
+			post_event_s,
+			dt,
 		)
 		odom_cfg = ((scn.get("sensors", {}) or {}).get("odom") or {})
 		imu_cfg = ((scn.get("sensors", {}) or {}).get("imu") or {})
@@ -1552,7 +1721,29 @@ def run_one(
 		)
 		sensor_z = float(agent_cfg.get("sensor_z_m", max(0.12, robot_height * 0.8)))
 		min_clear_lidar = 10.0
+		lidar_has_scan = False
+		prev_v_true = 0.0
+		prev_cmd_v = 0.0
 		vehicle_guard_boxes: List[Tuple[float, float, float, float]] = []
+
+		base_frame = str(agent_cfg.get("id", "base_link"))
+		frames_meta = {
+			"world_frame": "world",
+			"base_frame": base_frame,
+			"frames": [
+				{"parent": base_frame, "child": "laser", "xyz": [0.0, 0.0, sensor_z], "rpy": [0.0, 0.0, 0.0]},
+				{"parent": base_frame, "child": "imu", "xyz": [0.0, 0.0, max(0.05, robot_height * 0.5)], "rpy": [0.0, 0.0, 0.0]},
+				{"parent": "world", "child": base_frame, "xyz": [0.0, 0.0, 0.0], "rpy": [0.0, 0.0, 0.0]},
+			],
+			"meta": {
+				"radius_m": radius,
+				"height_m": robot_height,
+			},
+		}
+		try:
+			(out_dir / "frames.json").write_text(json.dumps(frames_meta, indent=2), encoding="utf-8")
+		except Exception:
+			pass
 
 		def _apply_vehicle_occlusion(ranges: np.ndarray, rx: float, ry: float, ryaw: float) -> np.ndarray:
 			if not vehicle_states:
@@ -1630,7 +1821,10 @@ def run_one(
 
 		# -------- main loop --------
 
-		while t < timeout:
+		while step_idx < max_steps:
+			t = step_idx * dt
+			if t >= timeout:
+				break
 			pos, orn = p.getBasePositionAndOrientation(amr)
 			x, y, _ = pos
 			yaw = p.getEulerFromQuaternion(orn)[2]
@@ -1858,7 +2052,7 @@ def run_one(
 							continue
 						_update_human_pose(body_id, xh, yh, h["z_base"], heading, h.get("posture_scale", 1.0))
 						_update_human_props(h, xh, yh, heading)
-						h["last_pose"] = (xh, yh)
+						h["last_pose"] = (xh, yh, heading)
 						wet_band = h.get("wet_aabb")
 						in_wet_now = False
 						if wet_band and _pt_in_aabb(xh, yh, wet_band):
@@ -1891,7 +2085,8 @@ def run_one(
 								xh_slide = max(border, min(Lx - border, xh + dx_slide))
 								yh_slide = max(border, min(Ly - border, yh + dy_slide))
 								p.resetBasePositionAndOrientation(body_id, [xh_slide, yh_slide, 0.25], p.getQuaternionFromEuler([math.pi / 2.0, 0.0, 0.0]))
-								h["last_pose"] = (xh_slide, yh_slide)
+								h["last_pose"] = (xh_slide, yh_slide, heading)
+								lidar_logger.mark_event()
 								_log_row("floor_slip", f"{xh_slide:.2f},{yh_slide:.2f},{cfg.get('id', idx)}",
 								         human_phase="fallen", near_stop=int(v_cmd < 0.2),
 								         position=(x, y, yaw), wet_flag=int(_compute_in_wet(xh_slide, yh_slide)))
@@ -1951,11 +2146,16 @@ def run_one(
 				lr = _apply_human_reflectivity(lr, x, y, yaw)
 				lr = _apply_vehicle_occlusion(lr, x, y, yaw)
 				min_clear_lidar = float(np.min(lr))
+				lidar_has_scan = True
+				lidar_logger.record(t, (x, y, yaw), lr)
 
 			# Integrate motion using commanded (ground-truth) velocities; sensors get noisy copies
 			slip_scale = max(0.0, 1.0 - slip_factor)
 			v_true = v_cmd * slip_scale
 			w_true = w_cmd * slip_scale
+			decel_cmd = (prev_cmd_v - v_cmd) / max(1e-6, dt)
+			decel_true = (prev_v_true - v_true) / max(1e-6, dt)
+			hard_brake_flag = 1 if max(decel_cmd, decel_true) > hard_brake_thresh else 0
 			new_yaw = yaw + w_true * dt
 			new_x = max(border, min(Lx - border, x + (v_true * math.cos(new_yaw)) * dt))
 			new_y = max(border, min(Ly - border, y + (v_true * math.sin(new_yaw)) * dt))
@@ -1979,11 +2179,19 @@ def run_one(
 					break
 				nonhuman_contact_count += 1
 
-			_update_min_ttc(new_x, new_y)
+			ttc_step = _update_min_ttc(new_x, new_y)
 
 			# Clearance (geom) vs static + dynamic human footprint
 			def _min_clear_geom(px: float, py: float, ry: float) -> float:
-				dyn = list(static_aabbs)
+				base = geom_clearance_aabbs
+				dyn = list(base)
+				if not dyn and static_clearance_body_ids:
+					for bid in static_clearance_body_ids:
+						try:
+							a0, a1 = p.getAABB(bid)
+							dyn.append((a0[0], a0[1], a1[0], a1[1]))
+						except Exception:
+							continue
 				for fh_id in [h["id"] for h in human_states if h["phase"] == "fallen"]:
 					fh = _fallen_human_aabb(fh_id)
 					if fh is not None:
@@ -1999,11 +2207,77 @@ def run_one(
 					slice_w = max(0.2, float(h.get("radius", 0.25)))
 					aabb = (hx - slice_w, max(0.0, hy - slice_w), hx + slice_w, min(Ly, hy + slice_w))
 					dyn.append(aabb)
-				dyn.extend(vehicle_guard_boxes)
-				return _clearance_to_aabbs(px, py, dyn)
+					dyn.extend(vehicle_guard_boxes)
+					return _clearance_to_aabbs(px, py, dyn)
 
-			cur_geom = _min_clear_geom(new_x, new_y, new_y)
+			try:
+				cur_geom = float(_min_clear_geom(new_x, new_y, new_y))
+			except Exception:
+				cur_geom = math.inf
+			if geom_clearance_aabbs:
+				try:
+					dist_geom = float(_clearance_to_aabbs(new_x, new_y, geom_clearance_aabbs))
+					if math.isfinite(dist_geom):
+						cur_geom = min(cur_geom, dist_geom)
+				except Exception:
+					# Keep going; lidar fallback will cover us
+					pass
+			try:
+				if math.isfinite(min_clear_lidar):
+					# Fallback/bridge: use LiDAR clearance when geometry list is empty or failed
+					cur_geom = min(cur_geom, float(min_clear_lidar))
+			except Exception:
+				pass
+			if not math.isfinite(cur_geom):
+				cur_geom = 10.0
 			min_clear_geom = min(min_clear_geom, cur_geom)
+			near_stop_flag = int(v_cmd < 0.2)
+			near_miss_flag = 1 if (ttc_step < near_miss_ttc_thresh and ttc_step < 1e8) else 0
+			if near_miss_flag:
+				lidar_logger.mark_event()
+			occluded_flag = 0
+			if lidar_has_scan:
+				if ((min_clear_lidar - cur_geom) > 0.3 and cur_geom < 3.0) or (transition_shadow and cur_geom < 2.5) or (taxonomy.get("occlusion") and cur_geom < 1.0):
+					occluded_flag = 1
+			sensor_faults = _sensor_faults(t, transition_shadow)
+			min_human_dist = 1e9
+			human_hold = False
+			for h_idx, h in enumerate(human_states):
+				lp = h.get("last_pose")
+				if not isinstance(lp, (list, tuple)) or len(lp) < 2:
+					continue
+				hx, hy = float(lp[0]), float(lp[1])
+				min_human_dist = min(min_human_dist, math.hypot(new_x - hx, new_y - hy))
+				if h.get("hold_until") and h["phase"] == "running" and t < float(h.get("hold_until") or 0.0):
+					human_hold = True
+			interaction = "none"
+			if min_human_dist < 0.8 and near_stop_flag:
+				interaction = "forced_stop_for_human"
+			elif min_human_dist < interaction_dist and near_stop_flag:
+				interaction = "robot_yielding"
+			elif human_hold and min_human_dist < interaction_dist:
+				interaction = "human_yielding"
+
+			if log_actors:
+				_log_actor_row(t, base_frame, str(agent_cfg.get("type", "robot")), new_x, new_y, new_yaw, "running")
+				for h_idx, h in enumerate(human_states):
+					lp = h.get("last_pose")
+					if not isinstance(lp, (list, tuple)) or len(lp) < 2:
+						continue
+					hx, hy = float(lp[0]), float(lp[1])
+					if hx < -50 or hy < -50:
+						continue
+					hyaw = float(lp[2]) if len(lp) >= 3 else 0.0
+					hid = str(h.get("cfg", {}).get("id", f"human_{h_idx+1}"))
+					_log_actor_row(t, hid, "human", hx, hy, hyaw, h.get("phase", "unknown"))
+				for v_idx, v in enumerate(vehicle_states):
+					lp = v.get("last_pose")
+					if not lp:
+						continue
+					vyaw = float(lp[2]) if len(lp) >= 3 else 0.0
+					vid = str(v.get("id", f"veh_{v_idx+1}"))
+					vtype = str(v.get("type", "vehicle"))
+					_log_actor_row(t, vid, vtype, float(lp[0]), float(lp[1]), vyaw, "moving" if v.get("speed", 0.0) > 0.0 else "idle")
 
 			# waypoint / success
 			target = waypoints[min(wp_idx, len(waypoints) - 1)]
@@ -2011,7 +2285,9 @@ def run_one(
 				wp_idx += 1
 				if wp_idx >= len(waypoints):
 					success = True
-					_log_row("mission_success", "", near_stop=int(v_cmd < 0.2))
+					_log_row("mission_success", "", near_stop=near_stop_flag, hard_brake=hard_brake_flag,
+					         near_miss=near_miss_flag, occluded=occluded_flag, interaction=interaction,
+					         sensor_faults=sensor_faults, min_ttc_step=ttc_step)
 					break
 
 			# contacts & outcomes
@@ -2019,30 +2295,50 @@ def run_one(
 			for inj in injectors:
 				ev = inj.pop_event()
 				if ev:
-					_log_row(ev[0], ev[1], near_stop=int(v_cmd < 0.2))
+					_log_row(ev[0], ev[1], near_stop=near_stop_flag, hard_brake=hard_brake_flag,
+					         near_miss=near_miss_flag, occluded=occluded_flag, interaction=interaction,
+					         sensor_faults=sensor_faults, min_ttc_step=ttc_step)
 
 			if human_contact_flag:
-				_log_row("collision_human", "1", near_stop=int(v_cmd < 0.2))
+				lidar_logger.mark_event()
+				_log_row("collision_human", "1", near_stop=near_stop_flag, hard_brake=hard_brake_flag,
+				         near_miss=near_miss_flag, occluded=occluded_flag, interaction=interaction,
+				         sensor_faults=sensor_faults, min_ttc_step=ttc_step)
 				break
 			elif nonhuman_contact_count > 0:
-				_log_row("collision_static", str(nonhuman_contact_count), near_stop=int(v_cmd < 0.2))
+				lidar_logger.mark_event()
+				_log_row("collision_static", str(nonhuman_contact_count), near_stop=near_stop_flag, hard_brake=hard_brake_flag,
+				         near_miss=near_miss_flag, occluded=occluded_flag, interaction=interaction,
+				         sensor_faults=sensor_faults, min_ttc_step=ttc_step)
 				break
 
 			# regular log row
-			_log_row("", "", near_stop=int(v_cmd < 0.2))
+			_log_row("", "", near_stop=near_stop_flag, hard_brake=hard_brake_flag,
+			         near_miss=near_miss_flag, occluded=occluded_flag, interaction=interaction,
+			         sensor_faults=sensor_faults, min_ttc_step=ttc_step)
 
+			prev_v_true = v_true
+			prev_cmd_v = v_cmd
 			p.stepSimulation()
 			if realtime:
 				sleep_dt = max(0.0, dt * max(0.0, sleep_scale))
 				if sleep_dt > 0:
 					time.sleep(sleep_dt)
-			t += dt
+			step_idx += 1
 
 		if not success and (not rows or (rows and not rows[-1][8])):
-			_log_row("timeout", "elapsed", near_stop=int(v_cmd < 0.2))
+			_log_row("timeout", "elapsed", near_stop=near_stop_flag, hard_brake=hard_brake_flag,
+			         near_miss=near_miss_flag, occluded=occluded_flag, interaction=interaction,
+			         sensor_faults=sensor_faults, min_ttc_step=ttc_step)
 
 		_write_digest_snapshot()
 		_write_csv(out_dir / "run_one.csv", header, rows)
+		if log_actors and actor_rows:
+			_write_csv(out_dir / "actors.csv", actor_header, actor_rows)
+		try:
+			lidar_logger.write(out_dir / "lidar.npz")
+		except Exception:
+			pass
 		return {"success": success, "time": t, "steps": len(rows)}
 
 	finally:
