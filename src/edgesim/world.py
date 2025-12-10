@@ -388,6 +388,9 @@ def _validate_geometry(layout: Dict[str, Any], hazards: Dict[str, Any], bounds: 
 			for pt in path:
 				if isinstance(pt, (list, tuple)) and len(pt) == 2:
 					_check_point((float(pt[0]), float(pt[1])), f"vehicle_{v_idx}")
+		start = veh.get("start")
+		if isinstance(start, (list, tuple)) and len(start) == 2:
+			_check_point((float(start[0]), float(start[1])), f"vehicle_{v_idx}_start")
 
 	return issues
 
