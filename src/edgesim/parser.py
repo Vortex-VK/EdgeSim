@@ -106,13 +106,6 @@ _MAIN_AISLE_TERMS = [
     "central aisle",
 ]
 
-_T_INTERSECTION_TERMS = [
-    "t intersection",
-    "t-intersection",
-    "t junction",
-    "t-junction",
-]
-
 def _is_main_aisle_lr_prompt(text: str) -> bool:
     text_l = text.lower()
     has_main = any(term in text_l for term in _MAIN_AISLE_TERMS)
@@ -401,13 +394,7 @@ def _apply_main_aisle_lr_layout(scn: Dict[str, Any]) -> None:
     geom["main_aisle_lane_y"] = 9.0
     geom["main_aisle_lane_x"] = 10.0
     geom["cross_access"] = True
-    # Split horizontal racks to leave a doorway near the crossing corridor
-    geom["racking"] = [
-        {"id": "Rack_lower_W", "aabb": [1.0, 6.0, 9.0, 7.0], "height_m": 3.0},
-        {"id": "Rack_lower_E", "aabb": [11.0, 6.0, 19.0, 7.0], "height_m": 3.0},
-        {"id": "Rack_upper_W", "aabb": [1.0, 11.0, 9.0, 12.0], "height_m": 3.0},
-        {"id": "Rack_upper_E", "aabb": [11.0, 11.0, 19.0, 12.0], "height_m": 3.0},
-    ]
+    geom["racking"] = []
     layout["aisles"] = [
         {"id": "A_main", "name": "main_aisle", "rect": [1.0, 7.0, 19.0, 11.0], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.2], "racking": False},
         {"id": "A_cross", "name": "cross_access", "rect": [9.0, 7.0, 11.0, 11.0], "type": "cross", "pad": [0.2, 0.0, 0.2, 0.0], "racking": False},
@@ -474,15 +461,7 @@ def _apply_t_intersection_layout(scn: Dict[str, Any]) -> None:
     geom["t_intersection_case"] = True
     geom["main_aisle_lane_y"] = 9.0
     geom["branch_lane_x"] = 10.0
-    geom["racking"] = [
-        {"id": "Rack_lower_W", "aabb": [1.0, 6.0, 9.1, 7.0], "height_m": 3.0},
-        {"id": "Rack_lower_E", "aabb": [10.9, 6.0, 19.0, 7.0], "height_m": 3.0},
-        {"id": "Rack_upper_W", "aabb": [1.0, 11.0, 9.1, 12.0], "height_m": 3.0},
-        {"id": "Rack_upper_E", "aabb": [10.9, 11.0, 19.0, 12.0], "height_m": 3.0},
-        {"id": "Rack_branch_side_left_low", "aabb": [7.6, 3.5, 8.8, 7.0], "height_m": 3.0},
-        {"id": "Rack_branch_side_left_high", "aabb": [7.6, 11.0, 8.8, 16.5], "height_m": 3.0},
-        {"id": "Rack_branch_side_right", "aabb": [11.2, 3.5, 12.4, 16.5], "height_m": 3.0},
-    ]
+    geom["racking"] = []
     layout["aisles"] = [
         {"id": "A_main", "name": "main_aisle", "rect": [1.0, 7.0, 19.0, 11.0], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.2], "racking": False},
         {"id": "A_branch_vertical", "name": "branch_vertical", "rect": [9.1, 3.5, 10.9, 16.5], "type": "straight", "pad": [0.0, 0.2, 0.0, 0.0], "racking": False, "appearance": "vertical_branch"},
@@ -607,10 +586,6 @@ def _apply_simple_forklift_aisle_layout(scn: Dict[str, Any]) -> None:
         {"id": "Endcap_Dock_SE", "aabb": [12.6, dock_y + 0.55, 13.4, dock_y + 1.15]},
         {"id": "Endcap_Dock_NW", "aabb": [10.6, dock_y - 1.15, 11.4, dock_y - 0.55]},
     ])
-    # explicit racking bands flanking the two upper aisles
-    Lx, Ly = map(float, layout["map_size_m"])
-    _add_racking_bands_from_aisle(geom, main_rect, {"gap_m": 0.2, "depth_m": 0.95, "height_m": 3.6, "type": "rack"}, (Lx, Ly), "Rack_Main")
-    _add_racking_bands_from_aisle(geom, forklift_rect, {"gap_m": 0.2, "depth_m": 0.95, "height_m": 4.2, "type": "high_bay", "reflective": True}, (Lx, Ly), "Rack_Forklift")
 
     static_obs = [
         {"id": "PalletJack_Dock", "type": "pallet_jack", "shape": "box", "aabb": [4.6, 4.6, 6.0, 5.3], "height": 1.0, "occlusion": True},
@@ -697,16 +672,11 @@ def _apply_parallel_aisles_layout(scn: Dict[str, Any]) -> None:
     aisles = layout.setdefault("aisles", [])
     aisle_1 = _rect(first_yc)
     aisle_2 = _rect(second_yc)
-    rack_cfg = {"gap_m": 0.15, "depth_m": 0.95, "height_m": 3.4, "type": "rack"}
     aisles.extend([
         {"id": "A_par_01", "name": "aisle_1", "rect": aisle_1, "type": "straight", "racking": False},
         {"id": "A_par_02", "name": "aisle_2", "rect": aisle_2, "type": "straight", "racking": False},
     ])
-    geom = layout.setdefault("geometry", {})
-    geom.setdefault("racking", [])
-    LxLy = (float(Lx), float(Ly))
-    _add_racking_bands_from_aisle(geom, aisle_1, rack_cfg, LxLy, "Rack_A1")
-    _add_racking_bands_from_aisle(geom, aisle_2, rack_cfg, LxLy, "Rack_A2")
+    layout.setdefault("geometry", {}).setdefault("racking", [])
 
     layout["lock_aisles"] = True
     layout["auto_aisles_from_paths"] = False
@@ -1946,12 +1916,7 @@ def _apply_parallel_pass_layout(scn: Dict[str, Any]) -> None:
     layout["paths_define_aisles"] = False
     layout["start"] = [3.0, y0]
     layout["goal"] = [19.0, y0]
-    # racks between aisles
-    geom["racking"] = [
-        {"id": "Rack_mid", "aabb": [2.0, y0 + width * 0.5, 20.0, y0 + gap - width * 0.5], "height_m": 3.0},
-        {"id": "Rack_upper", "aabb": [2.0, y0 + gap + width * 0.5, 20.0, y0 + gap + width * 1.5], "height_m": 3.0},
-        {"id": "Rack_lower", "aabb": [2.0, y0 - width * 1.5, 20.0, y0 - width * 0.5], "height_m": 3.0},
-    ]
+    geom["racking"] = []
     # single worker in same aisle
     haz = scn.setdefault("hazards", {})
     haz["human"] = [{
@@ -1975,10 +1940,7 @@ def _apply_narrow_cross_layout(scn: Dict[str, Any]) -> None:
     layout["paths_define_aisles"] = False
     layout["start"] = [3.0, 5.5]
     layout["goal"] = [17.0, 5.5]
-    geom["racking"] = [
-        {"id": "Rack_high_top", "aabb": [2.0, 5.5 + width * 0.5, 18.0, 7.0], "height_m": 4.0, "type": "high_bay"},
-        {"id": "Rack_high_bottom", "aabb": [2.0, 4.0, 18.0, 5.5 - width * 0.5], "height_m": 4.0, "type": "high_bay"},
-    ]
+    geom["racking"] = []
     # crossing worker perpendicular
     haz = scn.setdefault("hazards", {})
     haz["human"] = [{
@@ -2002,10 +1964,7 @@ def _apply_wide_main_layout(scn: Dict[str, Any]) -> None:
     layout["paths_define_aisles"] = False
     layout["start"] = [3.0, 6.0]
     layout["goal"] = [19.0, 6.0]
-    geom["racking"] = [
-        {"id": "Rack_wide_top", "aabb": [2.0, 6.0 + width * 0.5, 20.0, 7.0], "height_m": 3.0},
-        {"id": "Rack_wide_bottom", "aabb": [2.0, 5.0, 20.0, 6.0 - width * 0.5], "height_m": 3.0},
-    ]
+    geom["racking"] = []
     haz = scn.setdefault("hazards", {})
     haz["human"] = []
     haz["vehicles"] = []
@@ -2047,6 +2006,8 @@ def prompt_to_scenario_legacy(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
     # Add walls flanking aisles only when explicitly requested (not just "between racks")
     wants_walls = _wants_walled_aisles(text)
     wants_between = _wants_between_racks(text)
+    wants_high_shelf = _has_any(text, KEYWORDS["high_shelf"])
+    has_coord_racks = coord_flags.get("rack", False)
     wall_color = (0.55, 0.35, 0.2, 1.0) if wants_walls else None
     if wants_walls:
         # If no aisles are defined yet and the user just asked for a walled/between-racks aisle, build a minimal straight aisle to hang the walls on.
@@ -2072,7 +2033,7 @@ def prompt_to_scenario_legacy(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
             _add_walls_for_aisle(layout_obj, list(map(float, rect)), aisle.get("id") or f"Aisle_{idx:02d}", color=wall_color)
     else:
         # If high racks/ between racks were requested but walls were not, ensure no stray walls remain.
-        if _has_any(text, KEYWORDS["high_shelf"]) or wants_between:
+        if wants_high_shelf or wants_between:
             scn.get("layout", {}).pop("walls", None)
 
     # --- Visibility ---
@@ -2645,9 +2606,9 @@ def prompt_to_scenario_legacy(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
     if layout.get("walls"):
         _carve_wall_gaps(layout, pad=0.08)
         geom = layout.setdefault("geometry", {})
-        if not _wants_between_racks(text) and not _has_any(text, KEYWORDS["high_shelf"]) and not coord_flags.get("rack", False):
+        if not (wants_between or wants_high_shelf or has_coord_racks):
             geom["racking"] = []  # walls handle occlusion; drop stray rack bands that look like purple walls
-    if intent.get("high_racks"):
+    if (wants_high_shelf or wants_between) and not has_coord_racks:
         _normalize_high_racks(layout)
 
     _ensure_map_bounds(layout, scn.get("hazards", {}))

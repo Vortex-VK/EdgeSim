@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import Dict, Any, Tuple, List
 import math
+import random
+import hashlib
 import pybullet as p
 import pybullet_data
 
@@ -31,6 +33,11 @@ def _normalize_aabb(rect, issues: List[str] | None = None, label: str = "aabb") 
 def _aabb_center(rect: List[float] | tuple[float, float, float, float]) -> tuple[float, float]:
 	x0, y0, x1, y1 = rect
 	return ((x0 + x1) * 0.5, (y0 + y1) * 0.5)
+
+def _stable_rng(seed: str) -> random.Random:
+	digest = hashlib.sha256(seed.encode("utf-8")).digest()
+	seed_int = int.from_bytes(digest[:8], "big")
+	return random.Random(seed_int)
 
 
 _SURFACE_COLORS = {
@@ -154,10 +161,22 @@ def _spawn_floor_patch(zone, mu: float, rgba, thickness: float = 0.002) -> int:
 	p.changeDynamics(bid, -1, lateralFriction=float(mu))
 	return bid
 
+def _spawn_box_centered_xyz(center: Tuple[float, float, float], half_extents: Tuple[float, float, float],
+                            rgba, mass: float = 0.0) -> int:
+	vis, col = _mk_box(list(half_extents), rgba=rgba)
+	bid = p.createMultiBody(
+		baseMass=mass,
+		baseCollisionShapeIndex=col,
+		baseVisualShapeIndex=vis,
+		basePosition=[center[0], center[1], center[2]],
+	)
+	return bid
+
 def _spawn_aisle_racks(zone: Tuple[float, float, float, float],
                        bounds: Tuple[float, float],
                        rack_cfg: Dict[str, Any],
                        static_meta: List[Dict[str, Any]],
+                       walls_extra: List[int],
                        cutouts: List[Tuple[float, float, float, float]] | None = None) -> None:
 	x0, y0, x1, y1 = zone
 	Lx, Ly = bounds
@@ -186,26 +205,18 @@ def _spawn_aisle_racks(zone: Tuple[float, float, float, float],
 			intervals = _intervals_without(axis_start, axis_end, cuts)
 		else:
 			intervals = [(axis_start, axis_end)]
-		for seg_start, seg_end in intervals:
-			if (seg_end - seg_start) <= 0.05:
-				continue
-			if is_horizontal:
-				seg_rect = [seg_start, rect[1], seg_end, rect[3]]
-			else:
-				seg_rect = [rect[0], seg_start, rect[2], seg_end]
-			s_rect = _clamp_zone(seg_rect, bounds)
-			if s_rect[2] - s_rect[0] <= 0.01 or s_rect[3] - s_rect[1] <= 0.01:
-				continue
-			bid = _spawn_box_from_aabb(s_rect, height, rgba=color)
-			static_meta.append({
-				"id": rack_cfg.get("id"),
-				"type": rack_type,
-				"body_id": bid,
-				"aabb": s_rect,
-				"height": height,
-				"reflective": reflective,
-				"reflectivity": 0.7 if reflective else 0.0,
-			})
+			for seg_start, seg_end in intervals:
+				if (seg_end - seg_start) <= 0.05:
+					continue
+				if is_horizontal:
+					seg_rect = [seg_start, rect[1], seg_end, rect[3]]
+				else:
+					seg_rect = [rect[0], seg_start, rect[2], seg_end]
+				s_rect = _clamp_zone(seg_rect, bounds)
+				if s_rect[2] - s_rect[0] <= 0.01 or s_rect[3] - s_rect[1] <= 0.01:
+					continue
+				rack_id = rack_cfg.get("id") or "Rack"
+				_spawn_detailed_rack(s_rect, height, f"{rack_id}_{len(static_meta)+1:02d}", rack_type, reflective, static_meta, walls_extra)
 
 	if not cutouts:
 		cutouts = []
@@ -220,6 +231,140 @@ def _spawn_aisle_racks(zone: Tuple[float, float, float, float],
 		east = (min(Lx, x1 + gap), y0, min(Lx, x1 + gap + depth), y1)
 		_strip_segments(west, west[1], west[3], False)
 		_strip_segments(east, east[1], east[3], False)
+
+def _spawn_detailed_rack(aabb: List[float] | Tuple[float, float, float, float],
+                         height: float,
+                         rack_id: str,
+                         rack_type: str,
+                         reflective: bool,
+                         static_meta: List[Dict[str, Any]],
+                         walls_extra: List[int]) -> None:
+	rect = _normalize_aabb(aabb)
+	if not rect:
+		return
+	x0, y0, x1, y1 = rect
+	dx, dy = (x1 - x0), (y1 - y0)
+	horizontal = abs(dx) >= abs(dy)
+	length = abs(dx) if horizontal else abs(dy)
+	depth = abs(dy) if horizontal else abs(dx)
+	if length < 0.2 or depth < 0.2:
+		return
+	rng = _stable_rng(f"{rack_id}:{round(x0,3)}:{round(y0,3)}:{round(x1,3)}:{round(y1,3)}:{round(height,2)}")
+	pillar_w = min(0.12, max(0.06, depth * 0.35))
+	frame_pad = max(0.05, pillar_w * 0.75)
+	axis_start = (x0 if horizontal else y0) + frame_pad
+	axis_end = (x1 if horizontal else y1) - frame_pad
+	depth_start = (y0 if horizontal else x0) + frame_pad
+	depth_end = (y1 if horizontal else x1) - frame_pad
+	if axis_end <= axis_start or depth_end <= depth_start:
+		return
+	length_use = axis_end - axis_start
+	n_bays = max(1, min(8, int(round(length_use / max(0.9, min(2.0, length_use))) or 1)))
+	bay_len = length_use / n_bays
+	depth_span = depth_end - depth_start
+	beam_t = max(0.04, min(0.08, height * 0.03))
+	usable_height = max(1.0, height - 0.25)
+	shelf_count = max(2, min(5, int(round(usable_height / 1.1))))
+	gap_h = usable_height / shelf_count
+	# include floor-level shelf plus elevated shelves
+	shelf_zs = [0.0]
+	shelf_zs.extend([0.2 + gap_h * (i + 1) for i in range(shelf_count)])
+	frame_color = (0.25, 0.35, 0.7, 1.0)
+	beam_color = (0.95, 0.6, 0.25, 1.0)
+	box_color = (0.75, 0.6, 0.25, 1.0)
+	if reflective:
+		frame_color = (0.6, 0.65, 0.9, 1.0)
+		beam_color = (0.95, 0.7, 0.35, 1.0)
+		box_color = (0.8, 0.65, 0.3, 1.0)
+
+	# vertical posts at bay edges (two rows)
+	axis_positions = [axis_start + bay_len * i for i in range(n_bays + 1)]
+	depth_positions = [depth_start + pillar_w * 0.5, depth_end - pillar_w * 0.5]
+	post_half = (pillar_w * 0.5, pillar_w * 0.5, height * 0.5)
+	for ai in axis_positions:
+		for dj in depth_positions:
+			cx, cy = (ai, dj) if horizontal else (dj, ai)
+			bid = _spawn_box_centered_xyz((cx, cy, post_half[2]), post_half, frame_color)
+			walls_extra.append(bid)
+			static_meta.append({
+				"id": f"{rack_id}_post_{len(static_meta)+1:03d}",
+				"type": rack_type,
+				"body_id": bid,
+				"aabb": [cx - post_half[0], cy - post_half[1], cx + post_half[0], cy + post_half[1]],
+				"height": height,
+				"occlusion": True,
+				"reflective": reflective,
+				"component": "post",
+			})
+
+	# shelves/beams spanning the rack
+	axis_center = 0.5 * (axis_start + axis_end)
+	depth_center = 0.5 * (depth_start + depth_end)
+	for sz in shelf_zs:
+		if sz >= height - 0.1:
+			continue
+		if horizontal:
+			half = (0.5 * (axis_end - axis_start), depth_span * 0.45, beam_t * 0.5)
+			center = (axis_center, depth_center, sz + half[2])
+		else:
+			half = (depth_span * 0.45, 0.5 * (axis_end - axis_start), beam_t * 0.5)
+			center = (depth_center, axis_center, sz + half[2])
+		bid = _spawn_box_centered_xyz(center, half, beam_color)
+		walls_extra.append(bid)
+		static_meta.append({
+			"id": f"{rack_id}_beam_{len(static_meta)+1:03d}",
+			"type": rack_type,
+			"body_id": bid,
+			"aabb": [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]],
+			"height": beam_t,
+			"occlusion": True,
+			"reflective": reflective,
+			"component": "beam",
+		})
+
+	# random boxes per bay and shelf
+	for idx, sz in enumerate(shelf_zs):
+		next_z = shelf_zs[idx + 1] if idx + 1 < len(shelf_zs) else height - 0.05
+		vertical_gap = max(0.25, next_z - sz - beam_t)
+		if vertical_gap <= 0.2:
+			continue
+		for bay_idx in range(n_bays):
+			axis_seg_start = axis_start + bay_len * bay_idx + pillar_w * 0.35
+			axis_seg_end = axis_start + bay_len * (bay_idx + 1) - pillar_w * 0.35
+			if axis_seg_end - axis_seg_start <= 0.25:
+				continue
+			pos = axis_seg_start
+			while pos < axis_seg_end - 0.25:
+				remaining = axis_seg_end - pos
+				max_w = min(1.2, remaining - 0.05)
+				min_w = min(0.45, max_w)
+				if max_w <= 0.2:
+					break
+				w = rng.uniform(min_w, max_w)
+				d = rng.uniform(max(0.35, depth_span * 0.45), max(0.5, depth_span * 0.85))
+				h = rng.uniform(0.25, min(vertical_gap - 0.05, 0.9))
+				if horizontal:
+					cx, cy = pos + 0.5 * w, depth_center + rng.uniform(-0.15 * depth_span, 0.15 * depth_span)
+					half = (0.5 * w, 0.5 * d, 0.5 * h)
+				else:
+					cx, cy = depth_center + rng.uniform(-0.15 * depth_span, 0.15 * depth_span), pos + 0.5 * w
+					half = (0.5 * d, 0.5 * w, 0.5 * h)
+				center_z = sz + beam_t + half[2]
+				if center_z + half[2] > height:
+					break
+				bid = _spawn_box_centered_xyz((cx, cy, center_z), half, box_color)
+				walls_extra.append(bid)
+				static_meta.append({
+					"id": f"{rack_id}_box_{len(static_meta)+1:03d}",
+					"type": rack_type,
+					"body_id": bid,
+					"aabb": [cx - half[0], cy - half[1], cx + half[0], cy + half[1]],
+					"height": h,
+					"occlusion": True,
+					"reflective": reflective,
+					"component": "load",
+				})
+				pos += w + rng.uniform(0.05, 0.18)
 
 def _expand_aisle_zone(zone: List[float], bounds: Tuple[float, float], scale: float | Tuple[float, float, float, float] = 1.3) -> List[float]:
 	x0, y0, x1, y1 = zone
@@ -739,28 +884,28 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 		bid, meta = _spawn_walkway(zone, lane_type, mu)
 		cx = 0.5 * (zone[0] + zone[2])
 		cy = 0.5 * (zone[1] + zone[3])
-		meta.update({
-			"center": (cx, cy),
-			"half_extents": (0.5 * (zone[2] - zone[0]), 0.5 * (zone[3] - zone[1])),
-			"yaw": float(aisle.get("yaw", 0.0)),
-			"width_m": min(zone[2] - zone[0], zone[3] - zone[1]),
-		})
-		meta.update({
-			"id": entry["id"],
-			"name": aisle.get("name"),
-		})
-		patch_bodies.append(bid)
-		floor_meta.append(meta)
-		aisle_meta.append(meta)
-		# Solid geometry should come from explicit AABBs (geometry.racking/endcaps/static_obstacles).
-		allow_auto_racks = bool(aisle.get("spawn_racking_from_aisle") or aisle.get("allow_aisle_racking"))
-		if allow_auto_racks and aisle.get("racking"):
-			rack_cfg = aisle["racking"] if isinstance(aisle.get("racking"), dict) else {}
-			if "height_m" not in rack_cfg and aisle.get("rack_height_m"):
-				rack_cfg["height_m"] = aisle.get("rack_height_m")
-			if "type" not in rack_cfg:
-				rack_cfg["type"] = "high_bay" if aisle.get("high_bay") else "rack"
-			_spawn_aisle_racks(zone, (Lx, Ly), rack_cfg, static_meta, cutouts=aisle_cutouts.get(entry["id"], []))
+	meta.update({
+		"center": (cx, cy),
+		"half_extents": (0.5 * (zone[2] - zone[0]), 0.5 * (zone[3] - zone[1])),
+		"yaw": float(aisle.get("yaw", 0.0)),
+		"width_m": min(zone[2] - zone[0], zone[3] - zone[1]),
+	})
+	meta.update({
+		"id": entry["id"],
+		"name": aisle.get("name"),
+	})
+	patch_bodies.append(bid)
+	floor_meta.append(meta)
+	aisle_meta.append(meta)
+	# Solid geometry should come from explicit AABBs (geometry.racking/endcaps/static_obstacles).
+	allow_auto_racks = bool(aisle.get("spawn_racking_from_aisle") or aisle.get("allow_aisle_racking"))
+	if allow_auto_racks and aisle.get("racking"):
+		rack_cfg = aisle["racking"] if isinstance(aisle.get("racking"), dict) else {}
+		if "height_m" not in rack_cfg and aisle.get("rack_height_m"):
+			rack_cfg["height_m"] = aisle.get("rack_height_m")
+		if "type" not in rack_cfg:
+			rack_cfg["type"] = "high_bay" if aisle.get("high_bay") else "rack"
+		_spawn_aisle_racks(zone, (Lx, Ly), rack_cfg, static_meta, walls_extra, cutouts=aisle_cutouts.get(entry["id"], []))
 
 	for entry in junction_entries:
 		zone = entry["zone"]
@@ -791,21 +936,8 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 			continue
 		aabb = _clamp_zone(list(aabb), (Lx, Ly), issues, label=f"rack:{rack.get('id')}")
 		height = float(rack.get("height_m", 3.0))
-		rgba = (0.7, 0.5, 0.3, 1.0)
 		reflective = bool((rack.get("type") or "").lower() == "high_bay" or rack.get("reflective", False))
-		if reflective:
-			rgba = (0.7, 0.7, 0.9, 1.0)
-		bid = _spawn_box_from_aabb(aabb, height, rgba=rgba)
-		walls_extra.append(bid)
-		static_meta.append({
-			"id": rack.get("id"),
-			"type": rack.get("type", "rack"),
-			"body_id": bid,
-			"aabb": aabb,
-			"height": height,
-			"occlusion": True,
-			"reflective": reflective,
-		})
+		_spawn_detailed_rack(aabb, height, rack.get("id") or "Rack", rack.get("type", "rack"), reflective, static_meta, walls_extra)
 
 	for storage in geometry.get("open_storage", []):
 		aabb = storage.get("aabb")
