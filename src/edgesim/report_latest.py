@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os
+import os, webbrowser
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -53,7 +53,12 @@ def main():
 
     out = generate_report(batch_dir)
     print(f"[OK] Wrote {out}")
-    print(f"[INFO] Open this file in your browser: {out}")
+    try:
+        webbrowser.open_new_tab(out.resolve().as_uri())
+    except Exception:
+        print(f"[INFO] Open this file in your browser: {out}")
+    else:
+        print(f"[INFO] Opened report in browser: {out}")
 
 if __name__ == "__main__":
     main()

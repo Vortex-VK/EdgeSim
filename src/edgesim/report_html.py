@@ -1,518 +1,883 @@
 from __future__ import annotations
-import json, csv, hashlib, math
-from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+
+import csv
+import hashlib
+import json
+import math
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import yaml
+
+# ---------------------------------------------------------------------------
+# HTML template (Tailwind/shadcn-inspired styling to match the frontend vibe)
+# ---------------------------------------------------------------------------
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>EdgeSim Report — {title}</title>
-<style>
-body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; color: #111; }}
-h1 {{ margin: 0 0 8px 0; }}
-h2 {{ margin-top: 28px; }}
-.card {{ border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin: 12px 0; }}
-.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }}
-.small {{ color: #555; font-size: 12px; }}
-.badge {{ display:inline-block; padding:2px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:12px; }}
-.table {{ width: 100%; border-collapse: collapse; }}
-.table th, .table td {{ border-bottom: 1px solid #eee; padding: 8px; text-align: left; }}
-.code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 12px; background: #f8fafc; padding: 2px 6px; border-radius: 6px; }}
-.svg {{ width: 100%; height: 160px; border: 1px solid #eee; border-radius: 8px; background: #fafafa; }}
-.gallery img {{ width: 100%; height: auto; border-radius: 8px; border:1px solid #eee; }}
-footer {{ margin-top: 24px; color:#666; font-size:12px; }}
-.kv {{ display:grid; grid-template-columns: 180px 1fr; gap:8px; }}
-.kv div:nth-child(odd) {{ color:#555; }}
-.tag {{ display:inline-block; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:999px; padding:2px 8px; margin:2px; font-size:12px; }}
-.acclist li {{ margin:6px 0; }}
-.pass {{ color:#065f46; }}
-.fail {{ color:#b91c1c; }}
-.warn {{ color:#92400e; }}
-.m_ok {{ color:#065f46; font-weight:600; }}
-.m_mid {{ color:#92400e; font-weight:600; }}
-.m_bad {{ color:#b91c1c; font-weight:600; }}
-.legend span {{ display:inline-block; margin-right:10px; font-size:12px; }}
-</style>
+  <meta charset="UTF-8" />
+  <title>EdgeSim Report — {title}</title>
+  <style>
+    :root {{
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --accent: #0f172a;
+      --accent-2: #1d4ed8;
+      --accent-3: #0ea5e9;
+      --good: #16a34a;
+      --warn: #f59e0b;
+      --bad: #dc2626;
+      --rack: #a16207;
+      --aisle: #e2e8f0;
+      --traction: #bae6fd;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      padding: 0;
+      background: radial-gradient(circle at 10% 20%, #e0f2fe 0%, #f8fafc 30%, #eef2ff 60%, #f8fafc 100%);
+      font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #0f172a;
+    }}
+    .page {{
+      max-width: 1180px;
+      margin: 24px auto;
+      padding: 0 18px 32px;
+    }}
+    h1 {{ font-size: 28px; margin: 0 0 6px 0; letter-spacing: -0.02em; }}
+    h2 {{ font-size: 20px; margin: 0 0 12px 0; letter-spacing: -0.01em; }}
+    h3 {{ font-size: 15px; margin: 0 0 6px 0; color: var(--muted); }}
+    .muted {{ color: var(--muted); font-size: 13px; }}
+    .card {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px 18px;
+      box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06);
+    }}
+    .cards-2 {{ display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); margin-top: 14px; }}
+    .cards-3 {{ display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); margin-top: 14px; }}
+    .cards-1 {{ display: grid; gap: 14px; grid-template-columns: 1fr; margin-top: 14px; }}
+    .chip {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #eef2ff;
+      color: #312e81;
+      font-size: 12px;
+      border: 1px solid #e0e7ff;
+    }}
+    .metric-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 8px; }}
+    .metric-grid.tight {{ grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); }}
+    .metric {{
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+    }}
+    .metric .label {{ font-size: 12px; color: var(--muted); margin-bottom: 4px; display: block; }}
+    .metric .value {{ font-size: 18px; font-weight: 700; }}
+    .pill {{ padding: 2px 8px; border-radius: 10px; font-size: 12px; display: inline-block; }}
+    .pill.good {{ background: #dcfce7; color: #166534; }}
+    .pill.bad {{ background: #fee2e2; color: #991b1b; }}
+    .pill.warn {{ background: #fef3c7; color: #92400e; }}
+    .table {{ width: 100%; border-collapse: collapse; margin-top: 4px; }}
+    .table th, .table td {{ padding: 8px 6px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13px; }}
+    .table th {{ font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: 0.01em; }}
+    .tag {{ display: inline-block; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 12px; padding: 3px 9px; margin: 2px 4px 2px 0; font-size: 12px; }}
+    .gallery {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }}
+    .gallery figure {{ margin: 0; }}
+    .gallery img {{ width: 100%; border-radius: 12px; border: 1px solid var(--border); }}
+    .legend {{ display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }}
+    .legend span {{ display: inline-flex; align-items: center; gap: 6px; }}
+    .dot {{ width: 10px; height: 10px; border-radius: 50%; display: inline-block; }}
+    .map-wrapper {{ width: 100%; height: 420px; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: #f8fafc; }}
+    svg {{ font-family: "Inter", system-ui, sans-serif; }}
+    .grid-2 {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; }}
+    .section {{ margin-top: 16px; }}
+    .section > h2 {{ margin-bottom: 8px; }}
+    footer {{ margin-top: 18px; color: var(--muted); font-size: 12px; }}
+    .badge {{ padding: 3px 8px; border-radius: 999px; background: #e0f2fe; color: #075985; font-size: 12px; }}
+    .code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 8px; font-size: 12px; }}
+    .prewrap {{ white-space: pre-wrap; word-break: break-word; }}
+    .prompt-block {{ background:#f8fafc; border:1px solid var(--border); border-radius:12px; padding:10px 12px; margin-top:8px; }}
+    .note {{ font-size:12px; color: var(--muted); margin-top:6px; }}
+  </style>
 </head>
 <body>
-<h1>EdgeSim Report</h1>
-<div class="small">Scenario: <span class="code">{scenario_name}</span> • Runs: <b>{runs}</b> • Generated: {generated_at}</div>
-<div class="small">Manifest: per_run_digest <span class="code">{per_run_digest}</span> • scenario.yaml <span class="code">{scenario_sha}</span> • seeds.json <span class="code">{seeds_sha}</span> • {repro_badge}</div>
-
-<div class="card">
-  <h2>Context Summary</h2>
-  <div class="small">Schema validation: <b>{schema_status}</b>{schema_hint}</div>
-  {context_html}
-</div>
-
-<div class="card">
-  <h2>Acceptance Checklist</h2>
-  <ul class="acclist">
-    <li class="{chk_failrate_cls}">Failure rate ≥ 10% (stress): <b>{fail_rate:.2f}%</b></li>
-    <li class="{chk_repro_cls}">Reproducibility stamp present (CSV digest): <b>{per_run_digest_short}</b></li>
-    <li class="{chk_gap_cls}">Coverage shows at least one uncovered bucket (“gap”): <b>{gap_hint}</b></li>
-  </ul>
-  <div class="small">Run <span class="code">edgesim validate {title}</span> to see invariant checks in the console.</div>
-</div>
-
-<div class="card">
-  <h2>Outcomes</h2>
-  <div class="grid">
-    <div>
-      <div>Successes: <b>{success}</b></div>
-      <div>Collision (human): <b>{collision_human}</b></div>
-      <div>Other/Timeout: <b>{other}</b></div>
+  <div class="page">
+    <div class="section">
+      <h1>EdgeSim Report</h1>
+      <div class="muted">Scenario: <span class="code">{scenario_name}</span> • Runs: <b>{runs}</b> • Generated: {generated_at}</div>
+      <div class="muted">Seeds: <span class="code">{seeds_hint}</span> • Manifest digests: CSV <span class="code">{per_run_digest_short}</span> • world.json <span class="code">{world_sha_short}</span></div>
     </div>
-    <div>
-      <svg class="svg" viewBox="0 0 400 160">{svg_outcomes}</svg>
+
+    <div class="cards-2 section">
+      <div class="card">
+        <h2>Scenario & Randomization</h2>
+        <div class="prompt-block prewrap">{prompt}</div>
+        <div class="metric-grid" style="margin-top:12px;">
+          <div class="metric"><span class="label">Site / Profile</span><div class="value">{site_profile}</div></div>
+          <div class="metric"><span class="label">LiDAR noise / dropout</span><div class="value">{lidar_noise}</div></div>
+          <div class="metric"><span class="label">Traction μ (dry / wet)</span><div class="value">{traction_hint}</div></div>
+          <div class="metric"><span class="label">Runtime / dt</span><div class="value">{runtime_hint}</div></div>
+          <div class="metric"><span class="label">Seeds</span><div class="value">{seeds_hint}</div></div>
+        </div>
+        <div style="margin-top:10px;">{taxonomy_tags}</div>
+      </div>
+      <div class="card">
+        <h2>Run Overview</h2>
+        <div class="metric-grid">
+          <div class="metric"><span class="label">Success</span><div class="value">{success}</div></div>
+          <div class="metric"><span class="label">Collisions</span><div class="value">{collisions}</div></div>
+          <div class="metric"><span class="label">Other / Timeout</span><div class="value">{other}</div></div>
+          <div class="metric"><span class="label">Worst clearance</span><div class="value">{worst_clearance}</div></div>
+          <div class="metric"><span class="label">Min TTC</span><div class="value">{min_ttc}</div></div>
+        </div>
+        <div class="prompt-block prewrap" style="margin-top:12px;"><b>Representative run:</b> {rep_run}</div>
+      </div>
     </div>
+
+    <div class="cards-2 section">
+      <div class="card">
+        <h2>Hazards & Layout</h2>
+        <div class="metric-grid">
+          <div class="metric"><span class="label">Aisles</span><div class="value">{aisle_count}</div></div>
+          <div class="metric"><span class="label">Traction patches</span><div class="value">{patch_count}</div></div>
+          <div class="metric"><span class="label">Humans</span><div class="value">{human_count}</div></div>
+          <div class="metric"><span class="label">Vehicles</span><div class="value">{vehicle_count}</div></div>
+          <div class="metric"><span class="label">Static obstacles</span><div class="value">{static_count}</div></div>
+        </div>
+        <div class="muted" style="margin-top:8px;">Traction zones, aisles, racks, start/goal are drawn on the map below.</div>
+      </div>
+      <div class="card">
+        <h2>Repro & digests</h2>
+        <div class="metric-grid">
+          <div class="metric"><span class="label">CSV digest</span><div class="value" style="font-size:13px;">{per_run_digest_short}</div></div>
+          <div class="metric"><span class="label">scenario.yaml</span><div class="value" style="font-size:13px;">{scenario_sha_short}</div></div>
+          <div class="metric"><span class="label">seeds.json</span><div class="value" style="font-size:13px;">{seeds_sha_short}</div></div>
+          <div class="metric"><span class="label">world.json</span><div class="value" style="font-size:13px;">{world_sha_short}</div></div>
+        </div>
+        <div class="muted" style="margin-top:8px;">Run <span class="code">edgesim verify --run {verify_path}</span> to re-check digests.</div>
+      </div>
+    </div>
+
+    <div class="cards-1 section">
+      <div class="card">
+        <h2>Top-down Map & Trajectory</h2>
+        <div class="map-wrapper" style="height:480px;">{map_svg}</div>
+        <div class="legend">
+          <span><span class="dot" style="background:{color_robot};"></span>Robot path</span>
+          <span><span class="dot" style="background:{color_event_collision};"></span>Collisions</span>
+          <span><span class="dot" style="background:{color_event_slip};"></span>Slips</span>
+          <span><span class="dot" style="background:{color_event_near};"></span>Near-miss / occluded</span>
+          <span><span class="dot" style="background:{color_traction};"></span>Traction patches</span>
+          <span><span class="dot" style="background:{color_rack};"></span>Racks / obstacles</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cards-2 section">
+      <div class="card">
+        <h2>Clearance over time</h2>
+        <div>{clearance_chart}</div>
+      </div>
+      <div class="card">
+        <h2>Time-to-collision (TTC)</h2>
+        <div>{ttc_chart}</div>
+      </div>
+    </div>
+
+    <div class="cards-1 section">
+      <div class="card">
+        <h2>Edge-case events</h2>
+        {events_table}
+      </div>
+    </div>
+
+    <div class="cards-2 section">
+      <div class="card">
+        <h2>Actors</h2>
+        {actors_block}
+      </div>
+      <div class="card">
+        <h2>Coverage & Outcomes</h2>
+        {coverage_block}
+      </div>
+    </div>
+
+    <footer>EdgeSim • offline HTML report • v1 • Digests: CSV {per_run_digest_short}, scenario {scenario_sha_short}, seeds {seeds_sha_short}</footer>
   </div>
-</div>
-
-<div class="card">
-  <h2>Coverage (taxonomy)</h2>
-  {coverage_html}
-</div>
-
-<div class="card">
-  <h2>Min-Clearance (per run)</h2>
-  <svg class="svg" viewBox="0 0 400 160">{svg_clearance}</svg>
-</div>
-
-<div class="card">
-  <h2>Time-to-Goal (successes only)</h2>
-  <svg class="svg" viewBox="0 0 400 160">{svg_ttg}</svg>
-</div>
-
-<div class="card">
-  <h2>Calibration</h2>
-  <div class="legend small">
-    <span><b>R²</b> (↑ good): green ≥ 0.90, yellow 0.70–0.90, red &lt; 0.70</span>
-    <span><b>KL</b> (↓ good): green ≤ 0.05, yellow 0.05–0.15, red &gt; 0.15</span>
-    <span><b>ECE</b> (↓ good): green ≤ 0.02, yellow 0.02–0.06, red &gt; 0.06</span>
-  </div>
-  <div class="kv" style="margin-top:8px;">
-    <div>R² (speed profile)</div><div>{calib_r2}</div>
-    <div>KL (obstacle range hist)</div><div>{calib_kl}</div>
-    <div>ECE (failure prob)</div><div>{calib_ece}</div>
-  </div>
-  <div class="small" style="margin-top:8px;">Provide anchors via <span class="code">edgesim calibrate --anchors anchors.csv --site my_site --run runs/…</span> to populate this section.</div>
-</div>
-
-<div class="card">
-  <h2>Sample Frames (failures preferred)</h2>
-  <div class="grid gallery">
-    {gallery}
-  </div>
-</div>
-
-<footer>EdgeSim • offline HTML report • no external JS • v0</footer>
 </body>
 </html>
 """
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def _sha256_file(path: Path) -> str:
-	h = hashlib.sha256()
-	h.update(path.read_bytes())
-	return h.hexdigest()
+    h = hashlib.sha256()
+    h.update(path.read_bytes())
+    return h.hexdigest()
+
 
 def _digest_csvs(per_run_dir: Path) -> str:
-	h = hashlib.sha256()
-	for p in sorted(per_run_dir.rglob("*.csv")):
-		h.update(p.read_bytes())
-	return h.hexdigest()
+    h = hashlib.sha256()
+    for p in sorted(per_run_dir.rglob("*.csv")):
+        h.update(p.read_bytes())
+    return h.hexdigest()
 
-def _parse_min_clearance(row: Dict[str, str]) -> float | None:
-	for k in ("min_clearance_geom", "min_clearance_lidar", "min_clearance"):
-		if k in row and row[k] != "":
-			try:
-				return float(row[k])
-			except Exception:
-				return None
-	return None
 
-def _load_counts_and_metrics(batch_dir: Path) -> Tuple[int, int, int, List[float], List[float]]:
-	per_run = batch_dir / "per_run"
-	success = coll_human = other = 0
-	mincls: List[float] = []
-	ttg: List[float] = []
+def _safe_load_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
-	for run_csv in sorted(per_run.glob("run_*/run_one.csv")):
-		with run_csv.open(newline="", encoding="utf-8") as f:
-			r = csv.DictReader(f)
-			last_t = 0.0
-			last_min = math.inf
-			end_event = ""
-			for row in r:
-				try:
-					t = float(row.get("t", "") or "0")
-					last_t = t
-				except Exception:
-					pass
-				mc = _parse_min_clearance(row)
-				if mc is not None and mc < last_min:
-					last_min = mc
-				ev = row.get("event", "")
-				if ev:
-					end_event = ev
-			if last_min is math.inf:
-				last_min = float("nan")
-			mincls.append(last_min)
-			if end_event == "success":
-				success += 1
-				ttg.append(last_t)
-			elif end_event == "collision_human":
-				coll_human += 1
-			else:
-				other += 1
-	return success, coll_human, other, mincls, ttg
 
-def _svg_bar_chart(values: List[int], labels: List[str], colors: Optional[List[str]] = None, max_height: int = 120) -> str:
-	total = max(1, max(values))
-	w = 360; x0 = 20; y0 = 120
-	bar_w = int((w - x0 - 20) / max(1, len(values)))
-	parts = []
-	for i, v in enumerate(values):
-		hp = int(max_height * (v / total))
-		x = x0 + i * bar_w
-		y = y0 - hp
-		fill = colors[i] if colors and i < len(colors) else "#60a5fa"
-		parts.append(f'<rect x="{x}" y="{y}" width="{bar_w-8}" height="{hp}" fill="{fill}" />')
-		parts.append(f'<text x="{x + (bar_w-8)/2}" y="{y0 + 14}" font-size="12" text-anchor="middle">{labels[i]}</text>')
-	return "".join(parts)
+def _safe_load_yaml(path: Path) -> dict:
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
 
-def _svg_hist(data: List[float], bins: int, low: float, high: float, color="#34d399", max_height: int = 120) -> str:
-	if not data:
-		return '<text x="200" y="80" text-anchor="middle" fill="#999">no data</text>'
-	step = (high - low) / bins if bins > 0 else 1.0
-	hist = [0] * bins
-	for v in data:
-		if math.isnan(v):
-			continue
-		k = int((v - low) / step)
-		if k < 0: k = 0
-		if k >= bins: k = bins - 1
-		hist[k] += 1
-	total = max(1, max(hist))
-	w = 360; x0 = 20; y0 = 120
-	bar_w = int((w - x0 - 20) / max(1, bins))
-	parts = []
-	for i, v in enumerate(hist):
-		hp = int(max_height * (v / total))
-		x = x0 + i * bar_w
-		y = y0 - hp
-		parts.append(f'<rect x="{x}" y="{y}" width="{bar_w-2}" height="{hp}" fill="{color}" />')
-	parts.append(f'<text x="{x0}" y="{y0 + 14}" font-size="12">{low:.1f}</text>')
-	parts.append(f'<text x="{x0 + (w-x0-20)/2}" y="{y0 + 14}" font-size="12" text-anchor="middle">{(low+high)/2:.1f}</text>')
-	parts.append(f'<text x="{w}" y="{y0 + 14}" font-size="12" text-anchor="end">{high:.1f}</text>')
-	return "".join(parts)
 
-def _pick_gallery(batch_dir: Path, prefer_failures: bool = True, limit: int = 8) -> List[Tuple[str, str]]:
-	per_run = batch_dir / "per_run"
-	frames = batch_dir / "frames_sample"
-	chosen: List[Tuple[str, str]] = []
+def _parse_float(val: str | float | int | None, default: float = math.nan) -> float:
+    try:
+        return float(val)
+    except Exception:
+        return default
 
-	outcomes: Dict[str, Tuple[str, float, float]] = {}
-	for run_csv in sorted(per_run.glob("run_*/run_one.csv")):
-		run_name = run_csv.parent.name
-		with run_csv.open(newline="", encoding="utf-8") as f:
-			r = csv.DictReader(f)
-			end_event = ""; last_min = math.inf; last_t = 0.0
-			for row in r:
-				ev = row.get("event", "")
-				if ev:
-					end_event = ev
-				mc = _parse_min_clearance(row)
-				if mc is not None and mc < last_min:
-					last_min = mc
-				try:
-					last_t = float(row.get("t", "") or "0")
-				except Exception:
-					pass
-			outcomes[run_name] = (end_event or "other", last_min if last_min < math.inf else float("nan"), last_t)
 
-	candidates: List[Tuple[str, str]] = []
-	if frames.exists():
-		for run_dir in sorted(frames.glob("run_*")):
-			run_name = run_dir.name
-			imgs = sorted(run_dir.glob("*.png"))
-			if not imgs:
-				continue
-			img_rel = f"frames_sample/{run_name}/{imgs[-1].name}"
-			ev, mclr, tend = outcomes.get(run_name, ("other", float("nan"), float("nan")))
-			caption = f"{run_name}: {ev}, min_clear={mclr:.2f}, t_end={tend:.1f}s"
-			candidates.append((caption, img_rel))
+def _find_run_dirs(batch_dir: Path) -> List[Path]:
+    """Return list of run directories (handles batch/per_run and single-run folders)."""
+    per_run = batch_dir / "per_run"
+    if per_run.exists():
+        runs = sorted([p for p in per_run.glob("run_*") if p.is_dir()])
+        if runs:
+            return runs
+    # fallback: single run folder
+    if (batch_dir / "run_one.csv").exists():
+        return [batch_dir]
+    return []
 
-	if prefer_failures:
-		for cap, rel in candidates:
-			if "collision_human" in cap and len(chosen) < limit:
-				chosen.append((cap, rel))
-	for cap, rel in candidates:
-		if len(chosen) >= limit:
-			break
-		if (cap, rel) not in chosen:
-			chosen.append((cap, rel))
-	return chosen[:limit]
 
-def _render_coverage_table(coverage: Dict[str, Dict[str, float] | Dict[str, int]]) -> str:
-	if not coverage:
-		return '<div class="small">No coverage computed. (Run built without coverage module or no per_run CSVs yet.)</div>'
-	def rows_of(key: str) -> List[Tuple[str, str]]:
-		sec = coverage.get(key, {})
-		if not isinstance(sec, dict):
-			return []
-		items = list(sec.items())
-		return [(k, f"{v:.2f}%") if isinstance(v, float) else (k, str(v)) for k, v in items]
+def _event_color_key(typ: str) -> str:
+    t = (typ or "").lower()
+    if "collision" in t:
+        return "ev_collision"
+    if "slip" in t:
+        return "ev_floor_slip"
+    if "occluded" in t:
+        return "ev_near_miss"
+    if "near" in t or "hard_brake" in t:
+        return "ev_near_miss"
+    if "success" in t:
+        return "ev_success"
+    if "timeout" in t:
+        return "ev_timeout"
+    return "event_other"
 
-	def table_for(title: str, key: str) -> str:
-		rows = rows_of(key)
-		if not rows:
-			return ""
-		t = [f"<h3 style='margin:8px 0 6px 0;'>{title}</h3>",
-		     "<table class='table'><thead><tr><th>Bucket</th><th>Value</th></tr></thead><tbody>"]
-		for k, v in rows:
-			t.append(f"<tr><td>{k}</td><td>{v}</td></tr>")
-		t.append("</tbody></table>")
-		return "\n".join(t)
 
-	parts = []
-	parts.append(table_for("Traction (pct)", "traction_pct"))
-	parts.append(table_for("Human phase (pct)", "human_phase_pct"))
-	parts.append(table_for("Clearance bands (pct)", "clearance_bands_pct"))
-	parts.append(table_for("Outcomes (pct)", "outcomes_pct"))
-	parts.append(table_for("Traction (counts)", "traction"))
-	parts.append(table_for("Human phase (counts)", "human_phase"))
-	parts.append(table_for("Clearance bands (counts)", "clearance_bands"))
-	parts.append(table_for("Outcomes (counts)", "outcomes"))
-	return "\n".join(x for x in parts if x)
+# ---------------------------------------------------------------------------
+# Run parsing
+# ---------------------------------------------------------------------------
 
-def _any_coverage_gap(coverage: Dict[str, Dict[str, float] | Dict[str, int]]) -> Tuple[bool, str]:
-	pct_keys = ["traction_pct","human_phase_pct","clearance_bands_pct","outcomes_pct"]
-	for key in pct_keys:
-		sec = coverage.get(key, {})
-		if isinstance(sec, dict):
-			for b, v in sec.items():
-				try:
-					if float(v) <= 1e-9:
-						return True, f"{key}:{b}=0%"
-				except Exception:
-					continue
-	return False, "none detected"
+Event = Dict[str, object]
 
-def _render_context(summary: Dict[str, object]) -> str:
-	if not summary:
-		return '<div class="small">No context summary available. (Missing validation.json or older pipeline.)</div>'
-	def li(k, v):
-		return f"<li><b>{k}:</b> {v}</li>"
-	m = summary.get("map", {}) if isinstance(summary.get("map"), dict) else {}
-	r = summary.get("runtime", {}) if isinstance(summary.get("runtime"), dict) else {}
-	h = summary.get("hazards", {}) if isinstance(summary.get("hazards"), dict) else {}
-	tx = summary.get("flags", {}) if isinstance(summary.get("flags"), dict) else {}
-	if isinstance(tx, dict):
-		tx = tx.get("taxonomy", {}) or {}
 
-	parts = ['<div class="grid">']
-	# Map
-	parts.append('<div><h3>Map</h3><ul>')
-	parts.append(li("size_m", m.get("size_m")))
-	parts.append(li("start", m.get("start")))
-	parts.append(li("goal",  m.get("goal")))
-	parts.append('</ul></div>')
-	# Hazards
-	parts.append('<div><h3>Hazards</h3>')
-	tr = h.get("traction_patches", []) if isinstance(h, dict) else []
-	if isinstance(tr, list) and tr:
-		parts.append("<div><b>Traction patches:</b><ul>")
-		for i, pz in enumerate(tr):
-			try:
-				zone = pz.get("zone")
-				mu = float(pz.get("mu"))
-				parts.append(f"<li>#{i+1} zone={zone} mu={mu:.2f}</li>")
-			except Exception:
-				continue
-		parts.append("</ul></div>")
-	hu = h.get("human", []) if isinstance(h, dict) else []
-	if isinstance(hu, list) and hu:
-		parts.append("<div><b>Human crossers:</b><ul>")
-		for i, hh in enumerate(hu):
-			path = hh.get("path", "line")
-			rpm = hh.get("rate_per_min", "default")
-			spd = hh.get("speed_mps", [0.8, 1.4])
-			parts.append(f"<li>#{i+1} path={path} rate_per_min={rpm} speed_mps={spd}</li>")
-		parts.append("</ul></div>")
-	if (not tr) and (not hu):
-		parts.append('<div class="small">None</div>')
-	parts.append('</div>')
-	# Runtime + taxonomy
-	parts.append('<div><h3>Runtime</h3><ul>')
-	parts.append(li("duration_s", r.get("duration_s")))
-	parts.append(li("dt", r.get("dt")))
-	parts.append('</ul><h3>Flags</h3><div>')
-	if isinstance(tx, dict) and tx:
-		parts.append(''.join(f'<span class="tag">{k}={v}</span>' for k, v in tx.items()))
-	else:
-		parts.append('<div class="small">No taxonomy flags.</div>')
-	parts.append('</div></div>')
-	parts.append('</div>')
-	return ''.join(parts)
+def _parse_run(run_dir: Path) -> dict:
+    csv_path = run_dir / "run_one.csv"
+    events: List[Event] = []
+    path: List[Tuple[float, float]] = []
+    clearance_series: List[Tuple[float, float]] = []
+    ttc_series: List[Tuple[float, float]] = []
+    outcome = "unknown"
+    min_clearance = math.inf
+    min_ttc = math.inf
+    t_end = 0.0
 
-def _badge_for(metric: str, val: float) -> str:
-	if metric == "r2":
-		if not (val == val): return '<span class="small">NA</span>'
-		cls = "m_ok" if val >= 0.90 else ("m_mid" if val >= 0.70 else "m_bad")
-		return f'<span class="{cls}">{val:.3f}</span>'
-	if metric in ("kl","ece"):
-		if not (val == val): return '<span class="small">NA</span>'
-		thr = (0.05, 0.15) if metric == "kl" else (0.02, 0.06)
-		cls = "m_ok" if val <= thr[0] else ("m_mid" if val <= thr[1] else "m_bad")
-		return f'<span class="{cls}">{val:.3f}</span>'
-	return '<span class="small">NA</span>'
+    if not csv_path.exists():
+        return {
+            "run_name": run_dir.name,
+            "events": events,
+            "path": path,
+            "clearance": clearance_series,
+            "ttc": ttc_series,
+            "outcome": outcome,
+            "min_clearance": math.nan,
+            "min_ttc": math.nan,
+            "t_end": 0.0,
+        }
+
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            t = _parse_float(row.get("t"), default=t_end)
+            t_end = t
+            x = _parse_float(row.get("x"))
+            y = _parse_float(row.get("y"))
+            if not math.isnan(x) and not math.isnan(y):
+                path.append((x, y))
+
+            mc_geom = _parse_float(row.get("min_clearance_geom"))
+            mc_lidar = _parse_float(row.get("min_clearance_lidar"))
+            mc = mc_geom if not math.isnan(mc_geom) else mc_lidar
+            if math.isnan(mc):
+                mc = _parse_float(row.get("min_clearance"))
+            if not math.isnan(mc):
+                clearance_series.append((t, mc))
+                if mc < min_clearance:
+                    min_clearance = mc
+
+            ttc_val = _parse_float(row.get("min_ttc"))
+            if not math.isnan(ttc_val):
+                ttc_series.append((t, ttc_val))
+                if ttc_val < min_ttc:
+                    min_ttc = ttc_val
+
+            ev = (row.get("event") or "").strip()
+            detail = (row.get("event_detail") or "").strip()
+            near_stop = row.get("near_stop", "0")
+            hard_brake = row.get("hard_brake", "0")
+            near_miss = row.get("near_miss", "0")
+            occluded = row.get("occluded_hazard", "0")
+
+            def _add_event(label: str, kind: str) -> None:
+                events.append({
+                    "t": t,
+                    "x": x,
+                    "y": y,
+                    "type": kind,
+                    "label": label,
+                    "detail": detail,
+                    "min_clearance": mc,
+                    "min_ttc": ttc_val,
+                })
+
+            if ev:
+                outcome = ev
+                _add_event(ev, ev)
+            if near_stop and near_stop != "0":
+                _add_event("near_stop", "near_miss")
+            if hard_brake and hard_brake != "0":
+                _add_event("hard_brake", "near_miss")
+            if near_miss and near_miss != "0":
+                _add_event("near_miss", "near_miss")
+            if occluded and occluded != "0":
+                _add_event("occluded_hazard", "occluded")
+
+    if min_clearance == math.inf:
+        min_clearance = math.nan
+    if min_ttc == math.inf:
+        min_ttc = math.nan
+
+    return {
+        "run_name": run_dir.name,
+        "events": events,
+        "path": path,
+        "clearance": clearance_series,
+        "ttc": ttc_series,
+        "outcome": outcome,
+        "min_clearance": min_clearance,
+        "min_ttc": min_ttc,
+        "t_end": t_end,
+    }
+
+
+def _parse_actors(run_dir: Path) -> Dict[str, dict]:
+    actors_path = run_dir / "actors.csv"
+    if not actors_path.exists():
+        return {}
+    actors: Dict[str, dict] = {}
+    with actors_path.open(newline="", encoding="utf-8") as f:
+        r = csv.DictReader(f)
+        for row in r:
+            aid = row.get("actor_id") or "unknown"
+            atype = row.get("type") or "actor"
+            t = _parse_float(row.get("t"))
+            x = _parse_float(row.get("x"))
+            y = _parse_float(row.get("y"))
+            phase = row.get("phase") or ""
+            actors.setdefault(aid, {"id": aid, "type": atype, "path": [], "phases": set()})
+            if not math.isnan(t) and not math.isnan(x) and not math.isnan(y):
+                actors[aid]["path"].append((t, x, y))
+            if phase:
+                actors[aid]["phases"].add(phase)
+    # finalize phases to list
+    for a in actors.values():
+        a["phases"] = sorted(a["phases"])
+    return actors
+
+
+# ---------------------------------------------------------------------------
+# SVG render helpers
+# ---------------------------------------------------------------------------
+
+def _scale_builder(world_size: Tuple[float, float], width: float, height: float, margin: float = 24.0):
+    Lx, Ly = max(world_size[0], 1e-3), max(world_size[1], 1e-3)
+    def sx(x: float) -> float:
+        return margin + (x / Lx) * (width - 2 * margin)
+    def sy(y: float) -> float:
+        # invert y to keep top-down orientation consistent
+        return height - margin - (y / Ly) * (height - 2 * margin)
+    return sx, sy
+
+
+def _render_rect(zone: List[float], sx, sy, fill: str, stroke: str, opacity: float = 1.0, dash: Optional[str] = None) -> str:
+    if len(zone) != 4:
+        return ""
+    x0, y0, x1, y1 = zone
+    x = sx(x0)
+    y = sy(y1)  # top-left in SVG
+    w = sx(x1) - sx(x0)
+    h = sy(y0) - sy(y1)
+    dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+    return f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" fill="{fill}" fill-opacity="{opacity}" stroke="{stroke}" stroke-width="1" {dash_attr}/>'
+
+
+def _render_polyline(points: List[Tuple[float, float]], sx, sy, stroke: str, width: float = 2.0, opacity: float = 1.0) -> str:
+    if len(points) < 2:
+        return '<text x="50%" y="50%" text-anchor="middle" fill="#9ca3af">no trajectory</text>'
+    pts = " ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y in points)
+    return f'<polyline points="{pts}" fill="none" stroke="{stroke}" stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round" opacity="{opacity}"/>'
+
+
+def _render_map(world: dict, run: dict, colors: dict) -> str:
+    Lx, Ly = (20.0, 20.0)
+    env = world.get("environment", {}) if isinstance(world, dict) else {}
+    if isinstance(env, dict):
+        msize = env.get("map_size_m")
+        if isinstance(msize, (list, tuple)) and len(msize) == 2:
+            Lx, Ly = float(msize[0] or Lx), float(msize[1] or Ly)
+    sx, sy = _scale_builder((Lx, Ly), width=1000.0, height=420.0, margin=28.0)
+    svg_parts = []
+    svg_parts.append(f'<rect x="0" y="0" width="1000" height="420" fill="url(#bg)" />')
+
+    floor_zones = world.get("floor_zones", []) if isinstance(world, dict) else []
+    for zone in floor_zones:
+        z = zone.get("zone")
+        if isinstance(z, list) and len(z) == 4:
+            svg_parts.append(_render_rect(z, sx, sy, fill=colors["traction"], stroke=colors["traction"], opacity=0.35))
+
+    aisles = world.get("aisles", []) if isinstance(world, dict) else []
+    for a in aisles:
+        z = a.get("zone") if isinstance(a, dict) else None
+        if isinstance(z, list) and len(z) == 4:
+            svg_parts.append(_render_rect(z, sx, sy, fill=colors["aisle"], stroke="#cbd5e1", opacity=0.7))
+
+    static_obs = world.get("static_obstacles", []) if isinstance(world, dict) else []
+    for ob in static_obs:
+        z = ob.get("aabb")
+        if isinstance(z, list) and len(z) == 4:
+            svg_parts.append(_render_rect(z, sx, sy, fill=colors["rack"], stroke="#8b5cf6", opacity=0.65))
+
+    # Start/goal markers from world start/goal if present
+    start = world.get("start") if isinstance(world, dict) else None
+    goal = world.get("goal") if isinstance(world, dict) else None
+    if isinstance(start, (list, tuple)) and len(start) == 2:
+        svg_parts.append(f'<circle cx="{sx(start[0]):.1f}" cy="{sy(start[1]):.1f}" r="7" fill="#16a34a" stroke="#065f46" stroke-width="2"/>')
+        svg_parts.append(f'<text x="{sx(start[0]):.1f}" y="{sy(start[1])-12:.1f}" font-size="12" text-anchor="middle" fill="#065f46">start</text>')
+    if isinstance(goal, (list, tuple)) and len(goal) == 2:
+        svg_parts.append(f'<rect x="{sx(goal[0])-7:.1f}" y="{sy(goal[1])-7:.1f}" width="14" height="14" fill="#f97316" stroke="#c2410c" stroke-width="2" rx="3"/>')
+        svg_parts.append(f'<text x="{sx(goal[0]):.1f}" y="{sy(goal[1])+20:.1f}" font-size="12" text-anchor="middle" fill="#c2410c">goal</text>')
+
+    # Robot path
+    path_pts = run.get("path", [])
+    if path_pts:
+        svg_parts.append(_render_polyline(path_pts, sx, sy, stroke=colors["robot"], width=3.0, opacity=0.9))
+
+    # Events
+    for ev in run.get("events", []):
+        if not isinstance(ev, dict):
+            continue
+        x, y = ev.get("x"), ev.get("y")
+        if x is None or y is None or math.isnan(_parse_float(x)) or math.isnan(_parse_float(y)):
+            continue
+        t = ev.get("t", 0)
+        typ = ev.get("type", "")
+        color = colors.get(_event_color_key(str(typ)), colors["event_other"])
+        svg_parts.append(f'<circle cx="{sx(float(x)):.1f}" cy="{sy(float(y)):.1f}" r="6" fill="{color}" stroke="#0f172a" stroke-width="1.2" opacity="0.95"><title>{typ} @ {t:.1f}s</title></circle>')
+
+    svg = [
+        '<svg viewBox="0 0 1000 420" preserveAspectRatio="xMidYMid meet">',
+        '<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="100%" stop-color="#eef2ff"/></linearGradient></defs>',
+        "".join(svg_parts),
+        '</svg>',
+    ]
+    return "".join(svg)
+
+
+def _render_line_chart(series: List[Tuple[float, float]], events: List[Event], title: str, color: str, y_label: str, y_min: float | None = None, y_max: float | None = None) -> str:
+    if not series:
+        return '<div class="muted">No data</div>'
+    width, height, margin = 520, 240, 36
+    finite_series = [(t, v) for t, v in series if math.isfinite(t) and math.isfinite(v)]
+    if not finite_series:
+        return '<div class="muted">No data</div>'
+    ts = [p[0] for p in finite_series]
+    vs = [p[1] for p in finite_series]
+    if not ts or not vs:
+        return '<div class="muted">No data</div>'
+    tmin, tmax = min(ts), max(ts)
+    vmin = y_min if y_min is not None else min(vs)
+    vmax_raw = y_max if y_max is not None else max(vs)
+    # cap extreme spikes so the curve is readable
+    v_sorted = sorted(vs)
+    v95 = v_sorted[int(0.95 * (len(v_sorted) - 1))] if v_sorted else vmax_raw
+    if y_max is not None:
+        vmax = vmax_raw
+    else:
+        vmax = min(vmax_raw, v95 * 1.5) if v95 > 0 else vmax_raw
+    if vmax - vmin < 1e-6:
+        vmax = vmin + 1.0
+    def sx(t: float) -> float:
+        return margin + (t - tmin) / max(1e-6, (tmax - tmin)) * (width - 2 * margin)
+    def sy(v: float) -> float:
+        return height - margin - (v - vmin) / max(1e-6, (vmax - vmin)) * (height - 2 * margin)
+    clamped_series = [(t, min(max(v, vmin), vmax)) for t, v in finite_series]
+    pts = " ".join(f"{sx(t):.1f},{sy(v):.1f}" for t, v in clamped_series)
+    ev_marks = []
+    for ev in events:
+        t = _parse_float(ev.get("t"))
+        if math.isnan(t):
+            continue
+        ev_marks.append(f'<line x1="{sx(t):.1f}" x2="{sx(t):.1f}" y1="{margin}" y2="{height-margin}" stroke="#e5e7eb" stroke-dasharray="4 4"/>')
+    # axes ticks (3-point)
+    xm = (tmin + tmax) / 2.0
+    ym = (vmin + vmax) / 2.0
+    x_labels = "".join([
+        f'<text x="{sx(tmin):.1f}" y="{height - margin + 18:.1f}" font-size="11" text-anchor="start" fill="#6b7280">{tmin:.1f}</text>',
+        f'<text x="{sx(xm):.1f}" y="{height - margin + 18:.1f}" font-size="11" text-anchor="middle" fill="#6b7280">{xm:.1f}</text>',
+        f'<text x="{sx(tmax):.1f}" y="{height - margin + 18:.1f}" font-size="11" text-anchor="end" fill="#6b7280">{tmax:.1f}</text>',
+    ])
+    y_labels = "".join([
+        f'<text x="{margin - 6:.1f}" y="{sy(vmin):.1f}" font-size="11" text-anchor="end" fill="#6b7280">{vmin:.2f}</text>',
+        f'<text x="{margin - 6:.1f}" y="{sy(ym):.1f}" font-size="11" text-anchor="end" fill="#6b7280">{ym:.2f}</text>',
+        f'<text x="{margin - 6:.1f}" y="{sy(vmax):.1f}" font-size="11" text-anchor="end" fill="#6b7280">{vmax:.2f}</text>',
+    ])
+    svg = f"""
+    <svg viewBox="0 0 {width} {height}" preserveAspectRatio="xMidYMid meet">
+      <rect x="0" y="0" width="{width}" height="{height}" fill="#f8fafc" rx="10" />
+      <line x1="{margin}" y1="{height - margin}" x2="{width - margin}" y2="{height - margin}" stroke="#e5e7eb" />
+      <line x1="{margin}" y1="{margin}" x2="{margin}" y2="{height - margin}" stroke="#e5e7eb" />
+      <polyline points="{pts}" fill="none" stroke="{color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      {''.join(ev_marks)}
+      {x_labels}
+      {y_labels}
+      <text x="{width - margin}" y="{margin - 10}" font-size="12" text-anchor="end" fill="#6b7280">{y_label}</text>
+    </svg>
+    """
+    return svg
+
+
+def _coverage_block(coverage: dict, outcomes: dict) -> str:
+    parts = []
+    if outcomes:
+        parts.append("<h3>Outcomes</h3>")
+        parts.append("<div class='metric-grid tight'>")
+        for k, v in outcomes.items():
+            parts.append(f"<div class='metric'><span class='label'>{k}</span><div class='value'>{v}</div></div>")
+        parts.append("</div>")
+    parts.append("<h3>Coverage</h3>")
+    if not coverage:
+        parts.append('<div class="muted" style="margin-top:6px;">coverage.json not found; coverage stats skipped.</div>')
+        return "".join(parts)
+    for title, key in [("Traction", "traction_pct"), ("Human phase", "human_phase_pct"), ("Clearance bands", "clearance_bands_pct"), ("Outcomes pct", "outcomes_pct")]:
+        sec = coverage.get(key, {})
+        if not isinstance(sec, dict) or not sec:
+            continue
+        parts.append(f"<h3>{title}</h3>")
+        parts.append("<div>")
+        for b, v in sec.items():
+            parts.append(f"<span class='tag'>{b}: {v}%</span>")
+        parts.append("</div>")
+    return "".join(parts)
+
+
+def _events_table(events: List[Event]) -> str:
+    if not events:
+        return '<div class="muted">No notable events recorded.</div>'
+    rows = ["<table class='table'><thead><tr><th>Event</th><th>t (s)</th><th>min_clear (m)</th><th>min_ttc (s)</th><th>Note</th></tr></thead><tbody>"]
+    for ev in sorted(events, key=lambda e: e.get("t", 0)):
+        label = ev.get("label") or ev.get("type")
+        t = ev.get("t", 0.0)
+        mc = ev.get("min_clearance")
+        ttc = ev.get("min_ttc")
+        note = ev.get("detail", "") or ""
+        rows.append(f"<tr><td>{label}</td><td>{t:.1f}</td><td>{'' if mc is None or math.isnan(_parse_float(mc)) else f'{float(mc):.2f}'}</td><td>{'' if ttc is None or math.isnan(_parse_float(ttc)) else f'{float(ttc):.2f}'}</td><td>{note}</td></tr>")
+    rows.append("</tbody></table>")
+    return "".join(rows)
+
+
+def _actors_block(actors: Dict[str, dict]) -> str:
+    if not actors:
+        return '<div class="muted">actors.csv not found or empty.</div>'
+    parts = ["<table class='table'><thead><tr><th>ID</th><th>Type</th><th>Path pts</th><th>Phases seen</th></tr></thead><tbody>"]
+    for aid, a in sorted(actors.items()):
+        phases = ", ".join(a.get("phases", [])) or "—"
+        parts.append(f"<tr><td>{aid}</td><td>{a.get('type','')}</td><td>{len(a.get('path', []))}</td><td>{phases}</td></tr>")
+    parts.append("</tbody></table>")
+    return "".join(parts)
+
+
+def _pick_gallery(batch_dir: Path, prefer_failures: bool = True, limit: int = 6) -> List[Tuple[str, str]]:
+    per_run = batch_dir / "per_run"
+    frames = batch_dir / "frames_sample"
+    chosen: List[Tuple[str, str]] = []
+    outcomes: Dict[str, Tuple[str, float, float]] = {}
+    for run_csv in sorted(per_run.glob("run_*/run_one.csv")):
+        run_name = run_csv.parent.name
+        with run_csv.open(newline="", encoding="utf-8") as f:
+            r = csv.DictReader(f)
+            end_event = ""
+            last_min = math.inf
+            last_t = 0.0
+            for row in r:
+                ev = row.get("event", "")
+                if ev:
+                    end_event = ev
+                mc = _parse_float(row.get("min_clearance_geom"), default=math.inf)
+                if math.isnan(mc):
+                    mc = _parse_float(row.get("min_clearance_lidar"), default=math.inf)
+                if mc < last_min:
+                    last_min = mc
+                try:
+                    last_t = float(row.get("t", "") or "0")
+                except Exception:
+                    pass
+            outcomes[run_name] = (end_event or "other", last_min if last_min < math.inf else float("nan"), last_t)
+
+    candidates: List[Tuple[str, str]] = []
+    if frames.exists():
+        for run_dir in sorted(frames.glob("run_*")):
+            run_name = run_dir.name
+            imgs = sorted(run_dir.glob("*.png"))
+            if not imgs:
+                continue
+            img_rel = f"frames_sample/{run_name}/{imgs[-1].name}"
+            ev, mclr, tend = outcomes.get(run_name, ("other", float("nan"), float("nan")))
+            caption = f"{run_name}: {ev}, min_clear={mclr:.2f}, t_end={tend:.1f}s"
+            candidates.append((caption, img_rel))
+
+    if prefer_failures:
+        for cap, rel in candidates:
+            if "collision" in cap and len(chosen) < limit:
+                chosen.append((cap, rel))
+    for cap, rel in candidates:
+        if len(chosen) >= limit:
+            break
+        if (cap, rel) not in chosen:
+            chosen.append((cap, rel))
+    return chosen[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Main report builder
+# ---------------------------------------------------------------------------
 
 def generate_report(batch_dir: Path) -> Path:
-	title = batch_dir.name
-	scenario_path = batch_dir / "scenario.yaml"
-	seeds_path = batch_dir / "seeds.json"
-	per_run_dir = batch_dir / "per_run"
-	coverage_path = batch_dir / "coverage.json"
-	validation_path = batch_dir / "validation.json"
+    title = batch_dir.name
+    scenario_path = batch_dir / "scenario.yaml"
+    seeds_path = batch_dir / "seeds.json"
+    per_run_dir = batch_dir / "per_run"
+    coverage_path = batch_dir / "coverage.json"
+    validation_path = batch_dir / "validation.json"
+    manifest_path = batch_dir / "manifest.json"
 
-	per_run_digest = _digest_csvs(per_run_dir) if per_run_dir.exists() else "NA"
-	per_run_digest_short = per_run_digest[:12] + "…" if per_run_digest != "NA" else "NA"
-	scenario_sha = _sha256_file(scenario_path) if scenario_path.exists() else "NA"
-	seeds_sha = _sha256_file(seeds_path) if seeds_path.exists() else "NA"
+    scenario = _safe_load_yaml(scenario_path)
+    seeds = _safe_load_json(seeds_path)
+    manifest = _safe_load_json(manifest_path)
 
-	# manifest.json best-effort update
-	manifest = {
-		"per_run_digest": per_run_digest,
-		"scenario_sha256": scenario_sha,
-		"seeds_sha256": seeds_sha,
-		"generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-	}
-	manifest_path = batch_dir / "manifest.json"
-	try:
-		if manifest_path.exists():
-			old = json.loads(manifest_path.read_text(encoding="utf-8"))
-			old.update(manifest)
-			manifest = old
-		manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-	except Exception:
-		pass
+    # Prefer root world.json; otherwise take first run world.json
+    world_path = batch_dir / "world.json"
+    if not world_path.exists():
+        runs_candidate = _find_run_dirs(batch_dir)
+        for rdir in runs_candidate:
+            cand = rdir / "world.json"
+            if cand.exists():
+                world_path = cand
+                break
+    world = _safe_load_json(world_path) if world_path.exists() else {}
 
-	success, coll_human, other, mincls, ttg = _load_counts_and_metrics(batch_dir)
-	runs = success + coll_human + other
+    run_dirs = _find_run_dirs(batch_dir)
+    runs_data = [_parse_run(rd) for rd in run_dirs]
+    actors_data = _parse_actors(run_dirs[0]) if run_dirs else {}
 
-	# coverage.json (optional)
-	coverage: Dict[str, Dict] = {}
-	if coverage_path.exists():
-		try:
-			coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
-		except Exception:
-			coverage = {}
-	coverage_html = _render_coverage_table(coverage)
+    # Layout / hazard counts for summary
+    layout = scenario.get("layout", {}) if isinstance(scenario, dict) else {}
+    hazards_cfg = scenario.get("hazards", {}) if isinstance(scenario, dict) else {}
+    aisle_count = len(world.get("aisles", []) or layout.get("aisles", []) or [])
+    patch_count = len(world.get("floor_zones", []) or hazards_cfg.get("traction", []) or [])
+    human_count = len(hazards_cfg.get("human", []) or [])
+    vehicle_count = len(hazards_cfg.get("vehicles", []) or [])
+    static_from_world = world.get("static_obstacles", []) if isinstance(world, dict) else []
+    geom = layout.get("geometry", {}) if isinstance(layout, dict) else {}
+    racking = geom.get("racking", []) if isinstance(geom, dict) else []
+    static_count = len(static_from_world) if static_from_world else len(racking)
 
-	# validation.json (optional)
-	schema_status = "unknown"
-	schema_hint = ""
-	context_summary: Dict[str, object] = {}
-	if validation_path.exists():
-		try:
-			v = json.loads(validation_path.read_text(encoding="utf-8"))
-			ok = bool(v.get("ok", False))
-			errs = v.get("errors", []) or []
-			context_summary = v.get("context_summary", {}) or {}
-			schema_status = "PASS" if ok else "FAIL"
-			if not ok and errs:
-				schema_hint = " — " + "; ".join(errs[:3]) + (" …" if len(errs) > 3 else "")
-		except Exception:
-			schema_status = "unreadable"
+    # Aggregate outcomes
+    success = sum(1 for r in runs_data if r["outcome"] in ("success", "mission_success"))
+    collisions = sum(1 for r in runs_data if "collision" in str(r["outcome"]))
+    other = max(0, len(runs_data) - success - collisions)
+    runs = len(runs_data)
 
-	context_html = _render_context(context_summary)
+    # Representative run: prefer collision, then lowest clearance
+    rep_run = None
+    for r in runs_data:
+        if "collision" in str(r["outcome"]):
+            rep_run = r
+            break
+    if rep_run is None and runs_data:
+        rep_run = min(runs_data, key=lambda r: (r["min_clearance"] if not math.isnan(r["min_clearance"]) else 1e9))
+    rep_run = rep_run or (runs_data[0] if runs_data else {"run_name": "N/A", "events": [], "path": [], "clearance": [], "ttc": [], "min_clearance": math.nan, "min_ttc": math.nan})
 
-	# Acceptance checklist computation
-	total = max(1, runs)
-	fail_rate = 100.0 * (coll_human + other) / total
-	chk_failrate_cls = "pass" if fail_rate >= 10.0 else "fail"
-	chk_repro_cls = "pass" if per_run_digest != "NA" else "fail"
-	has_gap, gap_hint = _any_coverage_gap(coverage)
-	chk_gap_cls = "pass" if has_gap else "warn"
+    # Coverage
+    coverage = _safe_load_json(coverage_path) if coverage_path.exists() else {}
+    coverage_block = _coverage_block(coverage, {"success": success, "collisions": collisions, "other": other})
 
-	# Calibration metrics (new)
-	calib_r2 = '<span class="small">NA</span>'
-	calib_kl = '<span class="small">NA</span>'
-	calib_ece = '<span class="small">NA</span>'
-	cal_path = batch_dir / "calibration.json"
-	if cal_path.exists():
-		try:
-			cal = json.loads(cal_path.read_text(encoding="utf-8"))
-			if "r2" in cal:  calib_r2  = _badge_for("r2",  float(cal["r2"]))
-			if "kl" in cal:  calib_kl  = _badge_for("kl",  float(cal["kl"]))
-			if "ece" in cal: calib_ece = _badge_for("ece", float(cal["ece"]))
-		except Exception:
-			pass
+    # Domain/randomization hints
+    lidar_cfg = (scenario.get("sensors") or {}).get("lidar", {}) if isinstance(scenario, dict) else {}
+    lidar_noise = f"{lidar_cfg.get('noise_sigma','?')}, drop {lidar_cfg.get('dropout_pct','?')}"
+    floor_surfaces = (scenario.get("layout") or {}).get("floor_surfaces", []) if isinstance(scenario, dict) else []
+    mu_dry = [fs.get("mu") for fs in floor_surfaces if isinstance(fs, dict) and str(fs.get("type","")).lower() == "dry" and fs.get("mu") is not None]
+    mu_wet = [fs.get("mu") for fs in floor_surfaces if isinstance(fs, dict) and str(fs.get("type","")).lower() != "dry" and fs.get("mu") is not None]
+    traction_hint = f"dry {min(mu_dry):.2f}-{max(mu_dry):.2f}" if mu_dry else "—"
+    if mu_wet:
+        traction_hint += f" • wet {min(mu_wet):.2f}-{max(mu_wet):.2f}"
+    hazards = scenario.get("hazards", {}) if isinstance(scenario, dict) else {}
+    tax = scenario.get("taxonomy", {}) if isinstance(scenario, dict) else {}
+    taxonomy_tags = "".join(f"<span class='tag'>{k}={v}</span>" for k, v in tax.items()) if isinstance(tax, dict) and tax else '<span class="muted">No taxonomy flags</span>'
+    runtime_cfg = scenario.get("runtime", {}) if isinstance(scenario, dict) else {}
+    runtime_hint = f"{runtime_cfg.get('duration_s','?')}s @ dt={runtime_cfg.get('dt','?')}"
 
-	svg_outcomes = _svg_bar_chart([success, coll_human, other],
-	                              ["success","collision","other"],
-	                              colors=["#10b981","#ef4444","#9ca3af"])
-	svg_clearance = _svg_hist(mincls, bins=16, low=0.0, high=2.0, color="#60a5fa")
-	svg_ttg = _svg_hist(ttg, bins=16, low=0.0, high=120.0, color="#f59e0b")
+    # Digests and manifest stamps
+    per_run_digest = _digest_csvs(per_run_dir) if per_run_dir.exists() else (_sha256_file(batch_dir / "run_one.csv") if (batch_dir / "run_one.csv").exists() else "NA")
+    per_run_digest_short = (per_run_digest[:12] + "…") if per_run_digest != "NA" else "NA"
+    scenario_sha = _sha256_file(scenario_path) if scenario_path.exists() else "NA"
+    seeds_sha = _sha256_file(seeds_path) if seeds_path.exists() else "NA"
+    world_sha = _sha256_file(world_path) if world_path.exists() else "NA"
 
-	gallery_items = []
-	for cap, rel in _pick_gallery(batch_dir, prefer_failures=True, limit=8):
-		gallery_items.append(f'<figure><img src="{rel}"/><figcaption class="small">{cap}</figcaption></figure>')
-	gallery_html = "\n".join(gallery_items) if gallery_items else '<div class="small">No sample frames available. Re-run with frames enabled.</div>'
+    # Update manifest with latest digests
+    try:
+        manifest.update({
+            "per_run_digest": per_run_digest,
+            "scenario_sha256": scenario_sha,
+            "seeds_sha256": seeds_sha,
+            "world_sha256": world_sha,
+            "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        })
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
-	repro_badge = '<span class="badge">Repro stamp ready</span>' if per_run_digest != "NA" else '<span class="badge" style="background:#fee2e2;color:#7f1d1d;">Repro stamp missing</span>'
+    # Charts
+    clearance_chart = _render_line_chart(rep_run.get("clearance", []), rep_run.get("events", []), "Clearance", color="#2563eb", y_label="meters")
+    ttc_chart = _render_line_chart(rep_run.get("ttc", []), rep_run.get("events", []), "TTC", color="#f97316", y_label="seconds", y_min=0)
 
-	html = HTML_TEMPLATE.format(
-		title=title,
-		scenario_name=title,
-		runs=runs,
-		generated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-		per_run_digest=per_run_digest,
-		per_run_digest_short=per_run_digest_short,
-		scenario_sha=scenario_sha,
-		seeds_sha=seeds_sha,
-		repro_badge=repro_badge,
-		# context block:
-		schema_status=schema_status,
-		schema_hint=("" if not schema_hint else f"<span class='small'> {schema_hint}</span>"),
-		context_html=context_html,
-		# charts & sections:
-		success=success,
-		collision_human=coll_human,
-		other=other,
-		svg_outcomes=svg_outcomes,
-		svg_clearance=svg_clearance,
-		svg_ttg=svg_ttg,
-		coverage_html=coverage_html,
-		calib_r2=calib_r2,
-		calib_kl=calib_kl,
-		calib_ece=calib_ece,
-		chk_failrate_cls=chk_failrate_cls,
-		chk_repro_cls=chk_repro_cls,
-		chk_gap_cls=chk_gap_cls,
-		gap_hint=gap_hint,
-		fail_rate=fail_rate,
-		gallery=gallery_html,
-	)
+    # Events table
+    events_table = _events_table(rep_run.get("events", []))
+    actors_block = _actors_block(actors_data)
 
-	out_path = batch_dir / "report.html"
-	out_path.write_text(html, encoding="utf-8")
-	return out_path
+    # Gallery
+    gallery_html = ""
+
+    # Map SVG colors
+    colors = {
+        "robot": "#2563eb",
+        "aisle": "#e2e8f0",
+        "rack": "#a16207",
+        "traction": "#bae6fd",
+        "ev_collision": "#dc2626",
+        "ev_floor_slip": "#06b6d4",   # slips: cyan
+        "ev_near_miss": "#f97316",    # near-miss/occluded: orange
+        "ev_timeout": "#9ca3af",
+        "ev_success": "#16a34a",
+        "event_other": "#6366f1",
+    }
+    map_svg = _render_map(world, rep_run, colors)
+
+    # Outcome legend badges
+    outcome_legend = "".join([
+        '<span class="chip">success</span>',
+        '<span class="chip" style="background:#fee2e2;color:#991b1b;border-color:#fecdd3;">collision</span>',
+        '<span class="chip" style="background:#fef3c7;color:#92400e;border-color:#fde68a;">other/timeout</span>',
+    ])
+
+    seeds_hint_val = str(seeds.get("base_seed", "NA")) if isinstance(seeds, dict) else "NA"
+
+    html = HTML_TEMPLATE.format(
+        title=title,
+        scenario_name=title,
+        runs=runs,
+        generated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        seeds_hint=seeds_hint_val,
+        per_run_digest_short=per_run_digest_short,
+        world_sha_short=(world_sha[:12] + "…") if world_sha != "NA" else "NA",
+        prompt=manifest.get("prompt", title) if isinstance(manifest, dict) else title,
+        site_profile=manifest.get("site", "default") if isinstance(manifest, dict) else "default",
+        lidar_noise=lidar_noise,
+        traction_hint=traction_hint,
+        runtime_hint=runtime_hint,
+        taxonomy_tags=taxonomy_tags,
+        success=success,
+        collisions=collisions,
+        other=other,
+        worst_clearance=("NA" if math.isnan(rep_run.get("min_clearance", math.nan)) else f"{rep_run.get('min_clearance', 0):.2f} m"),
+        min_ttc=("NA" if math.isnan(rep_run.get("min_ttc", math.nan)) else f"{rep_run.get('min_ttc', 0):.2f} s"),
+        rep_run=rep_run.get("run_name", "N/A"),
+        outcome_legend=outcome_legend,
+        map_svg=map_svg,
+        color_robot=colors["robot"],
+        color_event_collision=colors["ev_collision"],
+        color_event_slip=colors["ev_floor_slip"],
+        color_event_near=colors["ev_near_miss"],
+        color_traction=colors["traction"],
+        color_rack=colors["rack"],
+        clearance_chart=clearance_chart,
+        ttc_chart=ttc_chart,
+        events_table=events_table,
+        actors_block=actors_block,
+        coverage_block=coverage_block,
+        gallery=gallery_html,
+        per_run_digest=per_run_digest,
+        scenario_sha=scenario_sha,
+        seeds_sha=seeds_sha,
+        scenario_sha_short=(scenario_sha[:12] + "…") if scenario_sha != "NA" else "NA",
+        seeds_sha_short=(seeds_sha[:12] + "…") if seeds_sha != "NA" else "NA",
+        aisle_count=aisle_count,
+        patch_count=patch_count,
+        human_count=human_count,
+        vehicle_count=vehicle_count,
+        static_count=static_count,
+        verify_path=f"runs/{title}",
+    )
+
+    out_path = batch_dir / "report.html"
+    out_path.write_text(html, encoding="utf-8")
+    return out_path
+
 
 def main():
-	import sys
-	if len(sys.argv) != 2:
-		print("Usage: python -m edgesim.report_html runs/<batch_dir>")
-		raise SystemExit(2)
-	batch_dir = Path(sys.argv[1]).resolve()
-	if not batch_dir.exists():
-		print(f"Batch dir not found: {batch_dir}")
-		raise SystemExit(2)
-	out = generate_report(batch_dir)
-	print(f"[OK] Wrote {out}")
+    import sys
+    if len(sys.argv) != 2:
+        print("Usage: python -m edgesim.report_html runs/<batch_dir>")
+        raise SystemExit(2)
+    batch_dir = Path(sys.argv[1]).resolve()
+    if not batch_dir.exists():
+        print(f"Batch dir not found: {batch_dir}")
+        raise SystemExit(2)
+    out = generate_report(batch_dir)
+    print(f"[OK] Wrote {out}")
+
 
 if __name__ == "__main__":
-	main()
+    main()

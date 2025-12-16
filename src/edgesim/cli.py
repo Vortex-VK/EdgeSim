@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, json, hashlib, os
+import argparse, json, hashlib, os, webbrowser
 from pathlib import Path
 
 from .io_utils import RUNS_ROOT, ensure_dir, write_json, write_yaml, write_text
@@ -56,6 +56,13 @@ def _make_run_dir(prompt: str, name: str | None) -> Path:
     run_dir = RUNS_ROOT / f"{stamp}_{label}"
     ensure_dir(run_dir)
     return run_dir
+
+def _open_report(path: Path) -> None:
+    """Best-effort: open the report in a browser tab."""
+    try:
+        webbrowser.open_new_tab(path.resolve().as_uri())
+    except Exception:
+        pass
 
 def _enable_full_lidar_logging(scn: dict) -> None:
     """Toggle full lidar logging on in the scenario dict."""
@@ -223,6 +230,7 @@ def cmd_run_batch(args: argparse.Namespace) -> int:
         try:
             out_html = generate_report(run_dir)
             print(f"[EdgeSim] HTML report: {out_html}")
+            _open_report(out_html)
         except Exception as e:
             print(f"[EdgeSim][WARN] Failed to generate HTML report: {e}")
 
@@ -268,6 +276,15 @@ def cmd_run_one(args: argparse.Namespace) -> int:
     if world_path.exists():
         man["world_sha256"] = _sha256_file(world_path)
     write_json(man_path, man)
+
+    # HTML report (single run)
+    if generate_report is not None:
+        try:
+            out_html = generate_report(run_dir)
+            print(f"[EdgeSim] HTML report: {out_html}")
+            _open_report(out_html)
+        except Exception as e:
+            print(f"[EdgeSim][WARN] Failed to generate HTML report: {e}")
 
     print(f"\n[EdgeSim] Single rollout @ {run_dir}\n- success={out['success']} time={out['time']:.2f}s steps={out['steps']}\n- run_one.csv\n")
     return 0

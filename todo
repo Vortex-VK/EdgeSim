@@ -1,74 +1,19 @@
 TODOs for EdgeSim (what’s still missing vs. current baseline)
 ============================================================
-STEPS COMPLETED: 1, 2, 3.
 
 High-level targets
-- Keep data quality high.
-- Make geometry warehouse-realistic but driven by explicit coordinates/sizes (no hidden presets).
 - Expose a user-friendly interface (CLI first, no “main aisle” magic).
 - Improve explainability (edgesim-report).
 - Add a Waymo-like viewer for recorded data.
 
-1) Logging & ML dataset gaps
------------------------------
-- Add a gated full LiDAR logging mode:
-  - Per-run lidar.npz with ranges (and optional XYZ) over time, plus beam angles.
-  - Optionally “event-window only” logging to cap size (slips, near-misses, collisions).
-- Log per-actor trajectories:
-  - actors.csv: t, actor_id, type (human/forklift/cart/object), x, y, yaw, phase; optionally velocities.
-  - Keep human_phase in run_one.csv as a coarse summary.
-- Time/frames discipline:
-  - Ensure run_one.csv timestamps are consistent.
-  - Add frames.json with static transforms (world->base, base->laser, etc.) for sensor alignment.
-- Enrich events in run_one.csv:
-  - Derived flags: near_miss (TTC threshold), occluded_hazard, sensor_fault_* active, hard_brake/near_stop.
-  - Interaction cue column (none/robot_yielding/human_yielding/forced_stop_for_human) derived from scripted actors vs robot motion.
-- Dataset manifest per batch:
-  - dataset_manifest.json with scenario tags, event counts (collisions, slips, near_misses, occluded_hazard), and basic stats (duration, avg speed, min TTC) for stratified splits.
-- Mirror domain-randomization knobs into manifest for filtering:
-  - μ per patch, LiDAR noise/dropout settings, clutter level, behavior preset IDs (already in scenario.yaml; surface in manifest).
-
-2) Data quality checks
-----------------------
-- Tool (tools/check_data_quality.py):
-  - Validate run_one.csv: no NaN/inf, non-negative clearances/TTC, consistent timestamps.
-  - in_wet == 1 only when robot footprint overlaps a traction patch (world.json).
-  - Events align with geometry: collisions when AABBs intersect; slips on low-μ.
-  - Actors never spawn outside map or inside racks/walls (using world.json and actors.csv if present).
-  - Summary report with anomaly counts (text is fine).
-- Basic tests/smoke:
-  - Determinism: same scenario+seed → identical key outputs.
-  - Invariants: no static overlap; robot starts valid.
-  - No hidden presets: prompts without coordinates shouldn’t silently add geometry.
-
-3) Geometry fidelity (atomic, realistic defaults)
+1) Geometry fidelity (atomic, realistic defaults)
 -------------------------------------------------
 - Geometry profiles file for dimensions only (aisle widths, rack depths/heights, pallet footprints, crosswalk widths, buffers, dock door sizes).
 - Use profiles only as defaults; explicit coords/sizes remain authoritative.
 - Improve static geometry options: rack end caps, wall stubs for blind corners, safety zones, dock doors; all as coordinate-defined objects.
 - Extend world.json metadata: id, type, role tags, (x1,y1,x2,y2), height, AABB for each object to aid checks/visuals.
 
-4) User-friendly interface (CLI first)
---------------------------------------
-- CLI entrypoint:
-  - edgesim new (prompt→scenario + seeds).
-  - edgesim run (single/multi seed; flags for full-lidar logging, headless).
-  - edgesim replay (load run, open viewer or simple GIF).
-  - edgesim report (regen edgesim-report).
-  - Expose knobs: μ ranges, LiDAR noise/dropout, clutter level, behavior presets. No hidden “scenario type” shortcuts.
-- Expand presets: add more site profiles (sensor/traction/human tuning) and batch profiles (minimal/robot/full variants) to cover common warehouses and edge cases.
-- (Optional later) lightweight web UI wrapping the CLI.
-
-5) Explainable reports (edgesim-report)
----------------------------------------
-- Top-down map from world.json: aisles, racks, walls, traction patches, crosswalks.
-- Overlay robot trajectory and event markers (collisions, slips, near_misses, occluded_hazard).
-- Time-series plots: min_clearance_lidar/geom, min_ttc with event markers.
-- Actors section (if actors.csv): trajectories and phases.
-- Domain-randomization summary: friction profile, LiDAR noise/dropout, behavior preset IDs.
-- Edge-case summary table: event type, timestamp, min_clearance/TTC, short explanation.
-
-6) Waymo-like viewer
+2) Waymo-like viewer
 --------------------
 - edgesim_viewer.py (after full LiDAR logging exists):
   - Inputs: world.json, run_one.csv, actors.csv, lidar.npz (if logged), frames.json.
@@ -77,8 +22,9 @@ High-level targets
   - Optional 3D mode (e.g., Open3D) behind a flag.
   - Integrate with CLI: edgesim replay <run_dir> --viewer [--follow-robot].
 
-7) Robot path authoring & extra robot actor
+3) Robot path authoring & extra robot actor
 -------------------------------------------
 - Allow robot path via coordinates (like humans/vehicles): parse “robot from x0,y0 to x1,y1 …”, store as agent waypoints/raw_coords, project into aisles if enabled, and drive PID segment-to-segment instead of single start→goal.
 - Add secondary robot actor (hazard/occluder): treat as a dynamic body with its own path/size, include in actors.csv/world.json, collide/occlude/scan like forklifts/humans, and keep AMR vs AMR collisions/event logging consistent.
-8) Add more site and batch profiles
+4) Add more site and batch profiles
+5) Change main aisle, aisle and rack, high rack to render with widths of 2.5 meters and 3 meters respectively. The current spawn for coordinates that go diagonally makes them spawn as wide blocks, with each corner in the set coordinates. They need to be spawned similarly to walls, where the middle of one end of the rack (or aisle) is in one of the set coordinates and the other end is on the second coordinate.
