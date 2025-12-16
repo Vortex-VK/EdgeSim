@@ -96,6 +96,32 @@ def _rect_overlap(a: Tuple[float, float, float, float],
 		return (x0, y0, x1, y1)
 	return None
 
+def _oriented_aabb(center: Tuple[float, float], half_extents: Tuple[float, float], yaw: float) -> List[float]:
+	"""Axis-aligned bounding box for a rectangle centered at center with half_extents rotated by yaw."""
+	hx, hy = half_extents
+	c = abs(math.cos(yaw))
+	s = abs(math.sin(yaw))
+	ax = hx * c + hy * s
+	ay = hx * s + hy * c
+	return [center[0] - ax, center[1] - ay, center[0] + ax, center[1] + ay]
+
+def _pose_from_centerline(start: Tuple[float, float], end: Tuple[float, float], width: float) -> Dict[str, Any]:
+	dx, dy = (end[0] - start[0]), (end[1] - start[1])
+	length = math.hypot(dx, dy)
+	if length < 1e-6:
+		length = 1e-6
+	yaw = math.atan2(dy, dx)
+	cx, cy = (0.5 * (start[0] + end[0]), 0.5 * (start[1] + end[1]))
+	half_l = 0.5 * length
+	half_w = max(0.05, float(width) * 0.5)
+	return {
+		"center": (cx, cy),
+		"half_extents": (half_l, half_w),
+		"yaw": yaw,
+		"length_m": length,
+		"width_m": 2.0 * half_w,
+	}
+
 def _intervals_without(start: float, end: float,
                        cuts: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
 	intervals = [(start, end)]
@@ -132,15 +158,31 @@ def _clamp_zone(zone: List[float], bounds: Tuple[float, float], issues: List[str
 		issues.append(f"{label} clamped to {bounds}: {normed} -> {clamped}")
 	return clamped
 
-def _spawn_walkway(zone, lane_type: str, mu: float, rgba=None) -> Tuple[int, Dict[str, Any]]:
+def _spawn_walkway(zone, lane_type: str, mu: float, rgba=None, pose: Dict[str, Any] | None = None) -> Tuple[int, Dict[str, Any]]:
 	color = rgba if rgba is not None else _AISLE_COLORS.get(lane_type, (0.85, 0.85, 0.85, 0.2))
-	bid = _spawn_floor_patch(zone, mu, color)
+	center = _aabb_center(zone)
+	half_xy = (max(0.01, (zone[2] - zone[0]) * 0.5), max(0.01, (zone[3] - zone[1]) * 0.5))
+	yaw = 0.0
+	if pose and pose.get("half_extents"):
+		pose_half = pose.get("half_extents") or ()
+		if isinstance(pose_half, (list, tuple)) and len(pose_half) >= 2:
+			half_xy = (max(0.01, float(pose_half[0])), max(0.01, float(pose_half[1])))
+		if pose.get("center") and len(pose.get("center")) == 2:
+			center = (float(pose["center"][0]), float(pose["center"][1]))
+		yaw = float(pose.get("yaw", 0.0))
+		bid = _spawn_floor_patch_oriented(center, half_xy, mu, color, yaw=yaw, thickness=pose.get("thickness", 0.002))
+	else:
+		bid = _spawn_floor_patch(zone, mu, color)
 	meta = {
 		"type": f"aisle_{lane_type}",
 		"zone": zone,
 		"mu": mu,
 		"body_id": bid,
 		"effects": {"brake_scale": 1.0, "slip_boost": 0.0, "imu_vibe_g": 0.0},
+		"center": center,
+		"half_extents": half_xy,
+		"yaw": yaw,
+		"width_m": min(half_xy[0], half_xy[1]) * 2.0,
 	}
 	return bid, meta
 
@@ -157,6 +199,25 @@ def _spawn_floor_patch(zone, mu: float, rgba, thickness: float = 0.002) -> int:
 		baseCollisionShapeIndex=col,
 		baseVisualShapeIndex=vis,
 		basePosition=[cx, cy, hz],
+	)
+	p.changeDynamics(bid, -1, lateralFriction=float(mu))
+	return bid
+
+def _spawn_floor_patch_oriented(center: Tuple[float, float], half_extents: Tuple[float, float],
+                                mu: float, rgba, yaw: float = 0.0, thickness: float = 0.002) -> int:
+	cx, cy = center
+	hx = max(0.01, float(half_extents[0]))
+	hy = max(0.01, float(half_extents[1]))
+	hz = max(0.0005, float(thickness) * 0.5)
+	quat = p.getQuaternionFromEuler([0.0, 0.0, float(yaw)])
+	vis = p.createVisualShape(p.GEOM_BOX, halfExtents=[hx, hy, hz], rgbaColor=rgba)
+	col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[hx, hy, hz])
+	bid = p.createMultiBody(
+		baseMass=0,
+		baseCollisionShapeIndex=col,
+		baseVisualShapeIndex=vis,
+		basePosition=[cx, cy, hz],
+		baseOrientation=quat,
 	)
 	p.changeDynamics(bid, -1, lateralFriction=float(mu))
 	return bid
@@ -291,6 +352,9 @@ def _spawn_detailed_rack(aabb: List[float] | Tuple[float, float, float, float],
 				"type": rack_type,
 				"body_id": bid,
 				"aabb": [cx - post_half[0], cy - post_half[1], cx + post_half[0], cy + post_half[1]],
+				"center": (cx, cy),
+				"half_extents": (post_half[0], post_half[1]),
+				"yaw": 0.0,
 				"height": height,
 				"occlusion": True,
 				"reflective": reflective,
@@ -314,13 +378,16 @@ def _spawn_detailed_rack(aabb: List[float] | Tuple[float, float, float, float],
 		static_meta.append({
 			"id": f"{rack_id}_beam_{len(static_meta)+1:03d}",
 			"type": rack_type,
-			"body_id": bid,
-			"aabb": [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]],
-			"height": beam_t,
-			"occlusion": True,
-			"reflective": reflective,
-			"component": "beam",
-		})
+				"body_id": bid,
+				"aabb": [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]],
+				"center": (center[0], center[1]),
+				"half_extents": (half[0], half[1]),
+				"yaw": 0.0,
+				"height": beam_t,
+				"occlusion": True,
+				"reflective": reflective,
+				"component": "beam",
+			})
 
 	# random boxes per bay and shelf
 	for idx, sz in enumerate(shelf_zs):
@@ -359,12 +426,155 @@ def _spawn_detailed_rack(aabb: List[float] | Tuple[float, float, float, float],
 					"type": rack_type,
 					"body_id": bid,
 					"aabb": [cx - half[0], cy - half[1], cx + half[0], cy + half[1]],
+					"center": (cx, cy),
+					"half_extents": (half[0], half[1]),
+					"yaw": 0.0,
 					"height": h,
 					"occlusion": True,
 					"reflective": reflective,
 					"component": "load",
 				})
 				pos += w + rng.uniform(0.05, 0.18)
+
+def _spawn_detailed_rack_oriented(center: Tuple[float, float],
+                                  half_extents: Tuple[float, float],
+                                  height: float,
+                                  rack_id: str,
+                                  rack_type: str,
+                                  reflective: bool,
+                                  static_meta: List[Dict[str, Any]],
+                                  walls_extra: List[int],
+                                  yaw: float = 0.0) -> None:
+	hx, hy = half_extents
+	length = max(0.0, hx * 2.0)
+	depth = max(0.0, hy * 2.0)
+	if length < 0.2 or depth < 0.2:
+		return
+	rng = _stable_rng(f"{rack_id}:{round(center[0],3)}:{round(center[1],3)}:{round(length,3)}:{round(depth,3)}:{round(height,2)}:{round(yaw,3)}")
+	pillar_w = min(0.12, max(0.06, depth * 0.35))
+	frame_pad = max(0.05, pillar_w * 0.75)
+	axis_start = -hx + frame_pad
+	axis_end = hx - frame_pad
+	depth_start = -hy + frame_pad
+	depth_end = hy - frame_pad
+	if axis_end <= axis_start or depth_end <= depth_start:
+		return
+	length_use = axis_end - axis_start
+	n_bays = max(1, min(8, int(round(length_use / max(0.9, min(2.0, length_use))) or 1)))
+	bay_len = length_use / n_bays
+	depth_span = depth_end - depth_start
+	beam_t = max(0.04, min(0.08, height * 0.03))
+	usable_height = max(1.0, height - 0.25)
+	shelf_count = max(2, min(5, int(round(usable_height / 1.1))))
+	gap_h = usable_height / shelf_count
+	shelf_zs = [0.0]
+	shelf_zs.extend([0.2 + gap_h * (i + 1) for i in range(shelf_count)])
+	frame_color = (0.25, 0.35, 0.7, 1.0)
+	beam_color = (0.95, 0.6, 0.25, 1.0)
+	box_color = (0.75, 0.6, 0.25, 1.0)
+	if reflective:
+		frame_color = (0.6, 0.65, 0.9, 1.0)
+		beam_color = (0.95, 0.7, 0.35, 1.0)
+		box_color = (0.8, 0.65, 0.3, 1.0)
+
+	def _to_world(px: float, py: float) -> Tuple[float, float]:
+		c = math.cos(yaw)
+		s = math.sin(yaw)
+		return (center[0] + px * c - py * s, center[1] + px * s + py * c)
+
+	# vertical posts at bay edges (two rows)
+	axis_positions = [axis_start + bay_len * i for i in range(n_bays + 1)]
+	depth_positions = [depth_start + pillar_w * 0.5, depth_end - pillar_w * 0.5]
+	post_half = (pillar_w * 0.5, pillar_w * 0.5, height * 0.5)
+	for ai in axis_positions:
+		for dj in depth_positions:
+			wx, wy = _to_world(ai, dj)
+			bid = _spawn_box_centered((wx, wy), post_half, yaw, frame_color)
+			walls_extra.append(bid)
+			static_meta.append({
+				"id": f"{rack_id}_post_{len(static_meta)+1:03d}",
+				"type": rack_type,
+				"body_id": bid,
+				"aabb": _oriented_aabb((wx, wy), (post_half[0], post_half[1]), yaw),
+				"center": (wx, wy),
+				"half_extents": (post_half[0], post_half[1]),
+				"height": height,
+				"occlusion": True,
+				"reflective": reflective,
+				"component": "post",
+				"yaw": yaw,
+			})
+
+	# shelves/beams spanning the rack
+	axis_center = 0.5 * (axis_start + axis_end)
+	depth_center = 0.5 * (depth_start + depth_end)
+	for sz in shelf_zs:
+		if sz >= height - 0.1:
+			continue
+		half = (0.5 * (axis_end - axis_start), depth_span * 0.45, beam_t * 0.5)
+		wx, wy = _to_world(axis_center, depth_center)
+		bid = _spawn_box_centered((wx, wy), half, yaw, beam_color, center_z=sz + half[2])
+		walls_extra.append(bid)
+		static_meta.append({
+			"id": f"{rack_id}_beam_{len(static_meta)+1:03d}",
+			"type": rack_type,
+			"body_id": bid,
+			"aabb": _oriented_aabb((wx, wy), (half[0], half[1]), yaw),
+			"center": (wx, wy),
+			"half_extents": (half[0], half[1]),
+			"height": beam_t,
+			"occlusion": True,
+			"reflective": reflective,
+			"component": "beam",
+			"yaw": yaw,
+		})
+
+	# random boxes per bay and shelf
+	for idx, sz in enumerate(shelf_zs):
+		next_z = shelf_zs[idx + 1] if idx + 1 < len(shelf_zs) else height - 0.05
+		vertical_gap = max(0.25, next_z - sz - beam_t)
+		if vertical_gap <= 0.2:
+			continue
+		for bay_idx in range(n_bays):
+			axis_seg_start = axis_start + bay_len * bay_idx + pillar_w * 0.35
+			axis_seg_end = axis_start + bay_len * (bay_idx + 1) - pillar_w * 0.35
+			if axis_seg_end - axis_seg_start <= 0.25:
+				continue
+			pos = axis_seg_start
+			while pos < axis_seg_end - 0.25:
+				remaining = axis_seg_end - pos
+				max_w = min(1.2, remaining - 0.05)
+				min_w = min(0.45, max_w)
+				if max_w <= 0.2:
+					break
+				w = rng.uniform(min_w, max_w)
+				d = rng.uniform(max(0.35, depth_span * 0.45), max(0.5, depth_span * 0.85))
+				h = rng.uniform(0.25, min(vertical_gap - 0.05, 0.9))
+				cx_local = pos + 0.5 * w
+				cy_local = depth_center + rng.uniform(-0.15 * depth_span, 0.15 * depth_span)
+				pos += w + rng.uniform(0.05, 0.18)
+				if cx_local > axis_seg_end or cy_local < depth_start or cy_local > depth_end:
+					continue
+				half = (0.5 * w, 0.5 * d, 0.5 * h)
+				world_x, world_y = _to_world(cx_local, cy_local)
+				center_z = sz + beam_t + half[2]
+				if center_z + half[2] > height:
+					break
+				bid = _spawn_box_centered((world_x, world_y), half, yaw, box_color, center_z=center_z)
+				walls_extra.append(bid)
+				static_meta.append({
+					"id": f"{rack_id}_box_{len(static_meta)+1:03d}",
+					"type": rack_type,
+					"body_id": bid,
+					"aabb": _oriented_aabb((world_x, world_y), (half[0], half[1]), yaw),
+					"center": (world_x, world_y),
+					"half_extents": (half[0], half[1]),
+					"height": h,
+					"occlusion": True,
+					"reflective": reflective,
+					"component": "load",
+					"yaw": yaw,
+				})
 
 def _expand_aisle_zone(zone: List[float], bounds: Tuple[float, float], scale: float | Tuple[float, float, float, float] = 1.3) -> List[float]:
 	x0, y0, x1, y1 = zone
@@ -408,14 +618,15 @@ def _spawn_box_from_aabb(aabb, height: float, rgba, mass: float = 0.0) -> int:
 	return bid
 
 def _spawn_box_centered(pos: Tuple[float, float], half_extents: Tuple[float, float, float],
-                        yaw: float, rgba, mass: float = 0.0) -> int:
+                        yaw: float, rgba, mass: float = 0.0, center_z: float | None = None) -> int:
 	vis, col = _mk_box(list(half_extents), rgba=rgba)
 	quat = p.getQuaternionFromEuler([0.0, 0.0, yaw])
+	base_z = float(half_extents[2] if center_z is None else center_z)
 	bid = p.createMultiBody(
 		baseMass=mass,
 		baseCollisionShapeIndex=col,
 		baseVisualShapeIndex=vis,
-		basePosition=[pos[0], pos[1], half_extents[2]],
+		basePosition=[pos[0], pos[1], base_z],
 		baseOrientation=quat,
 	)
 	return bid
@@ -442,6 +653,22 @@ def _draw_rect_outline(zone: List[float] | Tuple[float, float, float, float], co
 	]
 	for i in range(4):
 		p.addUserDebugLine(pts[i], pts[(i + 1) % 4], color, lineWidth=2.0, lifeTime=0)
+
+def _draw_oriented_outline(center: Tuple[float, float], half_extents: Tuple[float, float], yaw: float,
+                           color: Tuple[float, float, float] = (0.1, 0.1, 0.1), z: float = 0.05) -> None:
+	cx, cy = center
+	hx, hy = half_extents
+	c = math.cos(yaw)
+	s = math.sin(yaw)
+	corners = []
+	for sx in (-hx, hx):
+		for sy in (-hy, hy):
+			x = cx + sx * c - sy * s
+			y = cy + sx * s + sy * c
+			corners.append([x, y, z])
+	order = [0, 1, 3, 2]  # connect in rectangle order
+	for i in range(4):
+		p.addUserDebugLine(corners[order[i]], corners[order[(i + 1) % 4]], color, lineWidth=2.0, lifeTime=0)
 
 def _draw_path(points: List[List[float]], color: Tuple[float, float, float] = (0.8, 0.2, 0.2), z: float = 0.08) -> None:
 	for i in range(len(points) - 1):
@@ -547,19 +774,34 @@ def _draw_debug_overlays(layout: Dict[str, Any], hazards: Dict[str, Any], bounds
 		if rect and len(rect) == 4:
 			zone = _clamp_zone(list(rect), (Lx, Ly))
 			if zone:
-				_draw_rect_outline(zone, color=(0.1, 0.6, 0.85))
+				if aisle.get("center") and aisle.get("half_extents"):
+					half = aisle.get("half_extents") or []
+					if isinstance(half, (list, tuple)) and len(half) >= 2:
+						_draw_oriented_outline(tuple(map(float, aisle.get("center"))), (float(half[0]), float(half[1])), float(aisle.get("yaw", 0.0)), color=(0.1, 0.6, 0.85))
+				else:
+					_draw_rect_outline(zone, color=(0.1, 0.6, 0.85))
 	for junc in layout.get("junctions", []) or []:
 		rect = junc.get("rect") or junc.get("zone")
 		if rect and len(rect) == 4:
 			zone = _clamp_zone(list(rect), (Lx, Ly))
 			if zone:
-				_draw_rect_outline(zone, color=(0.25, 0.75, 0.55))
+				if junc.get("center") and junc.get("half_extents"):
+					half = junc.get("half_extents") or []
+					if isinstance(half, (list, tuple)) and len(half) >= 2:
+						_draw_oriented_outline(tuple(map(float, junc.get("center"))), (float(half[0]), float(half[1])), float(junc.get("yaw", 0.0)), color=(0.25, 0.75, 0.55))
+				else:
+					_draw_rect_outline(zone, color=(0.25, 0.75, 0.55))
 	for rack in geom.get("racking", []) or []:
 		rect = rack.get("aabb")
 		if rect and len(rect) == 4:
 			zone = _clamp_zone(list(rect), (Lx, Ly))
 			if zone:
-				_draw_rect_outline(zone, color=(0.45, 0.25, 0.15))
+				if rack.get("center") and rack.get("half_extents"):
+					half = rack.get("half_extents") or []
+					if isinstance(half, (list, tuple)) and len(half) >= 2:
+						_draw_oriented_outline(tuple(map(float, rack.get("center"))), (float(half[0]), float(half[1])), float(rack.get("yaw", 0.0)), color=(0.45, 0.25, 0.15))
+				else:
+					_draw_rect_outline(zone, color=(0.45, 0.25, 0.15))
 	for endcap in geom.get("endcaps", []) or []:
 		rect = endcap.get("aabb")
 		if rect and len(rect) == 4:
@@ -571,7 +813,12 @@ def _draw_debug_overlays(layout: Dict[str, Any], hazards: Dict[str, Any], bounds
 		if rect and len(rect) == 4:
 			zone = _clamp_zone(list(rect), (Lx, Ly))
 			if zone:
-				_draw_rect_outline(zone, color=(0.35, 0.35, 0.35))
+				if obs.get("center") and obs.get("half_extents"):
+					half = obs.get("half_extents") or []
+					if isinstance(half, (list, tuple)) and len(half) >= 2:
+						_draw_oriented_outline(tuple(map(float, obs.get("center"))), (float(half[0]), float(half[1])), float(obs.get("yaw", 0.0)), color=(0.35, 0.35, 0.35))
+				else:
+					_draw_rect_outline(zone, color=(0.35, 0.35, 0.35))
 	for human in hazards.get("human", []) or []:
 		path = human.get("waypoints") or human.get("path")
 		if isinstance(path, list) and len(path) >= 2:
@@ -794,6 +1041,9 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 				"type": "door_panel",
 				"body_id": door_id,
 				"aabb": door_rect,
+				"center": ((door_rect[0] + door_rect[2]) * 0.5, (door_rect[1] + door_rect[3]) * 0.5),
+				"half_extents": ((door_rect[2] - door_rect[0]) * 0.5, (door_rect[3] - door_rect[1]) * 0.5),
+				"yaw": 0.0,
 				"height": door_height,
 				"occlusion": True,
 			})
@@ -814,6 +1064,9 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 				"type": "dock_plate",
 				"body_id": plate_id,
 				"aabb": plate_rect,
+				"center": ((plate_rect[0] + plate_rect[2]) * 0.5, (plate_rect[1] + plate_rect[3]) * 0.5),
+				"half_extents": ((plate_rect[2] - plate_rect[0]) * 0.5, (plate_rect[3] - plate_rect[1]) * 0.5),
+				"yaw": 0.0,
 				"height": plate_height,
 				"occlusion": True,
 				"reflective": False,
@@ -826,13 +1079,29 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 			rect = aisle.get("rect")
 			if not rect or len(rect) != 4:
 				continue
+			pose = None
+			if not aisle.get("center") and aisle.get("centerline") and len(aisle["centerline"]) == 2:
+				start, end = aisle["centerline"]
+				width_est = float(aisle.get("width_m", min(abs(rect[2] - rect[0]), abs(rect[3] - rect[1]))))
+				pose = _pose_from_centerline(tuple(map(float, start)), tuple(map(float, end)), width_est)
+				aisle["center"] = pose["center"]
+				aisle["half_extents"] = pose["half_extents"]
+				aisle["yaw"] = pose["yaw"]
+				aisle["width_m"] = pose["width_m"]
+				aisle["length_m"] = pose["length_m"]
 			base_zone = _clamp_zone(list(rect), (Lx, Ly), issues, label=f"aisle:{aisle.get('id', idx)}")
 			if not base_zone:
 				continue
+			pose_zone = base_zone
+			if aisle.get("center") and aisle.get("half_extents"):
+				pose_half = aisle.get("half_extents") or ()
+				if isinstance(pose_half, (list, tuple)) and len(pose_half) >= 2:
+					center_xy = tuple(map(float, aisle.get("center")))
+					pose_zone = _oriented_aabb(center_xy, (float(pose_half[0]), float(pose_half[1])), float(aisle.get("yaw", 0.0)))
+					pose_zone = _clamp_zone(pose_zone, (Lx, Ly), issues, label=f"aisle_pose:{aisle.get('id', idx)}")
+			zone = pose_zone
 			if aisle.get("pad") and len(aisle["pad"]) == 4:
-				zone = _expand_aisle_zone(base_zone, (Lx, Ly), scale=tuple(aisle["pad"]))
-			else:
-				zone = base_zone
+				zone = _expand_aisle_zone(zone, (Lx, Ly), scale=tuple(aisle["pad"]))
 			aisle_entries.append({"id": aisle.get("id") or f"Aisle_{idx:02d}", "zone": zone, "cfg": aisle})
 
 	junction_entries: List[Dict[str, Any]] = []
@@ -881,31 +1150,36 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 		zone = entry["zone"]
 		lane_type = (aisle.get("type") or "straight").lower()
 		mu = float(aisle.get("mu", 0.88))
-		bid, meta = _spawn_walkway(zone, lane_type, mu)
-		cx = 0.5 * (zone[0] + zone[2])
-		cy = 0.5 * (zone[1] + zone[3])
-	meta.update({
-		"center": (cx, cy),
-		"half_extents": (0.5 * (zone[2] - zone[0]), 0.5 * (zone[3] - zone[1])),
-		"yaw": float(aisle.get("yaw", 0.0)),
-		"width_m": min(zone[2] - zone[0], zone[3] - zone[1]),
-	})
-	meta.update({
-		"id": entry["id"],
-		"name": aisle.get("name"),
-	})
-	patch_bodies.append(bid)
-	floor_meta.append(meta)
-	aisle_meta.append(meta)
-	# Solid geometry should come from explicit AABBs (geometry.racking/endcaps/static_obstacles).
-	allow_auto_racks = bool(aisle.get("spawn_racking_from_aisle") or aisle.get("allow_aisle_racking"))
-	if allow_auto_racks and aisle.get("racking"):
-		rack_cfg = aisle["racking"] if isinstance(aisle.get("racking"), dict) else {}
-		if "height_m" not in rack_cfg and aisle.get("rack_height_m"):
-			rack_cfg["height_m"] = aisle.get("rack_height_m")
-		if "type" not in rack_cfg:
-			rack_cfg["type"] = "high_bay" if aisle.get("high_bay") else "rack"
-		_spawn_aisle_racks(zone, (Lx, Ly), rack_cfg, static_meta, walls_extra, cutouts=aisle_cutouts.get(entry["id"], []))
+		pose = None
+		if aisle.get("center") and aisle.get("half_extents"):
+			pose_half = aisle.get("half_extents") or ()
+			if isinstance(pose_half, (list, tuple)) and len(pose_half) >= 2:
+				pose = {
+					"center": tuple(map(float, aisle.get("center"))),
+					"half_extents": (float(pose_half[0]), float(pose_half[1])),
+					"yaw": float(aisle.get("yaw", 0.0)),
+				}
+		bid, meta = _spawn_walkway(zone, lane_type, mu, pose=pose)
+		meta.update({
+			"id": entry["id"],
+			"name": aisle.get("name"),
+			"yaw": float(aisle.get("yaw", meta.get("yaw", 0.0))),
+			"width_m": float(aisle.get("width_m", meta.get("width_m", min(zone[2] - zone[0], zone[3] - zone[1])))),
+		})
+		if aisle.get("length_m") is not None:
+			meta["length_m"] = float(aisle["length_m"])
+		patch_bodies.append(bid)
+		floor_meta.append(meta)
+		aisle_meta.append(meta)
+		# Solid geometry should come from explicit AABBs (geometry.racking/endcaps/static_obstacles).
+		allow_auto_racks = bool(aisle.get("spawn_racking_from_aisle") or aisle.get("allow_aisle_racking"))
+		if allow_auto_racks and aisle.get("racking"):
+			rack_cfg = aisle["racking"] if isinstance(aisle.get("racking"), dict) else {}
+			if "height_m" not in rack_cfg and aisle.get("rack_height_m"):
+				rack_cfg["height_m"] = aisle.get("rack_height_m")
+			if "type" not in rack_cfg:
+				rack_cfg["type"] = "high_bay" if aisle.get("high_bay") else "rack"
+			_spawn_aisle_racks(zone, (Lx, Ly), rack_cfg, static_meta, walls_extra, cutouts=aisle_cutouts.get(entry["id"], []))
 
 	for entry in junction_entries:
 		zone = entry["zone"]
@@ -913,13 +1187,9 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 		j_type = (junction.get("type") or "cross").lower()
 		mu = float(junction.get("mu", 0.9))
 		bid, meta = _spawn_walkway(zone, f"junction_{j_type}", mu, rgba=_AISLE_COLORS.get("cross"))
-		cx = 0.5 * (zone[0] + zone[2])
-		cy = 0.5 * (zone[1] + zone[3])
 		meta.update({
-			"center": (cx, cy),
-			"half_extents": (0.5 * (zone[2] - zone[0]), 0.5 * (zone[3] - zone[1])),
-			"yaw": float(junction.get("yaw", 0.0)),
-			"width_m": min(zone[2] - zone[0], zone[3] - zone[1]),
+			"yaw": float(junction.get("yaw", meta.get("yaw", 0.0))),
+			"width_m": meta.get("width_m", min(zone[2] - zone[0], zone[3] - zone[1])),
 		})
 		meta.update({
 			"id": entry["id"],
@@ -932,12 +1202,32 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 	geometry = layout.get("geometry", {}) or {}
 	for rack in geometry.get("racking", []):
 		aabb = rack.get("aabb")
+		if not rack.get("center") and rack.get("centerline") and len(rack["centerline"]) == 2:
+			start, end = rack["centerline"]
+			width_est = float(rack.get("width_m", 3.0))
+			pose_r = _pose_from_centerline(tuple(map(float, start)), tuple(map(float, end)), width_est)
+			rack["center"] = pose_r["center"]
+			rack["half_extents"] = pose_r["half_extents"]
+			rack["yaw"] = pose_r["yaw"]
+			rack["width_m"] = pose_r["width_m"]
+			rack["length_m"] = pose_r["length_m"]
+		center_pose = rack.get("center")
+		half_pose = rack.get("half_extents")
+		yaw_pose = float(rack.get("yaw", 0.0))
+		if center_pose and half_pose and isinstance(half_pose, (list, tuple)) and len(half_pose) >= 2:
+			center_xy = (float(center_pose[0]), float(center_pose[1]))
+			aabb = _oriented_aabb(center_xy, (float(half_pose[0]), float(half_pose[1])), yaw_pose)
 		if not aabb:
 			continue
 		aabb = _clamp_zone(list(aabb), (Lx, Ly), issues, label=f"rack:{rack.get('id')}")
 		height = float(rack.get("height_m", 3.0))
 		reflective = bool((rack.get("type") or "").lower() == "high_bay" or rack.get("reflective", False))
-		_spawn_detailed_rack(aabb, height, rack.get("id") or "Rack", rack.get("type", "rack"), reflective, static_meta, walls_extra)
+		if center_pose and half_pose and isinstance(half_pose, (list, tuple)) and len(half_pose) >= 2:
+			center_xy = (float(center_pose[0]), float(center_pose[1]))
+			half_xy = (max(0.01, float(half_pose[0])), max(0.01, float(half_pose[1])))
+			_spawn_detailed_rack_oriented(center_xy, half_xy, height, rack.get("id") or "Rack", rack.get("type", "rack"), reflective, static_meta, walls_extra, yaw=yaw_pose)
+		else:
+			_spawn_detailed_rack(aabb, height, rack.get("id") or "Rack", rack.get("type", "rack"), reflective, static_meta, walls_extra)
 
 	for storage in geometry.get("open_storage", []):
 		aabb = storage.get("aabb")
@@ -952,6 +1242,9 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 			"type": storage.get("type", "open_storage"),
 			"body_id": bid,
 			"aabb": aabb,
+			"center": ((aabb[0] + aabb[2]) * 0.5, (aabb[1] + aabb[3]) * 0.5),
+			"half_extents": ((aabb[2] - aabb[0]) * 0.5, (aabb[3] - aabb[1]) * 0.5),
+			"yaw": 0.0,
 			"height": height,
 			"occlusion": True,
 		})
@@ -969,6 +1262,9 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 			"type": "endcap",
 			"body_id": bid,
 			"aabb": aabb,
+			"center": ((aabb[0] + aabb[2]) * 0.5, (aabb[1] + aabb[3]) * 0.5),
+			"half_extents": ((aabb[2] - aabb[0]) * 0.5, (aabb[3] - aabb[1]) * 0.5),
+			"yaw": 0.0,
 			"height": height,
 			"occlusion": True,
 		})
@@ -987,6 +1283,9 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 			"type": "blind_corner",
 			"body_id": bid,
 			"aabb": aabb,
+			"center": ((aabb[0] + aabb[2]) * 0.5, (aabb[1] + aabb[3]) * 0.5),
+			"half_extents": ((aabb[2] - aabb[0]) * 0.5, (aabb[3] - aabb[1]) * 0.5),
+			"yaw": 0.0,
 			"height": 2.2,
 			"occlusion": True,
 		})
@@ -1000,16 +1299,33 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 		rgba = tuple(wall.get("color", (0.35, 0.35, 0.35, 1.0)))
 		reflective = bool(wall.get("reflective", False))
 		occlusion = wall.get("occlusion", True)
-		bid = _spawn_box_from_aabb(aabb, height, rgba=rgba)
+		center_pose = wall.get("center")
+		half_pose = wall.get("half_extents")
+		center_hint = ((aabb[0] + aabb[2]) * 0.5, (aabb[1] + aabb[3]) * 0.5)
+		half_hint = ((aabb[2] - aabb[0]) * 0.5, (aabb[3] - aabb[1]) * 0.5)
+		yaw_hint = float(wall.get("yaw", 0.0))
+		if center_pose and half_pose and isinstance(half_pose, (list, tuple)) and len(half_pose) >= 2:
+			hx = max(0.01, float(half_pose[0]))
+			hy = max(0.01, float(half_pose[1]))
+			cx, cy = float(center_pose[0]), float(center_pose[1])
+			yaw_hint = float(wall.get("yaw", 0.0))
+			center_hint = (cx, cy)
+			half_hint = (hx, hy)
+			bid = _spawn_box_centered((cx, cy), (hx, hy, height * 0.5), yaw_hint, rgba)
+		else:
+			bid = _spawn_box_from_aabb(aabb, height, rgba=rgba)
 		walls_extra.append(bid)
 		static_meta.append({
 			"id": wall.get("id"),
 			"type": wall.get("type", "wall"),
 			"body_id": bid,
 			"aabb": aabb,
+			"center": center_hint,
+			"half_extents": half_hint,
 			"height": height,
 			"occlusion": occlusion,
 			"reflective": reflective,
+			"yaw": yaw_hint,
 		})
 
 	for obs in layout.get("static_obstacles", []):
@@ -1020,6 +1336,9 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 		aabb = obs.get("aabb")
 		occlusion = obs.get("occlusion", True)
 		reflective = bool(obs.get("reflective", False))
+		center_hint = None
+		half_hint = None
+		yaw_hint = float(obs.get("yaw", 0.0))
 		if obs.get("shape") == "cylinder":
 			pos = obs.get("pos")
 			if not pos:
@@ -1029,6 +1348,9 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 			body_id = _spawn_cylinder_obstacle(pos, radius, height, rgba)
 			aabb_corr = [pos[0] - radius, pos[1] - radius, pos[0] + radius, pos[1] + radius]
 			aabb_final = _clamp_zone(list(aabb_corr), (Lx, Ly), issues, label=f"{otype}:{obs.get('id')}")
+			center_hint = (float(pos[0]), float(pos[1]))
+			half_hint = (radius, radius)
+			yaw_hint = 0.0
 		elif obs.get("pos") and obs.get("size"):
 			pos = obs.get("pos")
 			size = obs.get("size")
@@ -1039,10 +1361,16 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 				# approximate AABB without yaw for spawn checks
 				aabb_corr = [pos[0] - half[0], pos[1] - half[1], pos[0] + half[0], pos[1] + half[1]]
 				aabb_final = _clamp_zone(list(aabb_corr), (Lx, Ly), issues, label=f"{otype}:{obs.get('id')}")
+				center_hint = (float(pos[0]), float(pos[1]))
+				half_hint = (half[0], half[1])
+				yaw_hint = yaw
 		elif aabb:
 			aabb_final = _clamp_zone(list(aabb), (Lx, Ly), issues, label=f"{otype}:{obs.get('id')}")
 			height = float(obs.get("height", 1.0))
 			body_id = _spawn_box_from_aabb(aabb_final, height, rgba)
+			center_hint = ((aabb_final[0] + aabb_final[2]) * 0.5, (aabb_final[1] + aabb_final[3]) * 0.5)
+			half_hint = ((aabb_final[2] - aabb_final[0]) * 0.5, (aabb_final[3] - aabb_final[1]) * 0.5)
+			yaw_hint = float(obs.get("yaw", 0.0))
 		if body_id is not None:
 			walls_extra.append(body_id)
 			static_meta.append({
@@ -1050,6 +1378,9 @@ def _build_static_geometry_from_layout(client_id: int, scn: Dict[str, Any], rand
 				"type": otype,
 				"body_id": body_id,
 				"aabb": aabb_final if aabb_final is not None else aabb,
+				"center": center_hint,
+				"half_extents": half_hint,
+				"yaw": yaw_hint,
 				"height": obs.get("height", 1.0),
 				"occlusion": occlusion,
 				"reflective": reflective,

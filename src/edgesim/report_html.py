@@ -433,87 +433,125 @@ def _scale_builder(world_size: Tuple[float, float], width: float, height: float,
 
 
 def _render_rect(zone: List[float], sx, sy, fill: str, stroke: str, opacity: float = 1.0, dash: Optional[str] = None) -> str:
-    if len(zone) != 4:
-        return ""
-    x0, y0, x1, y1 = zone
-    x = sx(x0)
-    y = sy(y1)  # top-left in SVG
-    w = sx(x1) - sx(x0)
-    h = sy(y0) - sy(y1)
-    dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
-    return f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" fill="{fill}" fill-opacity="{opacity}" stroke="{stroke}" stroke-width="1" {dash_attr}/>'
+	if len(zone) != 4:
+		return ""
+	x0, y0, x1, y1 = zone
+	x = sx(x0)
+	y = sy(y1)  # top-left in SVG
+	w = sx(x1) - sx(x0)
+	h = sy(y0) - sy(y1)
+	dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+	return f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" fill="{fill}" fill-opacity="{opacity}" stroke="{stroke}" stroke-width="1" {dash_attr}/>'
+
+
+def _render_oriented_rect(center: List[float] | Tuple[float, float],
+                          half_extents: List[float] | Tuple[float, float],
+                          yaw: float,
+                          sx,
+                          sy,
+                          fill: str,
+                          stroke: str,
+                          opacity: float = 1.0,
+                          dash: Optional[str] = None) -> str:
+	try:
+		cx, cy = float(center[0]), float(center[1])  # type: ignore[index]
+		hx, hy = float(half_extents[0]), float(half_extents[1])  # type: ignore[index]
+	except Exception:
+		return ""
+	c = math.cos(yaw)
+	s = math.sin(yaw)
+	corners = []
+	for sxh, syh in ((-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)):
+		x = cx + sxh * c - syh * s
+		y = cy + sxh * s + syh * c
+		corners.append((x, y))
+	pts = " ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y in corners)
+	dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+	return f'<polygon points="{pts}" fill="{fill}" fill-opacity="{opacity}" stroke="{stroke}" stroke-width="1" {dash_attr}/>'
 
 
 def _render_polyline(points: List[Tuple[float, float]], sx, sy, stroke: str, width: float = 2.0, opacity: float = 1.0) -> str:
-    if len(points) < 2:
-        return '<text x="50%" y="50%" text-anchor="middle" fill="#9ca3af">no trajectory</text>'
-    pts = " ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y in points)
-    return f'<polyline points="{pts}" fill="none" stroke="{stroke}" stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round" opacity="{opacity}"/>'
+	if len(points) < 2:
+		return '<text x="50%" y="50%" text-anchor="middle" fill="#9ca3af">no trajectory</text>'
+	pts = " ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y in points)
+	return f'<polyline points="{pts}" fill="none" stroke="{stroke}" stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round" opacity="{opacity}"/>'
 
 
 def _render_map(world: dict, run: dict, colors: dict) -> str:
-    Lx, Ly = (20.0, 20.0)
-    env = world.get("environment", {}) if isinstance(world, dict) else {}
-    if isinstance(env, dict):
-        msize = env.get("map_size_m")
-        if isinstance(msize, (list, tuple)) and len(msize) == 2:
-            Lx, Ly = float(msize[0] or Lx), float(msize[1] or Ly)
-    sx, sy = _scale_builder((Lx, Ly), width=1000.0, height=420.0, margin=28.0)
-    svg_parts = []
-    svg_parts.append(f'<rect x="0" y="0" width="1000" height="420" fill="url(#bg)" />')
+	Lx, Ly = (20.0, 20.0)
+	env = world.get("environment", {}) if isinstance(world, dict) else {}
+	if isinstance(env, dict):
+		msize = env.get("map_size_m")
+		if isinstance(msize, (list, tuple)) and len(msize) == 2:
+			Lx, Ly = float(msize[0] or Lx), float(msize[1] or Ly)
+	sx, sy = _scale_builder((Lx, Ly), width=1000.0, height=420.0, margin=28.0)
+	svg_parts = []
+	svg_parts.append(f'<rect x="0" y="0" width="1000" height="420" fill="url(#bg)" />')
 
-    floor_zones = world.get("floor_zones", []) if isinstance(world, dict) else []
-    for zone in floor_zones:
-        z = zone.get("zone")
-        if isinstance(z, list) and len(z) == 4:
-            svg_parts.append(_render_rect(z, sx, sy, fill=colors["traction"], stroke=colors["traction"], opacity=0.35))
+	floor_zones = world.get("floor_zones", []) if isinstance(world, dict) else []
+	for zone in floor_zones:
+		z = zone.get("zone")
+		if isinstance(z, list) and len(z) == 4:
+			svg_parts.append(_render_rect(z, sx, sy, fill=colors["traction"], stroke=colors["traction"], opacity=0.35))
 
-    aisles = world.get("aisles", []) if isinstance(world, dict) else []
-    for a in aisles:
-        z = a.get("zone") if isinstance(a, dict) else None
-        if isinstance(z, list) and len(z) == 4:
-            svg_parts.append(_render_rect(z, sx, sy, fill=colors["aisle"], stroke="#cbd5e1", opacity=0.7))
+	aisles = world.get("aisles", []) if isinstance(world, dict) else []
+	for a in aisles:
+		z = a.get("zone") if isinstance(a, dict) else None
+		rendered = ""
+		if isinstance(a, dict) and isinstance(a.get("center"), (list, tuple)) and isinstance(a.get("half_extents"), (list, tuple)):
+			yaw = _parse_float(a.get("yaw"), default=0.0)
+			rendered = _render_oriented_rect(a.get("center"), a.get("half_extents"), yaw, sx, sy, fill=colors["aisle"], stroke="#cbd5e1", opacity=0.7)
+		if not rendered and isinstance(z, list) and len(z) == 4:
+			rendered = _render_rect(z, sx, sy, fill=colors["aisle"], stroke="#cbd5e1", opacity=0.7)
+		if rendered:
+			svg_parts.append(rendered)
 
-    static_obs = world.get("static_obstacles", []) if isinstance(world, dict) else []
-    for ob in static_obs:
-        z = ob.get("aabb")
-        if isinstance(z, list) and len(z) == 4:
-            svg_parts.append(_render_rect(z, sx, sy, fill=colors["rack"], stroke="#8b5cf6", opacity=0.65))
+	static_obs = world.get("static_obstacles", []) if isinstance(world, dict) else []
+	for ob in static_obs:
+		z = ob.get("aabb")
+		rendered = ""
+		if isinstance(ob, dict) and isinstance(ob.get("center"), (list, tuple)) and isinstance(ob.get("half_extents"), (list, tuple)):
+			yaw = _parse_float(ob.get("yaw"), default=0.0)
+			rendered = _render_oriented_rect(ob.get("center"), ob.get("half_extents"), yaw, sx, sy, fill=colors["rack"], stroke="#8b5cf6", opacity=0.65)
+		if not rendered and isinstance(z, list) and len(z) == 4:
+			rendered = _render_rect(z, sx, sy, fill=colors["rack"], stroke="#8b5cf6", opacity=0.65)
+		if rendered:
+			svg_parts.append(rendered)
 
-    # Start/goal markers from world start/goal if present
-    start = world.get("start") if isinstance(world, dict) else None
-    goal = world.get("goal") if isinstance(world, dict) else None
-    if isinstance(start, (list, tuple)) and len(start) == 2:
-        svg_parts.append(f'<circle cx="{sx(start[0]):.1f}" cy="{sy(start[1]):.1f}" r="7" fill="#16a34a" stroke="#065f46" stroke-width="2"/>')
-        svg_parts.append(f'<text x="{sx(start[0]):.1f}" y="{sy(start[1])-12:.1f}" font-size="12" text-anchor="middle" fill="#065f46">start</text>')
-    if isinstance(goal, (list, tuple)) and len(goal) == 2:
-        svg_parts.append(f'<rect x="{sx(goal[0])-7:.1f}" y="{sy(goal[1])-7:.1f}" width="14" height="14" fill="#f97316" stroke="#c2410c" stroke-width="2" rx="3"/>')
-        svg_parts.append(f'<text x="{sx(goal[0]):.1f}" y="{sy(goal[1])+20:.1f}" font-size="12" text-anchor="middle" fill="#c2410c">goal</text>')
+	# Start/goal markers from world start/goal if present
+	start = world.get("start") if isinstance(world, dict) else None
+	goal = world.get("goal") if isinstance(world, dict) else None
+	if isinstance(start, (list, tuple)) and len(start) == 2:
+		svg_parts.append(f'<circle cx="{sx(start[0]):.1f}" cy="{sy(start[1]):.1f}" r="7" fill="#16a34a" stroke="#065f46" stroke-width="2"/>')
+		svg_parts.append(f'<text x="{sx(start[0]):.1f}" y="{sy(start[1])-12:.1f}" font-size="12" text-anchor="middle" fill="#065f46">start</text>')
+	if isinstance(goal, (list, tuple)) and len(goal) == 2:
+		svg_parts.append(f'<rect x="{sx(goal[0])-7:.1f}" y="{sy(goal[1])-7:.1f}" width="14" height="14" fill="#f97316" stroke="#c2410c" stroke-width="2" rx="3"/>')
+		svg_parts.append(f'<text x="{sx(goal[0]):.1f}" y="{sy(goal[1])+20:.1f}" font-size="12" text-anchor="middle" fill="#c2410c">goal</text>')
 
-    # Robot path
-    path_pts = run.get("path", [])
-    if path_pts:
-        svg_parts.append(_render_polyline(path_pts, sx, sy, stroke=colors["robot"], width=3.0, opacity=0.9))
+	# Robot path
+	path_pts = run.get("path", [])
+	if path_pts:
+		svg_parts.append(_render_polyline(path_pts, sx, sy, stroke=colors["robot"], width=3.0, opacity=0.9))
 
-    # Events
-    for ev in run.get("events", []):
-        if not isinstance(ev, dict):
-            continue
-        x, y = ev.get("x"), ev.get("y")
-        if x is None or y is None or math.isnan(_parse_float(x)) or math.isnan(_parse_float(y)):
-            continue
-        t = ev.get("t", 0)
-        typ = ev.get("type", "")
-        color = colors.get(_event_color_key(str(typ)), colors["event_other"])
-        svg_parts.append(f'<circle cx="{sx(float(x)):.1f}" cy="{sy(float(y)):.1f}" r="6" fill="{color}" stroke="#0f172a" stroke-width="1.2" opacity="0.95"><title>{typ} @ {t:.1f}s</title></circle>')
+	# Events
+	for ev in run.get("events", []):
+		if not isinstance(ev, dict):
+			continue
+		x, y = ev.get("x"), ev.get("y")
+		if x is None or y is None or math.isnan(_parse_float(x)) or math.isnan(_parse_float(y)):
+			continue
+		t = ev.get("t", 0)
+		typ = ev.get("type", "")
+		color = colors.get(_event_color_key(str(typ)), colors["event_other"])
+		svg_parts.append(f'<circle cx="{sx(float(x)):.1f}" cy="{sy(float(y)):.1f}" r="6" fill="{color}" stroke="#0f172a" stroke-width="1.2" opacity="0.95"><title>{typ} @ {t:.1f}s</title></circle>')
 
-    svg = [
-        '<svg viewBox="0 0 1000 420" preserveAspectRatio="xMidYMid meet">',
-        '<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="100%" stop-color="#eef2ff"/></linearGradient></defs>',
-        "".join(svg_parts),
-        '</svg>',
-    ]
-    return "".join(svg)
+	svg = [
+		'<svg viewBox="0 0 1000 420" preserveAspectRatio="xMidYMid meet">',
+		'<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="100%" stop-color="#eef2ff"/></linearGradient></defs>',
+		"".join(svg_parts),
+		'</svg>',
+	]
+	return "".join(svg)
 
 
 def _render_line_chart(series: List[Tuple[float, float]], events: List[Event], title: str, color: str, y_label: str, y_min: float | None = None, y_max: float | None = None) -> str:

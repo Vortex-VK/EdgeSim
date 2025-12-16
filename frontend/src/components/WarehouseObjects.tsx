@@ -577,10 +577,9 @@ export function WallObject({ start, end, isSelected, objectId, onSelectId, onMou
 
 // Racking: standard racks brown, high-bay racks light gray/blue and marked reflective. Depth ~0.9–1.1 m
 export function RackObject({ start, end, isSelected, objectId, onSelectId, onMouseDown }: PathObjectRenderProps) {
-  const width = Math.abs(end.x - start.x);
-  const height = Math.abs(end.y - start.y);
-  const x = Math.min(start.x, end.x);
-  const y = Math.min(start.y, end.y);
+  const thickness = 3;
+  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+  const length = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
   
   // Calculate midpoint for middle drag handle
   const midX = (start.x + end.x) / 2;
@@ -589,43 +588,43 @@ export function RackObject({ start, end, isSelected, objectId, onSelectId, onMou
   
   return (
     <g className="group">
-      {/* Rack base - brown */}
-      <rect
-        x={x}
-        y={y}
-        width={width}
-        height={height}
-        fill="#92400e"
-        fillOpacity={0.8}
-        stroke={isSelected ? "#3b82f6" : "#78350f"}
-        strokeWidth={0.04}
+      {/* Invisible wide path for easier selection */}
+      <line
+        x1={start.x}
+        y1={start.y}
+        x2={end.x}
+        y2={end.y}
+        stroke="transparent"
+        strokeWidth={thickness}
+        strokeLinecap="round"
         onClick={() => onSelectId(objectId)}
         style={{ cursor: 'grab' }}
       />
-      {/* Shelf lines - darker brown */}
-      {[0.25, 0.5, 0.75].map((ratio, i) => (
-        <line
-          key={i}
-          x1={x}
-          y1={y + height * ratio}
-          x2={x + width}
-          y2={y + height * ratio}
-          stroke="#78350f"
-          strokeWidth={0.03}
-        />
-      ))}
-      {/* Vertical supports - dark brown */}
-      {[0, 0.33, 0.67, 1].map((ratio, i) => (
-        <line
-          key={i}
-          x1={x + width * ratio}
-          y1={y}
-          x2={x + width * ratio}
-          y2={y + height}
-          stroke="#451a03"
+      <g transform={`translate(${start.x}, ${start.y}) rotate(${angle * 180 / Math.PI})`}>
+        <rect
+          x={0}
+          y={-thickness / 2}
+          width={length}
+          height={thickness}
+          fill="#92400e"
+          fillOpacity={0.8}
+          stroke={isSelected ? "#3b82f6" : "#78350f"}
           strokeWidth={0.04}
+          onClick={() => onSelectId(objectId)}
+          style={{ cursor: 'grab' }}
         />
-      ))}
+        {[0.25, 0.5, 0.75].map((ratio, i) => (
+          <line
+            key={i}
+            x1={0}
+            y1={-thickness / 2 + thickness * ratio}
+            x2={length}
+            y2={-thickness / 2 + thickness * ratio}
+            stroke="#78350f"
+            strokeWidth={0.03}
+          />
+        ))}
+      </g>
       {/* Control points */}
       {[start, end].map((coord, i) => (
         <g key={i}>

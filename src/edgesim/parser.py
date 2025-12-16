@@ -185,6 +185,36 @@ def _axis_aligned_rect_from_centerline(start: tuple[float, float], end: tuple[fl
     y_lo, y_hi = sorted([y0, y1])
     return [x_lo - half_w, y_lo - half_w, x_hi + half_w, y_hi + half_w]
 
+def _oriented_rect_from_centerline(start: tuple[float, float], end: tuple[float, float], width: float) -> Dict[str, Any]:
+    """Return bounding AABB plus pose (center, half_extents, yaw) for a rectangle whose short edge centers are start/end."""
+    x0, y0 = start
+    x1, y1 = end
+    dx, dy = (x1 - x0), (y1 - y0)
+    length = math.hypot(dx, dy)
+    if length < 1e-6:
+        length = 1e-6
+    yaw = math.atan2(dy, dx)
+    cx, cy = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
+    half_w = max(0.05, float(width) * 0.5)
+    half_l = max(0.05, 0.5 * length)
+    c, s = math.cos(yaw), math.sin(yaw)
+    # corners of oriented rect for AABB
+    corners = []
+    for sx in (-half_l, half_l):
+        for sy in (-half_w, half_w):
+            corners.append((cx + sx * c - sy * s, cy + sx * s + sy * c))
+    xs = [pt[0] for pt in corners]
+    ys = [pt[1] for pt in corners]
+    rect = [min(xs), min(ys), max(xs), max(ys)]
+    return {
+        "rect": rect,
+        "center": (cx, cy),
+        "half_extents": (half_l, half_w),
+        "yaw": yaw,
+        "length": length,
+        "width": 2.0 * half_w,
+    }
+
 def _rect_center(rect: List[float] | tuple[float, float, float, float]) -> tuple[float, float]:
     x0, y0, x1, y1 = rect
     return (0.5 * (float(x0) + float(x1)), 0.5 * (float(y0) + float(y1)))
@@ -1034,11 +1064,14 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
         x1 = float(m.group("x1")); y1 = float(m.group("y1"))
         start = tuple(_clamp_xy((x0, y0), bounds))
         end = tuple(_clamp_xy((x1, y1), bounds))
-        width = 1.4 if "main" in label_l else 1.2
+        width = 2.5
+        if "main" in label_l:
+            width = 2.5
         if "narrow" in snip:
-            width = min(width, 1.0)
+            width = min(width, 1.5)
         aisle_type = "cross" if "crosswalk" in label_l else "straight"
-        rect = _clamp_rect(_axis_aligned_rect_from_centerline(start, end, width), bounds)
+        pose = _oriented_rect_from_centerline(start, end, width)
+        rect = _clamp_rect(pose["rect"], bounds)
         aisle_segments.append((start, end))
         aisles.append({
             "id": f"A_coord_{len(aisles)+1:02d}",
@@ -1046,7 +1079,12 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
             "rect": rect,
             "type": aisle_type,
             "racking": False,
-            "pad": [0.05, 0.05, 0.05, 0.05],
+            "center": list(map(float, pose["center"])),
+            "half_extents": [float(pose["half_extents"][0]), float(pose["half_extents"][1])],
+            "yaw": float(pose["yaw"]),
+            "width_m": float(width),
+            "length_m": float(pose["length"]),
+            "centerline": [list(map(float, start)), list(map(float, end))],
         })
     if aisles:
         # If only cross aisles were provided, synthesize a simple through-aisle so crossings have something to span.
@@ -1199,7 +1237,10 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
         seg_list = [[float(m.group("x0")), float(m.group("y0")), float(m.group("x1")), float(m.group("y1"))]]
         seg_list.extend(_extra_segments(tail))
         for (x0, y0, x1, y1) in seg_list:
-            rect = _clamp_rect(_axis_aligned_rect_from_centerline(_clamp_xy((x0, y0), bounds), _clamp_xy((x1, y1), bounds), 0.3), bounds)
+            start = _clamp_xy((x0, y0), bounds)
+            end = _clamp_xy((x1, y1), bounds)
+            pose = _oriented_rect_from_centerline(tuple(start), tuple(end), 0.3)
+            rect = _clamp_rect(pose["rect"], bounds)
             height = 2.2
             if "high" in label or "tall" in label:
                 height = 3.6
@@ -1207,6 +1248,9 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
                 "id": f"Wall_{len(wall_entries)+1:02d}",
                 "aabb": rect,
                 "height_m": height,
+                "center": list(map(float, pose["center"])),
+                "half_extents": [float(pose["half_extents"][0]), float(pose["half_extents"][1])],
+                "yaw": float(pose["yaw"]),
             })
 
     if wall_entries:
@@ -1219,7 +1263,10 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
         seg_list = [[float(m.group("x0")), float(m.group("y0")), float(m.group("x1")), float(m.group("y1"))]]
         seg_list.extend(_extra_segments(tail))
         for (x0, y0, x1, y1) in seg_list:
-            rect = _clamp_rect(_axis_aligned_rect_from_centerline(_clamp_xy((x0, y0), bounds), _clamp_xy((x1, y1), bounds), 0.9), bounds)
+            start = _clamp_xy((x0, y0), bounds)
+            end = _clamp_xy((x1, y1), bounds)
+            pose = _oriented_rect_from_centerline(tuple(start), tuple(end), 3.0)
+            rect = _clamp_rect(pose["rect"], bounds)
             r_type = "high_bay" if "high" in label else "rack"
             height = 5.0 if "high" in label else 3.0
             rack_entries.append({
@@ -1228,6 +1275,12 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
                 "height_m": height,
                 "type": r_type,
                 "reflective": True if r_type == "high_bay" else False,
+                "center": list(map(float, pose["center"])),
+                "half_extents": [float(pose["half_extents"][0]), float(pose["half_extents"][1])],
+                "yaw": float(pose["yaw"]),
+                "width_m": float(pose["width"]),
+                "length_m": float(pose["length"]),
+                "centerline": [list(map(float, start)), list(map(float, end))],
             })
 
     if rack_entries:

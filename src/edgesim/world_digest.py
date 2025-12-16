@@ -33,12 +33,29 @@ def build_world_digest(
 			zone = row.get(key)
 			if not isinstance(zone, (list, tuple)) or len(zone) != 4:
 				continue
-			out.append({
+			entry = {
 				"id": row.get("id"),
 				"type": row.get("type"),
 				"zone": [_round3(float(v)) for v in zone],
 				"mu": float(row.get("mu")) if row.get("mu") is not None else None,
-			})
+			}
+			center = row.get("center")
+			half = row.get("half_extents")
+			yaw = row.get("yaw")
+			if isinstance(center, (list, tuple)) and len(center) == 2:
+				entry["center"] = [_round3(float(center[0])), _round3(float(center[1]))]
+			if isinstance(half, (list, tuple)) and len(half) >= 2:
+				entry["half_extents"] = [_round3(float(half[0])), _round3(float(half[1]))]
+			if yaw is not None:
+				try:
+					entry["yaw"] = _round3(float(yaw))
+				except Exception:
+					pass
+			if row.get("width_m") is not None:
+				entry["width_m"] = float(row.get("width_m"))
+			if row.get("length_m") is not None:
+				entry["length_m"] = float(row.get("length_m"))
+			out.append(entry)
 		return out
 
 	def _pack_vehicle_list(rows: List[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
@@ -68,12 +85,25 @@ def build_world_digest(
 			aabb = row.get("aabb")
 			if not isinstance(aabb, (list, tuple)) or len(aabb) != 4:
 				continue
-			out.append({
+			entry = {
 				"id": row.get("id"),
 				"type": row.get("type"),
 				"aabb": [_round3(float(v)) for v in aabb],
 				"height": row.get("height"),
-			})
+			}
+			center = row.get("center")
+			half = row.get("half_extents")
+			yaw = row.get("yaw")
+			if isinstance(center, (list, tuple)) and len(center) == 2:
+				entry["center"] = [_round3(float(center[0])), _round3(float(center[1]))]
+			if isinstance(half, (list, tuple)) and len(half) >= 2:
+				entry["half_extents"] = [_round3(float(half[0])), _round3(float(half[1]))]
+			if yaw is not None:
+				try:
+					entry["yaw"] = _round3(float(yaw))
+				except Exception:
+					pass
+			out.append(entry)
 		return out
 
 	# Summaries based on provided geometry
