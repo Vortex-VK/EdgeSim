@@ -1,5 +1,6 @@
 TODOs for EdgeSim (what’s still missing vs. current baseline)
 ============================================================
+STEPS COMPLETED: 1, 2, 3.
 
 High-level targets
 - Keep data quality high.
@@ -55,6 +56,7 @@ High-level targets
   - edgesim replay (load run, open viewer or simple GIF).
   - edgesim report (regen edgesim-report).
   - Expose knobs: μ ranges, LiDAR noise/dropout, clutter level, behavior presets. No hidden “scenario type” shortcuts.
+- Expand presets: add more site profiles (sensor/traction/human tuning) and batch profiles (minimal/robot/full variants) to cover common warehouses and edge cases.
 - (Optional later) lightweight web UI wrapping the CLI.
 
 5) Explainable reports (edgesim-report)
@@ -75,10 +77,8 @@ High-level targets
   - Optional 3D mode (e.g., Open3D) behind a flag.
   - Integrate with CLI: edgesim replay <run_dir> --viewer [--follow-robot].
 
-7) Suggested order
-------------------
-- Step 1: Logging/frames + geometry metadata (1 & 3 basics) to support checks.
-- Step 2: Data-quality tool/tests (2).
-- Step 3: Basic 2D viewer (6) to see geometry/log issues quickly.
-- Step 4: Upgrade edgesim-report (5) reusing viewer visuals.
-- Step 5: CLI (4) once pipeline is stable; optional web UI later.
+7) Robot path authoring & extra robot actor
+-------------------------------------------
+- Allow robot path via coordinates (like humans/vehicles): parse “robot from x0,y0 to x1,y1 …”, store as agent waypoints/raw_coords, project into aisles if enabled, and drive PID segment-to-segment instead of single start→goal.
+- Add secondary robot actor (hazard/occluder): treat as a dynamic body with its own path/size, include in actors.csv/world.json, collide/occlude/scan like forklifts/humans, and keep AMR vs AMR collisions/event logging consistent.
+8) Add more site and batch profiles
