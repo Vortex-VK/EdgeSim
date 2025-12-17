@@ -108,6 +108,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .prewrap {{ white-space: pre-wrap; word-break: break-word; }}
     .prompt-block {{ background:#f8fafc; border:1px solid var(--border); border-radius:12px; padding:10px 12px; margin-top:8px; }}
     .note {{ font-size:12px; color: var(--muted); margin-top:6px; }}
+    .btn {{
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border);
+      background: linear-gradient(135deg, #e0f2fe, #eef2ff);
+      color: #0f172a; font-weight: 600; font-size: 13px; cursor: pointer;
+      transition: transform 120ms ease, box-shadow 120ms ease;
+    }}
+    .btn:hover {{ transform: translateY(-1px); box-shadow: 0 10px 24px rgba(15,23,42,0.08); }}
+    .btn:active {{ transform: translateY(0px); box-shadow: none; }}
+    .replay-box {{ margin-top: 12px; padding: 10px 12px; border:1px dashed var(--border); border-radius:12px; background:#f8fafc; }}
+    .replay-row {{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }}
+    .toast {{ position: fixed; top: 20px; right: 20px; background: #0f172a; color: #fff; padding: 10px 14px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); opacity: 0; pointer-events: none; transition: opacity 160ms ease; font-size: 13px; }}
+    .toast.show {{ opacity: 1; }}
   </style>
 </head>
 <body>
@@ -141,6 +154,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <div class="metric"><span class="label">Min TTC</span><div class="value">{min_ttc}</div></div>
         </div>
         <div class="prompt-block prewrap" style="margin-top:12px;"><b>Representative run:</b> {rep_run}</div>
+        {replay_block}
       </div>
     </div>
 
@@ -214,6 +228,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <footer>EdgeSim • offline HTML report • v1 • Digests: CSV {per_run_digest_short}, scenario {scenario_sha_short}, seeds {seeds_sha_short}</footer>
   </div>
+  {replay_script}
 </body>
 </html>
 """
@@ -308,6 +323,7 @@ def _parse_run(run_dir: Path) -> dict:
     if not csv_path.exists():
         return {
             "run_name": run_dir.name,
+            "run_dir": run_dir,
             "events": events,
             "path": path,
             "clearance": clearance_series,
@@ -382,6 +398,7 @@ def _parse_run(run_dir: Path) -> dict:
 
     return {
         "run_name": run_dir.name,
+        "run_dir": run_dir,
         "events": events,
         "path": path,
         "clearance": clearance_series,
@@ -776,7 +793,36 @@ def generate_report(batch_dir: Path) -> Path:
             break
     if rep_run is None and runs_data:
         rep_run = min(runs_data, key=lambda r: (r["min_clearance"] if not math.isnan(r["min_clearance"]) else 1e9))
-    rep_run = rep_run or (runs_data[0] if runs_data else {"run_name": "N/A", "events": [], "path": [], "clearance": [], "ttc": [], "min_clearance": math.nan, "min_ttc": math.nan})
+    rep_run = rep_run or (runs_data[0] if runs_data else {"run_name": "N/A", "run_dir": batch_dir, "events": [], "path": [], "clearance": [], "ttc": [], "min_clearance": math.nan, "min_ttc": math.nan})
+
+    # Replay helper (pick representative run path) – gated by lidar logging
+    logging_cfg = (scenario.get("logging") or {}) if isinstance(scenario, dict) else {}
+    lidar_cfg = (scenario.get("sensors") or {}).get("lidar", {}) if isinstance(scenario, dict) else {}
+    lidar_log_cfg = (lidar_cfg.get("log") or {}) if isinstance(lidar_cfg, dict) else {}
+    lidar_logging_enabled = bool(
+        logging_cfg.get("full_lidar")
+        or logging_cfg.get("lidar_events_only")
+        or lidar_log_cfg.get("full")
+        or lidar_log_cfg.get("events_only")
+    )
+    if not lidar_logging_enabled:
+        # Fallback: detect actual lidar outputs in run dirs
+        for rdir in run_dirs:
+            if (rdir / "lidar.npz").exists():
+                lidar_logging_enabled = True
+                break
+
+    rep_run_path = ""
+    if lidar_logging_enabled and rep_run.get("run_dir"):
+        try:
+            per_run_root = batch_dir / "per_run"
+            if per_run_root.exists():
+                rep_run_path = f"runs/{batch_dir.name}/per_run/{rep_run.get('run_name','')}"
+            else:
+                rep_run_path = f"runs/{batch_dir.name}"
+        except Exception:
+            rep_run_path = ""
+    replay_cmd = f"edgesim replay {rep_run_path} --viewer --follow-robot" if rep_run_path else ""
 
     # Coverage
     coverage = _safe_load_json(coverage_path) if coverage_path.exists() else {}
@@ -897,6 +943,40 @@ def generate_report(batch_dir: Path) -> Path:
         vehicle_count=vehicle_count,
         static_count=static_count,
         verify_path=f"runs/{title}",
+        replay_block=(
+            f"""
+        <div class="replay-box">
+          <div class="muted" style="margin-bottom:6px;">Quick replay (opens viewer for the representative run)</div>
+          <div class="replay-row">
+            <div class="code" style="font-size:12px; padding:6px 8px;">{replay_cmd}</div>
+            <button class="btn" onclick="copyReplay()">Copy command</button>
+          </div>
+          <div class="note">Requires <span class="code">edgesim</span> CLI; paste the command in a terminal from repo root.</div>
+        </div>
+        """ if replay_cmd else ""
+        ),
+        replay_script=(
+            f"""
+  <div id="toast" class="toast"></div>
+  <script>
+    const replayCmd = {json.dumps(replay_cmd)};
+    function copyReplay() {{
+      if (!replayCmd) return;
+      const toast = document.getElementById('toast');
+      function show(msg) {{
+        toast.textContent = msg;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 1800);
+      }}
+      if (navigator.clipboard && navigator.clipboard.writeText) {{
+        navigator.clipboard.writeText(replayCmd).then(() => show('Copied replay command to clipboard')).catch(() => show('Copy failed; select manually.'));
+      }} else {{
+        show('Copy unsupported; select manually.');
+      }}
+    }}
+  </script>
+        """ if replay_cmd else ""
+        ),
     )
 
     out_path = batch_dir / "report.html"

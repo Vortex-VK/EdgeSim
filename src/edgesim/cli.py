@@ -42,6 +42,13 @@ try:
 except Exception:
     generate_report = None  # type: ignore
 
+_viewer_import_error = None
+try:
+    from .viewer import build_replay_parser
+except Exception as e:
+    build_replay_parser = None  # type: ignore
+    _viewer_import_error = e
+
 try:
     from .schema_validate import validate_scenario  # (ok if missing)
 except Exception:
@@ -493,6 +500,14 @@ def build_parser() -> argparse.ArgumentParser:
     ss.add_argument("--collision-min", type=float, default=20.0, help="Min %% with collision_human outcome")
     ss.add_argument("--success-max", type=float, default=60.0, help="Max %% success allowed")
     ss.set_defaults(func=cmd_assert_stress)
+
+    if build_replay_parser is not None:
+        build_replay_parser(sub)
+    else:
+        sr = sub.add_parser("replay", help="Replay a finished run (viewer dependency missing)")
+        def _replay_stub(args):
+            raise SystemExit(f"Viewer unavailable: {_viewer_import_error}")
+        sr.set_defaults(func=_replay_stub)
 
     return p
 

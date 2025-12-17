@@ -31,6 +31,12 @@ Outputs land in `runs/<timestamp>_<slug>/`:
 - `seeds.json` (random seeds used)
 - `RUN_README.md` (per-run summary)
 
+Replay a finished run (Waymo-style viewer):
+```bash
+edgesim replay runs/<run_dir>/per_run/run_0000 --viewer --follow-robot
+# add --export-mp4 out.mp4 to save a short video instead of (or in addition to) the window
+```
+
 ## Tips
 - Provide explicit coordinates to control aisles, racks/walls, humans, vehicles, and traction zones.
 - Use phrases like “reversing forklift …” to get reversing behavior on coordinate-defined forklifts.

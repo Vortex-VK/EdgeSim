@@ -27,4 +27,5 @@ High-level targets
 - Allow robot path via coordinates (like humans/vehicles): parse “robot from x0,y0 to x1,y1 …”, store as agent waypoints/raw_coords, project into aisles if enabled, and drive PID segment-to-segment instead of single start→goal.
 - Add secondary robot actor (hazard/occluder): treat as a dynamic body with its own path/size, include in actors.csv/world.json, collide/occlude/scan like forklifts/humans, and keep AMR vs AMR collisions/event logging consistent.
 4) Add more site and batch profiles
-5) Change main aisle, aisle and rack, high rack to render with widths of 2.5 meters and 3 meters respectively. The current spawn for coordinates that go diagonally makes them spawn as wide blocks, with each corner in the set coordinates. They need to be spawned similarly to walls, where the middle of one end of the rack (or aisle) is in one of the set coordinates and the other end is on the second coordinate.
+5) add different LiDAR heights
+6) Fix falling object to spawn on any coordinates, not only in the middle (+ the puddle that spawns before it even landed, do we even need it?) 
