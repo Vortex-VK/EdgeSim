@@ -12,7 +12,7 @@ import pybullet as p
 from .world import build_world, spawn_human
 from .world_digest import build_world_digest, write_world_digest
 from .injectors import (
-    LidarSectorBlackoutInjector, FallingObjectInjector, ThrownObjectInjector,
+    LidarSectorBlackoutInjector, FallingObjectInjector,
     GhostObstacleInjector, InjectorState, Injector
 )
 
@@ -1322,20 +1322,6 @@ def run_one(
                     return bid
                 inj.spawn_wet_patch_cb = _spawn_patch_cb
                 injectors.append(inj)
-
-        if isinstance(inj_cfg.get("thrown_object"), dict):
-            c = inj_cfg["thrown_object"]
-            if rng.random() < float(c.get("p", 0.35)):
-                injectors.append(ThrownObjectInjector(
-                    origin=tuple(map(float, c.get("origin", [6.0, 3.0]))),
-                    target=tuple(map(float, c.get("target", [6.0, 17.0]))),
-                    z0=float(c.get("z0", 1.2)),
-                    speed_mps=float(c.get("speed_mps", 6.0)),
-                    mass=float(c.get("mass", 0.5)),
-                    radius=float(c.get("radius", 0.12)),
-                    restitution=float(c.get("restitution", 0.3)),
-                    launch_within_r=float(c.get("launch_within_r", 4.0)),
-                ))
 
         # Logging
         log_cfg = (scn.get("logging") or {})

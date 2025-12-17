@@ -19,36 +19,53 @@ import {
   HumanObject,
   ForkliftObject,
   CartObject,
+  TuggerObject,
   WallObject,
   RackObject,
   ObstacleObject,
   WetPatchObject,
   SpillObject,
   FallingObjectInjector,
-  ThrownObjectInjector
+  CartBlockObject
 } from "./components/WarehouseObjects";
 
 // Types
 type Coordinate = { x: number; y: number };
+
+type ForkliftOptions = {
+  reversing_mode: boolean;
+  alarm: boolean;
+  reflective: boolean;
+  load_overhang: boolean;
+};
+
+type RackOptions = {
+  high_rack: boolean;
+};
 
 type ObjectType = 
   | "robot"
   | "human" 
   | "forklift"
   | "cart"
+  | "tugger"
   | "wall"
   | "rack"
   | "obstacle"
+  | "cart_block"
   | "wet_patch"
   | "spill"
-  | "falling_object"
-  | "thrown_object";
+  | "falling_object";
 
 type SceneObject = {
   id: string;
   type: ObjectType;
   coords: Coordinate[];
   label?: string;
+  options?: {
+    forklift?: ForkliftOptions;
+    rack?: RackOptions;
+  };
 };
 
 type AppMode = "select" | "text" | "visual";
@@ -79,20 +96,21 @@ const OBJECT_CATEGORIES = {
   dynamic: [
     { type: "human" as ObjectType, label: "Human", color: "#22c55e", coords: 2 }, // Green circle
     { type: "forklift" as ObjectType, label: "Forklift", color: "#f59e0b", coords: 2 }, // Yellow/orange
-    { type: "cart" as ObjectType, label: "Pallet Jack", color: "#f97316", coords: 2 } // Red-orange
+    { type: "cart" as ObjectType, label: "Pallet Jack", color: "#f97316", coords: 2 }, // Red-orange
+    { type: "tugger" as ObjectType, label: "Tugger", color: "#3b82f6", coords: 2 } // Blue
   ],
   static: [
     { type: "wall" as ObjectType, label: "Wall", color: "#4b5563", coords: 2 }, // Dark gray
     { type: "rack" as ObjectType, label: "Rack", color: "#92400e", coords: 2 }, // Brown
-    { type: "obstacle" as ObjectType, label: "Pallet/Box", color: "#92400e", coords: 1 } // Brown
+    { type: "obstacle" as ObjectType, label: "Pallet/Box", color: "#92400e", coords: 1 }, // Brown
+    { type: "cart_block" as ObjectType, label: "Cart Block", color: "#6b7280", coords: 1 } // Gray
   ],
   hazards: [
     { type: "wet_patch" as ObjectType, label: "Wet Patch", color: "#7dd3fc", coords: 2 }, // Light blue
     { type: "spill" as ObjectType, label: "Oil Spill", color: "#6b7280", coords: 1 } // Dark gray
   ],
   injectors: [
-    { type: "falling_object" as ObjectType, label: "Falling Object", color: "#a855f7", coords: 1 }, // Purple - visualized as landing spot
-    { type: "thrown_object" as ObjectType, label: "Thrown Object", color: "#3b82f6", coords: 2 } // Blue - visualized with target
+    { type: "falling_object" as ObjectType, label: "Falling Object", color: "#a855f7", coords: 1 } // Purple - visualized as landing spot
   ],
   robot: { type: "robot" as ObjectType, label: "AMR Robot", color: "#ef4444", coords: 2 } // Red - always present
 };
@@ -656,13 +674,24 @@ function VisualMode({ onBack }: { onBack: () => void }) {
   const [lidarBlackout, setLidarBlackout] = useState(false);
   const [ghostObstacle, setGhostObstacle] = useState(false);
 
+  const defaultOptionsForType = (type: ObjectType) => {
+    if (type === "forklift") {
+      return { forklift: { reversing_mode: false, alarm: false, reflective: false, load_overhang: false } as ForkliftOptions };
+    }
+    if (type === "rack") {
+      return { rack: { high_rack: false } as RackOptions };
+    }
+    return undefined;
+  };
+
   const addObject = (type: ObjectType, coordCount: number) => {
     const newObj: SceneObject = {
       id: Date.now().toString(),
       type,
       coords: coordCount === 1 
         ? [{ x: 10, y: 10 }]
-        : [{ x: 8, y: 10 }, { x: 12, y: 10 }]
+        : [{ x: 8, y: 10 }, { x: 12, y: 10 }],
+      options: defaultOptionsForType(type)
     };
     setObjects([...objects, newObj]);
     setSelectedId(newObj.id);
@@ -703,19 +732,31 @@ function VisualMode({ onBack }: { onBack: () => void }) {
           parts.push(`human crossing from ${c[0].x},${c[0].y} to ${c[1].x},${c[1].y}`);
           break;
         case "forklift":
-          parts.push(`forklift moving from ${c[0].x},${c[0].y} to ${c[1].x},${c[1].y}`);
+          const fk = obj.options?.forklift || { reversing_mode: false, alarm: false, reflective: false, load_overhang: false };
+          const base = fk.reversing_mode ? "reversing forklift" : "forklift";
+          const extras: string[] = [];
+          if (fk.alarm) extras.push("with alarm");
+          if (fk.reflective) extras.push("with reflective load");
+          if (fk.load_overhang) extras.push("with load overhang");
+          parts.push(`${base} moving from ${c[0].x},${c[0].y} to ${c[1].x},${c[1].y}${extras.length ? " " + extras.join(" ") : ""}`);
           break;
         case "cart":
           parts.push(`cart from ${c[0].x},${c[0].y} to ${c[1].x},${c[1].y}`);
+          break;
+        case "tugger":
+          parts.push(`tugger from ${c[0].x},${c[0].y} to ${c[1].x},${c[1].y}`);
           break;
         case "wall":
           parts.push(`wall from ${c[0].x},${c[0].y} to ${c[1].x},${c[1].y}`);
           break;
         case "rack":
-          parts.push(`rack from ${c[0].x},${c[0].y} to ${c[1].x},${c[1].y}`);
+          parts.push(`${obj.options?.rack?.high_rack ? "high rack" : "rack"} from ${c[0].x},${c[0].y} to ${c[1].x},${c[1].y}`);
           break;
         case "obstacle":
           parts.push(`obstacle at ${c[0].x},${c[0].y}`);
+          break;
+        case "cart_block":
+          parts.push(`cart block at ${c[0].x},${c[0].y}`);
           break;
         case "wet_patch":
           parts.push(`wet patch from ${c[0].x},${c[0].y} to ${c[1].x},${c[1].y}`);
@@ -725,9 +766,6 @@ function VisualMode({ onBack }: { onBack: () => void }) {
           break;
         case "falling_object":
           parts.push(`falling object at ${c[0].x},${c[0].y}`);
-          break;
-        case "thrown_object":
-          parts.push(`thrown object from ${c[0].x},${c[0].y} to ${c[1].x},${c[1].y}`);
           break;
       }
     });
@@ -1188,9 +1226,14 @@ function VisualMode({ onBack }: { onBack: () => void }) {
                           </div>
                           <ObjectEditor
                             object={selectedObj}
-                            onUpdate={(coords) => {
+                            onUpdateCoords={(coords) => {
                               setObjects(objects.map(obj =>
                                 obj.id === selectedObj.id ? { ...obj, coords } : obj
+                              ));
+                            }}
+                            onUpdateObject={(updated) => {
+                              setObjects(objects.map(obj =>
+                                obj.id === selectedObj.id ? updated : obj
                               ));
                             }}
                           />
@@ -1319,15 +1362,24 @@ function ObjectPanel({ onAddObject }: { onAddObject: (type: ObjectType, coords: 
 
 function ObjectEditor({
   object,
-  onUpdate
+  onUpdateCoords,
+  onUpdateObject
 }: {
   object: SceneObject;
-  onUpdate: (coords: Coordinate[]) => void;
+  onUpdateCoords: (coords: Coordinate[]) => void;
+  onUpdateObject: (obj: SceneObject) => void;
 }) {
   const updateCoord = (index: number, axis: 'x' | 'y', value: number) => {
     const newCoords = [...object.coords];
     newCoords[index] = { ...newCoords[index], [axis]: value };
-    onUpdate(newCoords);
+    onUpdateCoords(newCoords);
+  };
+
+  const mergeOptions = (patch: Partial<NonNullable<SceneObject["options"]>>) => {
+    onUpdateObject({
+      ...object,
+      options: { ...(object.options || {}), ...patch },
+    });
   };
 
   const meta = Object.values(OBJECT_CATEGORIES)
@@ -1370,6 +1422,51 @@ function ObjectEditor({
           </div>
         </div>
       ))}
+
+      {object.type === "forklift" && (
+        <div className="space-y-2">
+          <Label className="text-xs text-slate-600">Forklift options</Label>
+          {([
+            { key: "reversing_mode", label: "Reversing mode", hint: "Ping-pong / backing" },
+            { key: "alarm", label: "Backup alarm", hint: "Beeping enabled" },
+            { key: "reflective", label: "Reflective load", hint: "High-vis reflective surfaces" },
+            { key: "load_overhang", label: "Load overhang", hint: "Extended pallet/overhang" },
+          ] as const).map(opt => (
+            <div key={opt.key} className="flex items-center justify-between">
+              <div>
+                <p className="text-sm">{opt.label}</p>
+                <p className="text-xs text-slate-500">{opt.hint}</p>
+              </div>
+              <Switch
+                checked={Boolean(object.options?.forklift?.[opt.key])}
+                onCheckedChange={(checked) => {
+                  const current = object.options?.forklift || { reversing_mode: false, alarm: false, reflective: false, load_overhang: false };
+                  mergeOptions({ forklift: { ...current, [opt.key]: checked } as ForkliftOptions });
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {object.type === "rack" && (
+        <div className="space-y-2">
+          <Label className="text-xs text-slate-600">Rack options</Label>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm">High rack</p>
+              <p className="text-xs text-slate-500">Increase height/occlusion</p>
+            </div>
+            <Switch
+              checked={Boolean(object.options?.rack?.high_rack)}
+              onCheckedChange={(checked) => {
+                const current = object.options?.rack || { high_rack: false };
+                mergeOptions({ rack: { ...current, high_rack: checked } });
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1521,23 +1618,25 @@ function WarehouseCanvas({
       case "human":
         return <HumanObject key={obj.id} start={obj.coords[0]} end={obj.coords[1]} {...commonProps} />;
       case "forklift":
-        return <ForkliftObject key={obj.id} start={obj.coords[0]} end={obj.coords[1]} {...commonProps} />;
+        return <ForkliftObject key={obj.id} start={obj.coords[0]} end={obj.coords[1]} opts={obj.options?.forklift} {...commonProps} />;
       case "cart":
         return <CartObject key={obj.id} start={obj.coords[0]} end={obj.coords[1]} {...commonProps} />;
+      case "tugger":
+        return <TuggerObject key={obj.id} start={obj.coords[0]} end={obj.coords[1]} {...commonProps} />;
       case "wall":
         return <WallObject key={obj.id} start={obj.coords[0]} end={obj.coords[1]} {...commonProps} />;
       case "rack":
-        return <RackObject key={obj.id} start={obj.coords[0]} end={obj.coords[1]} {...commonProps} />;
+        return <RackObject key={obj.id} start={obj.coords[0]} end={obj.coords[1]} high={Boolean(obj.options?.rack?.high_rack)} {...commonProps} />;
       case "obstacle":
         return <ObstacleObject key={obj.id} pos={obj.coords[0]} {...commonProps} />;
+      case "cart_block":
+        return <CartBlockObject key={obj.id} pos={obj.coords[0]} {...commonProps} />;
       case "wet_patch":
         return <WetPatchObject key={obj.id} start={obj.coords[0]} end={obj.coords[1]} {...commonProps} />;
       case "spill":
         return <SpillObject key={obj.id} pos={obj.coords[0]} {...commonProps} />;
       case "falling_object":
         return <FallingObjectInjector key={obj.id} pos={obj.coords[0]} {...commonProps} />;
-      case "thrown_object":
-        return <ThrownObjectInjector key={obj.id} start={obj.coords[0]} end={obj.coords[1]} {...commonProps} />;
       default:
         return null;
     }

@@ -204,6 +204,7 @@ class FallingObjectInjector(Injector):
     body_id: Optional[int] = None
     made_puddle: bool = False
     fired_spawn: bool = False
+    _will_shatter: Optional[bool] = None
     _event_queue: List[Tuple[str, str]] = field(default_factory=list)
 
     # callback to create wet patch in sim: (x0,y0,x1,y1,mu)-> int body id
@@ -227,71 +228,36 @@ class FallingObjectInjector(Injector):
         if self.body_id is not None and not self.made_puddle:
             cps = p.getContactPoints(bodyA=self.body_id)
             for cp in cps:
-                # Any contact with plane or floor is enough
-                if cp[3] < 0.05:  # contact distance
-                    x, y, z = p.getBasePositionAndOrientation(self.body_id)[0]
-                    # Ignore spurious early contacts while object is still high
-                    if z > max(0.6, 0.15 * self.drop_z):
-                        continue
-                    if self.shatter_on_impact and self.spawn_wet_patch_cb is not None:
-                        hx, hy = self.puddle_half
-                        x0, y0 = _clip(x - hx, 0.0, s.bounds[0]), _clip(y - hy, 0.0, s.bounds[1])
-                        x1, y1 = _clip(x + hx, 0.0, s.bounds[0]), _clip(y + hy, 0.0, s.bounds[1])
-                        pid = self.spawn_wet_patch_cb(x0, y0, x1, y1, self.puddle_mu)
-                        self._event_queue.append(("shatter_to_puddle", f"{x0:.2f},{y0:.2f},{x1:.2f},{y1:.2f},mu={self.puddle_mu:.2f}"))
+                contact_dist = float(cp[8]) if len(cp) > 8 else 1.0
+                normal_force = float(cp[9]) if len(cp) > 9 else 0.0
+                # Require an actual contact/overlap or non-zero force
+                if contact_dist > 0.02 and normal_force <= 0.0:
+                    continue
+                x, y, z = p.getBasePositionAndOrientation(self.body_id)[0]
+                # Ignore spurious early contacts while object is still high
+                if z > max(0.6, 0.15 * self.drop_z):
+                    continue
+                if self._will_shatter is None:
+                    self._will_shatter = bool(self.shatter_on_impact and random.random() < 0.5)
+                if self._will_shatter and self.spawn_wet_patch_cb is not None:
+                    hx, hy = self.puddle_half
+                    x0, y0 = _clip(x - hx, 0.0, s.bounds[0]), _clip(y - hy, 0.0, s.bounds[1])
+                    x1, y1 = _clip(x + hx, 0.0, s.bounds[0]), _clip(y + hy, 0.0, s.bounds[1])
+                    pid = self.spawn_wet_patch_cb(x0, y0, x1, y1, self.puddle_mu)
+                    self._event_queue.append(("shatter_to_puddle", f"{x0:.2f},{y0:.2f},{x1:.2f},{y1:.2f},mu={self.puddle_mu:.2f}"))
                     self.made_puddle = True
                     return
+                # Non-shatter: settle on ground at box height and zero velocities
+                h = float(self.half_extents[2]) if len(self.half_extents) >= 3 else 0.25
+                _, orn = p.getBasePositionAndOrientation(self.body_id)
+                z_set = max(h, 0.02)
+                p.resetBasePositionAndOrientation(self.body_id, [x, y, z_set], orn)
+                p.resetBaseVelocity(self.body_id, linearVelocity=[0.0, 0.0, 0.0], angularVelocity=[0.0, 0.0, 0.0])
+                p.changeDynamics(self.body_id, -1, restitution=0.0, linearDamping=0.8, angularDamping=0.8)
+                self.made_puddle = True
+                return
 
     def pop_event(self) -> Optional[Tuple[str, str]]:
         if self._event_queue:
             return self._event_queue.pop(0)
-        return None
-
-
-# ------------------------------------------
-# Thrown/flying object across robot trajectory
-# ------------------------------------------
-
-@dataclass
-class ThrownObjectInjector(Injector):
-    """
-    Launches a light object across the aisle, creating a fast cross-traffic hazard.
-    """
-    name: str = "thrown_object"
-    origin: Vec2 = (6.0, 3.0)
-    target: Vec2 = (6.0, 17.0)
-    z0: float = 1.2
-    speed_mps: float = 6.0
-    mass: float = 0.5
-    radius: float = 0.12
-    restitution: float = 0.3
-    launch_within_r: float = 4.0
-    _body: Optional[int] = None
-    _launched: bool = False
-    _event_done: bool = False
-
-    def on_step(self, s: InjectorState) -> None:
-        if self._launched:
-            return
-        dx = s.robot_xy[0] - self.origin[0]
-        dy = s.robot_xy[1] - self.origin[1]
-        if dx*dx + dy*dy <= self.launch_within_r * self.launch_within_r:
-            # Build small sphere and give it initial velocity toward target
-            vis = p.createVisualShape(p.GEOM_SPHERE, radius=self.radius, rgbaColor=[0.3, 0.3, 0.9, 1.0])
-            col = p.createCollisionShape(p.GEOM_SPHERE, radius=self.radius)
-            self._body = p.createMultiBody(baseMass=self.mass, baseCollisionShapeIndex=col, baseVisualShapeIndex=vis,
-                                           basePosition=[self.origin[0], self.origin[1], self.z0])
-            p.changeDynamics(self._body, -1, restitution=self.restitution, lateralFriction=0.7)
-            # Compute velocity
-            vx = self.target[0] - self.origin[0]
-            vy = self.target[1] - self.origin[1]
-            L = math.hypot(vx, vy) + 1e-9
-            vx, vy = (vx / L) * self.speed_mps, (vy / L) * self.speed_mps
-            p.resetBaseVelocity(self._body, linearVelocity=[vx, vy, 0.0])
-            self._launched = True
-
-    def pop_event(self) -> Optional[Tuple[str, str]]:
-        if self._launched and not self._event_done:
-            self._event_done = True
-            return ("thrown_object", f"{self.origin[0]:.2f},{self.origin[1]:.2f}->{self.target[0]:.2f},{self.target[1]:.2f}")
         return None

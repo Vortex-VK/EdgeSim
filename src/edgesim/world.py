@@ -848,6 +848,7 @@ def _spawn_vehicle_body(cfg: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
 		"default": [0.5, 0.4, 0.4],
 	}.get(vtype, [0.5, 0.4, 0.4])
 	base_half = [base_half[0], base_half[1], float(cfg.get("body_height_m", base_half[2]))]
+	load_overhang = float(cfg.get("load_overhang_m", 0.0))
 	color = _VEHICLE_COLORS.get(vtype, (0.6, 0.6, 0.6, 1.0))
 	shape_types: List[int] = [p.GEOM_BOX]
 	half_extents_list: List[List[float]] = [list(base_half)]
@@ -886,6 +887,24 @@ def _spawn_vehicle_body(cfg: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
 			frame_positions.append([fork_offset_x, 0.0, fork_offset_z + pallet_thickness])
 			frame_orientations.append([0, 0, 0, 1])
 			color_list.append((0.7, 0.45, 0.2, 1.0))
+		load_overhang = float(cfg.get("load_overhang_m", 0.0))
+		if load_overhang > 0.0:
+			seed_bytes = str(cfg.get("id") or "forklift_load").encode("utf-8")
+			rng = random.Random(int(hashlib.md5(seed_bytes).hexdigest(), 16) & 0xFFFFFFFF)
+			box_half = [
+				min(0.85, 0.35 + rng.random() * 0.25 + 0.3 * load_overhang),
+				min(0.7, 0.32 + rng.random() * 0.18),
+				min(0.6, 0.28 + rng.random() * 0.22),
+			]
+			offset_x = base_half[0] + box_half[0]
+			offset_z = -base_half[2] + box_half[2] + max(0.05, float(cfg.get("fork_height_m", 0.0)))
+			shape_types.append(p.GEOM_BOX)
+			half_extents_list.append(box_half)
+			frame_positions.append([offset_x, 0.0, offset_z])
+			frame_orientations.append([0, 0, 0, 1])
+			color_list.append((0.65, 0.45, 0.2, 1.0))
+			full_half[0] = max(full_half[0], offset_x + box_half[0])
+			full_half[2] = max(full_half[2], offset_z + box_half[2])
 
 	vis = p.createVisualShapeArray(
 		shapeTypes=shape_types,
@@ -933,6 +952,7 @@ def _spawn_vehicle_body(cfg: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
 		"warning_lights": cfg.get("warning_lights", False),
 		"half_extents": full_half,
 		"reflective": bool(cfg.get("reflective", False)),
+		"load_overhang_m": load_overhang if vtype == "forklift" else 0.0,
 	}
 	return body, meta
 

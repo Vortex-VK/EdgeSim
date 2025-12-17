@@ -13,19 +13,13 @@ High-level targets
 - Improve static geometry options: rack end caps, wall stubs for blind corners, safety zones, dock doors; all as coordinate-defined objects.
 - Extend world.json metadata: id, type, role tags, (x1,y1,x2,y2), height, AABB for each object to aid checks/visuals.
 
-2) Waymo-like viewer
---------------------
-- edgesim_viewer.py (after full LiDAR logging exists):
-  - Inputs: world.json, run_one.csv, actors.csv, lidar.npz (if logged), frames.json.
-  - Reconstruct pose over time; render geometry + robot + LiDAR points (top-down 2D to start).
-  - Playback controls: play/pause, step, slider; color by type or wet/dry.
-  - Optional 3D mode (e.g., Open3D) behind a flag.
-  - Integrate with CLI: edgesim replay <run_dir> --viewer [--follow-robot].
-
-3) Robot path authoring & extra robot actor
+2) Robot path authoring & extra robot actor
 -------------------------------------------
 - Allow robot path via coordinates (like humans/vehicles): parse “robot from x0,y0 to x1,y1 …”, store as agent waypoints/raw_coords, project into aisles if enabled, and drive PID segment-to-segment instead of single start→goal.
 - Add secondary robot actor (hazard/occluder): treat as a dynamic body with its own path/size, include in actors.csv/world.json, collide/occlude/scan like forklifts/humans, and keep AMR vs AMR collisions/event logging consistent.
-4) Add more site and batch profiles
-5) add different LiDAR heights
-6) Fix falling object to spawn on any coordinates, not only in the middle (+ the puddle that spawns before it even landed, do we even need it?) 
+3) Add more site and batch profiles
+4) add different LiDAR heights
+5) incorporate lidar replay into edgesim report
+6) make it so that edgesim report is generated in the app rather than a separate page
+7) make a 3d test of the simulation incorporated into the app (currently opens local pybullet)
+8) the falling object has a 50/50 to spill or not. If it does not, it sinks and then places itself properly. Need to fix it.

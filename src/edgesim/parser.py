@@ -97,6 +97,7 @@ _HUMAN_SEG_RE = re.compile(
 _VEHICLE_SEG_RE = re.compile(rf"(forklift|vehicle|cart|tugger|pallet jack)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
 _PATCH_SEG_RE = re.compile(rf"(wet\s+patch|spill|oil|traction)[^\n]*?(?:from|covering|zone)\s+{_SEG_RE}", re.IGNORECASE)
 _STATIC_PT_RE = re.compile(rf"(pallet|obstacle|box|cart block|cart|column|cone)[^\n]*?(?:at|center(?:ed)? at)\s+{_PT_RE}", re.IGNORECASE)
+_FALLING_PT_RE = re.compile(rf"falling object[^\n]*?(?:at|near)\s+{_PT_RE}", re.IGNORECASE)
 _WALL_SEG_RE = re.compile(rf"(?P<wlabel>high wall|tall wall|wall|barrier)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
 _RACK_SEG_RE = re.compile(rf"(rack|high rack|high shelf|high-bay|high bay)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
 
@@ -1013,6 +1014,10 @@ def _collect_prompt_coords(prompt: str) -> tuple[float, float]:
         if m.group("x") and m.group("y"):
             _upd(float(m.group("x")), "x")
             _upd(float(m.group("y")), "y")
+    for m in _FALLING_PT_RE.finditer(prompt):
+        if m.group("x") and m.group("y"):
+            _upd(float(m.group("x")), "x")
+            _upd(float(m.group("y")), "y")
     return max_x, max_y
 
 def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str, float] | None = None) -> Dict[str, bool]:
@@ -1025,7 +1030,7 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
         Ly = max(Ly, max_prompt_y + 1.0)
         layout["map_size_m"] = [Lx, Ly]
     bounds = (float(Lx), float(Ly))
-    flags = {"aisle": False, "human": False, "vehicle": False, "traction": False, "static": False, "cart_block": False, "wall": False, "rack": False}
+    flags = {"aisle": False, "human": False, "vehicle": False, "traction": False, "static": False, "cart_block": False, "wall": False, "rack": False, "falling": False}
     rack_entries: List[Dict[str, Any]] = []
 
     aisles: List[Dict[str, Any]] = []
@@ -1230,6 +1235,21 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
                 **obs_extra,
             })
             flags["static"] = True
+
+    for m in _FALLING_PT_RE.finditer(prompt):
+        tail = _tail_until_stop(m.end())
+        point_list = [[float(m.group("x")), float(m.group("y"))]]
+        point_list.extend(_extra_points(tail))
+        if not point_list:
+            continue
+        fx, fy = _clamp_xy(tuple(point_list[0]), bounds)
+        so_root = scn.setdefault("site_overrides", {})
+        so_inj = so_root.setdefault("injectors", {})
+        f_cfg = so_inj.setdefault("falling_object", {})
+        f_cfg["drop_x"] = fx
+        f_cfg["drop_y"] = fy
+        flags["falling"] = True
+        break
 
     for m in _WALL_SEG_RE.finditer(prompt):
         label = (m.group("wlabel") or "wall").lower()
@@ -1843,6 +1863,7 @@ def _detect_coord_mentions(prompt: str) -> Dict[str, bool]:
         "vehicle": bool(_VEHICLE_SEG_RE.search(prompt)),
         "traction": bool(_PATCH_SEG_RE.search(prompt)),
         "static": bool(_STATIC_PT_RE.search(prompt)),
+        "falling": bool(_FALLING_PT_RE.search(prompt)),
         "wall": bool(_WALL_SEG_RE.search(prompt)),
         "rack": bool(_RACK_SEG_RE.search(prompt)),
     }
@@ -2036,6 +2057,7 @@ def prompt_to_scenario_legacy(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
     narrow_cross_case = False
     wide_main_case = _is_wide_main_prompt(text)
     overhang_flag = False
+    load_overhang_flag = ("load overhang" in text.lower()) or ("overhang load" in text.lower())
     if single_straight_case:
         _apply_single_straight_layout(scn)
     elif wide_main_case:
@@ -2249,6 +2271,13 @@ def prompt_to_scenario_legacy(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
             veh["reflective"] = True
             veh.setdefault("load_overhang_m", 0.4)
             veh.setdefault("rear_occlusion_deg", 80.0)
+
+    if load_overhang_flag:
+        for veh in scn.setdefault("hazards", {}).setdefault("vehicles", []):
+            if veh.get("type") != "forklift":
+                continue
+            veh["carrying_pallet"] = True
+            veh["load_overhang_m"] = max(float(veh.get("load_overhang_m", 0.0) or 0.0), 0.35)
 
     # --- Narrow aisle hint (keep lightweight; world builder may interpret later) ---
     if _has_any(text, KEYWORDS["narrow"]):
@@ -2677,6 +2706,7 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
     nums = parse_numbers(prompt)
     coord_detect = _detect_coord_mentions(prompt)
     intent = _extract_intent(prompt, coord_detect)
+    load_overhang_flag = ("load overhang" in text) or ("overhang load" in text)
 
     coord_flags = _apply_coordinate_overrides(scn, prompt, nums)
     for k, v in coord_flags.items():
@@ -2888,6 +2918,13 @@ def prompt_to_scenario(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
             veh["reflective"] = True
             veh.setdefault("load_overhang_m", 0.4)
             veh.setdefault("rear_occlusion_deg", 80.0)
+
+    if load_overhang_flag:
+        for veh in scn.setdefault("hazards", {}).setdefault("vehicles", []):
+            if veh.get("type") != "forklift":
+                continue
+            veh["carrying_pallet"] = True
+            veh["load_overhang_m"] = max(float(veh.get("load_overhang_m", 0.0) or 0.0), 0.35)
 
     if _has_any(text, KEYWORDS["forklift_reverse"]) and not coord_flags.get("vehicle"):
         ref = _primary_aisle_ref(layout_obj)

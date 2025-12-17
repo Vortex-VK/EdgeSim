@@ -33,12 +33,6 @@
         "shatter_on_impact": true,
         "puddle_mu": 0.26,
         "puddle_half": [2.0, 1.0]
-      },
-      "thrown_object": {
-        "p": 0.50,
-        "origin": [6.0, 3.0], "target": [6.0, 17.0],
-        "z0": 1.2, "speed_mps": 6.0, "radius": 0.12,
-        "mass": 0.5, "restitution": 0.3, "launch_within_r": 4.0
       }
     }
   }

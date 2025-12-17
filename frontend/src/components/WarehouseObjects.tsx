@@ -14,6 +14,13 @@ interface PathObjectRenderProps extends Omit<ObjectRenderProps, 'pos'> {
   color?: string; // Optional color override
 }
 
+interface ForkliftOptions {
+  reversing_mode?: boolean;
+  alarm?: boolean;
+  reflective?: boolean;
+  load_overhang?: boolean;
+}
+
 // Robot: red disc, radius default 0.4 m (diameter 0.8 m)
 export function RobotObject({ pos, isSelected, objectId, onSelectId, onMouseDown }: ObjectRenderProps) {
   const radius = 0.4;
@@ -166,11 +173,16 @@ export function HumanObject({ start, end, isSelected, objectId, onSelectId, onMo
 }
 
 // Forklift ~0.9 m wide, ~3.0 m long including forks; yellow/orange with gray forks/mast
-export function ForkliftObject({ start, end, isSelected, objectId, onSelectId, onMouseDown }: PathObjectRenderProps) {
+export function ForkliftObject({ start, end, isSelected, objectId, onSelectId, onMouseDown, opts }: PathObjectRenderProps & { opts?: ForkliftOptions }) {
   const width = 0.9 * 1.33;
   const length = 3.0 * 1.33;
   const angle = Math.atan2(end.y - start.y, end.x - start.x);
+  const renderAngle = angle + (opts?.reversing_mode ? Math.PI : 0);
   const arrowSize = 0.15;
+  const reversing = Boolean(opts?.reversing_mode);
+  const reflective = Boolean(opts?.reflective);
+  const overhang = Boolean(opts?.load_overhang);
+  const alarm = Boolean(opts?.alarm || opts?.reversing_mode);
   
   // Calculate midpoint for middle drag handle
   const midX = (start.x + end.x) / 2;
@@ -212,16 +224,16 @@ export function ForkliftObject({ start, end, isSelected, objectId, onSelectId, o
         />
       </g>
       {/* Forklift at start */}
-      <g transform={`translate(${start.x}, ${start.y}) rotate(${angle * 180 / Math.PI})`}>
+      <g transform={`translate(${start.x}, ${start.y}) rotate(${renderAngle * 180 / Math.PI})`}>
         {/* Main body - yellow/orange */}
         <rect
           x={0}
           y={-width / 2}
           width={length * 0.6}
           height={width}
-          fill="#f59e0b"
+          fill={reflective ? "#fcd34d" : "#f59e0b"}
           stroke={isSelected ? "#3b82f6" : "#d97706"}
-          strokeWidth={0.04}
+          strokeWidth={0.05}
           rx={0.05}
           onClick={() => onSelectId(objectId)}
           style={{ cursor: 'grab' }}
@@ -255,6 +267,19 @@ export function ForkliftObject({ start, end, isSelected, objectId, onSelectId, o
           onClick={() => onSelectId(objectId)}
           style={{ cursor: 'grab' }}
         />
+        {overhang && (
+          <rect
+            x={length * 0.6}
+            y={-width * 0.25}
+            width={length * 0.45}
+            height={width * 0.5}
+            fill="#c084fc"
+            fillOpacity={0.4}
+            stroke="#9333ea"
+            strokeWidth={0.03}
+            strokeDasharray="0.15 0.08"
+          />
+        )}
         {/* Wheels */}
         <circle
           cx={0.2}
@@ -272,6 +297,32 @@ export function ForkliftObject({ start, end, isSelected, objectId, onSelectId, o
           onClick={() => onSelectId(objectId)}
           style={{ cursor: 'grab' }}
         />
+        {reflective && (
+          <>
+            <line x1={length * 0.1} y1={-width * 0.25} x2={length * 0.5} y2={-width * 0.25} stroke="#22d3ee" strokeWidth={0.05} />
+            <line x1={length * 0.1} y1={width * 0.25} x2={length * 0.5} y2={width * 0.25} stroke="#22d3ee" strokeWidth={0.05} />
+          </>
+        )}
+        {/* Mast / cab outline */}
+        <rect
+          x={length * 0.15}
+          y={-width * 0.5}
+          width={length * 0.35}
+          height={width}
+          stroke={reversing ? "#b91c1c" : "#111827"}
+          strokeWidth={0.05}
+          fill="transparent"
+        />
+        {alarm && (
+          <circle
+            cx={length * 0.18}
+            cy={0}
+            r={0.12}
+            fill="#ef4444"
+            stroke="#b91c1c"
+            strokeWidth={0.04}
+          />
+        )}
       </g>
       {/* Control points */}
       {[start, end].map((coord, i) => (
@@ -487,6 +538,132 @@ export function CartObject({ start, end, isSelected, objectId, onSelectId, onMou
   );
 }
 
+// Tugger: longer blue vehicle
+export function TuggerObject({ start, end, isSelected, objectId, onSelectId, onMouseDown }: PathObjectRenderProps) {
+  const width = 0.9;
+  const length = 2.2;
+  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+  const arrowSize = 0.15;
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  const xSize = 0.12;
+
+  return (
+    <g className="group">
+      <line
+        x1={start.x}
+        y1={start.y}
+        x2={end.x}
+        y2={end.y}
+        stroke="transparent"
+        strokeWidth={0.4}
+        strokeLinecap="round"
+        style={{ cursor: 'grab' }}
+        onClick={() => onSelectId(objectId)}
+      />
+      <line
+        x1={start.x}
+        y1={start.y}
+        x2={end.x}
+        y2={end.y}
+        stroke="#3b82f6"
+        strokeWidth={0.04}
+        opacity={0.45}
+        strokeLinecap="round"
+        strokeDasharray="0.18,0.18"
+      />
+      <g transform={`translate(${end.x}, ${end.y}) rotate(${angle * 180 / Math.PI})`}>
+        <path
+          d={`M 0 0 L ${-arrowSize} ${-arrowSize/2} L ${-arrowSize} ${arrowSize/2} Z`}
+          fill="#2563eb"
+          opacity={0.8}
+        />
+      </g>
+      <g transform={`translate(${start.x}, ${start.y}) rotate(${angle * 180 / Math.PI})`}>
+        <rect
+          x={0}
+          y={-width / 2}
+          width={length}
+          height={width}
+          fill="#3b82f6"
+          stroke={isSelected ? "#3b82f6" : "#1d4ed8"}
+          strokeWidth={0.05}
+          rx={0.08}
+          onClick={() => onSelectId(objectId)}
+          style={{ cursor: 'grab' }}
+        />
+        <rect
+          x={length * 0.1}
+          y={-width * 0.4}
+          width={length * 0.25}
+          height={width * 0.8}
+          fill="#60a5fa"
+        />
+        <rect
+          x={length * 0.45}
+          y={-width * 0.3}
+          width={length * 0.4}
+          height={width * 0.6}
+          fill="#60a5fa"
+        />
+        <circle cx={length * 0.2} cy={-width * 0.45} r={0.1} fill="#0f172a" />
+        <circle cx={length * 0.2} cy={width * 0.45} r={0.1} fill="#0f172a" />
+        <circle cx={length * 0.8} cy={-width * 0.45} r={0.1} fill="#0f172a" />
+        <circle cx={length * 0.8} cy={width * 0.45} r={0.1} fill="#0f172a" />
+      </g>
+      {[start, end].map((coord, i) => (
+        <g key={i}>
+          <circle
+            cx={coord.x}
+            cy={coord.y}
+            r={0.15}
+            fill="transparent"
+            stroke={isSelected ? "#3b82f6" : "transparent"}
+            strokeWidth={0.04}
+            style={{ cursor: 'grab' }}
+            className="hover:stroke-blue-400"
+            pointerEvents="none"
+          />
+          <circle
+            cx={coord.x}
+            cy={coord.y}
+            r={0.35}
+            fill="transparent"
+            style={{ cursor: 'grab' }}
+            onMouseDown={(e) => onMouseDown(objectId, i, e)}
+          />
+        </g>
+      ))}
+      <g
+        onMouseDown={(e) => onMouseDown(objectId, 2, e)}
+        style={{ cursor: 'move' }}
+        className="group-hover:opacity-100"
+        opacity={isSelected ? 1 : 0}
+      >
+        <line
+          x1={midX - xSize}
+          y1={midY - xSize}
+          x2={midX + xSize}
+          y2={midY + xSize}
+          stroke="#3b82f6"
+          strokeWidth={0.04}
+          strokeLinecap="round"
+        />
+        <line
+          x1={midX - xSize}
+          y1={midY + xSize}
+          x2={midX + xSize}
+          y2={midY - xSize}
+          stroke="#3b82f6"
+          strokeWidth={0.04}
+          strokeLinecap="round"
+        />
+        <circle cx={midX} cy={midY} r={0.35} fill="transparent" />
+      </g>
+    </g>
+  );
+}
+
 // Walls: perimeter walls dark gray thin lines (~0.1 m thick). Custom walls 0.3 m-thick dark gray
 export function WallObject({ start, end, isSelected, objectId, onSelectId, onMouseDown }: PathObjectRenderProps) {
   const thickness = 0.3;
@@ -576,10 +753,12 @@ export function WallObject({ start, end, isSelected, objectId, onSelectId, onMou
 }
 
 // Racking: standard racks brown, high-bay racks light gray/blue and marked reflective. Depth ~0.9–1.1 m
-export function RackObject({ start, end, isSelected, objectId, onSelectId, onMouseDown }: PathObjectRenderProps) {
+export function RackObject({ start, end, isSelected, objectId, onSelectId, onMouseDown, high = false }: PathObjectRenderProps & { high?: boolean }) {
   const thickness = 3;
   const angle = Math.atan2(end.y - start.y, end.x - start.x);
   const length = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
+  const fill = high ? "#cbd5e1" : "#92400e";
+  const stroke = high ? "#94a3b8" : "#78350f";
   
   // Calculate midpoint for middle drag handle
   const midX = (start.x + end.x) / 2;
@@ -606,9 +785,9 @@ export function RackObject({ start, end, isSelected, objectId, onSelectId, onMou
           y={-thickness / 2}
           width={length}
           height={thickness}
-          fill="#92400e"
+          fill={fill}
           fillOpacity={0.8}
-          stroke={isSelected ? "#3b82f6" : "#78350f"}
+          stroke={isSelected ? "#3b82f6" : stroke}
           strokeWidth={0.04}
           onClick={() => onSelectId(objectId)}
           style={{ cursor: 'grab' }}
@@ -620,7 +799,7 @@ export function RackObject({ start, end, isSelected, objectId, onSelectId, onMou
             y1={-thickness / 2 + thickness * ratio}
             x2={length}
             y2={-thickness / 2 + thickness * ratio}
-            stroke="#78350f"
+            stroke={stroke}
             strokeWidth={0.03}
           />
         ))}
@@ -727,6 +906,42 @@ export function ObstacleObject({ pos, isSelected, objectId, onSelectId, onMouseD
         cx={pos.x}
         cy={pos.y}
         r={size / 2 + 0.1}
+        fill="transparent"
+        stroke="transparent"
+        strokeWidth={0.3}
+        style={{ cursor: 'grab' }}
+        onMouseDown={(e) => onMouseDown(objectId, 0, e)}
+        className="hover:stroke-blue-400"
+      />
+    </g>
+  );
+}
+
+// Cart block: gray rectangle used as obstruction
+export function CartBlockObject({ pos, isSelected, objectId, onSelectId, onMouseDown }: ObjectRenderProps) {
+  const w = 0.8;
+  const h = 0.6;
+  return (
+    <g>
+      <rect
+        x={pos.x - w / 2}
+        y={pos.y - h / 2}
+        width={w}
+        height={h}
+        fill="#6b7280"
+        stroke={isSelected ? "#3b82f6" : "#4b5563"}
+        strokeWidth={0.05}
+        rx={0.04}
+        onClick={() => onSelectId(objectId)}
+        style={{ cursor: 'grab' }}
+      />
+      <line x1={pos.x - w / 2 + 0.08} y1={pos.y} x2={pos.x + w / 2 - 0.08} y2={pos.y} stroke="#111827" strokeWidth={0.05} />
+      <line x1={pos.x} y1={pos.y - h / 2 + 0.08} x2={pos.x} y2={pos.y + h / 2 - 0.08} stroke="#111827" strokeWidth={0.05} />
+      <rect
+        x={pos.x - w / 2}
+        y={pos.y - h / 2}
+        width={w}
+        height={h}
         fill="transparent"
         stroke="transparent"
         strokeWidth={0.3}
@@ -963,130 +1178,6 @@ export function FallingObjectInjector({ pos, isSelected, objectId, onSelectId, o
         onMouseDown={(e) => onMouseDown(objectId, 0, e)}
         className="hover:stroke-blue-400"
       />
-    </g>
-  );
-}
-
-// Thrown object injector: blue sphere trajectory from origin to target
-export function ThrownObjectInjector({ start, end, isSelected, objectId, onSelectId, onMouseDown }: PathObjectRenderProps) {
-  // Calculate midpoint for middle drag handle
-  const midX = (start.x + end.x) / 2;
-  const midY = (start.y + end.y) / 2;
-  const xSize = 0.12;
-  
-  return (
-    <g className="group">
-      {/* Invisible wide path for easier hovering */}
-      <line
-        x1={start.x}
-        y1={start.y}
-        x2={end.x}
-        y2={end.y}
-        stroke="transparent"
-        strokeWidth={0.4}
-        strokeLinecap="round"
-        style={{ cursor: 'grab' }}
-        onClick={() => onSelectId(objectId)}
-      />
-      {/* Trajectory line - dashed blue */}
-      <line
-        x1={start.x}
-        y1={start.y}
-        x2={end.x}
-        y2={end.y}
-        stroke="#3b82f6"
-        strokeWidth={0.04}
-        strokeDasharray="0.2 0.1"
-        opacity={0.7}
-        strokeLinecap="round"
-      />
-      {/* Origin point - blue circle */}
-      <circle
-        cx={start.x}
-        cy={start.y}
-        r={0.15}
-        fill="#3b82f6"
-        stroke={isSelected ? "#3b82f6" : "#2563eb"}
-        strokeWidth={0.03}
-        onClick={() => onSelectId(objectId)}
-        style={{ cursor: 'grab' }}
-      />
-      {/* Target point - blue square */}
-      <rect
-        x={end.x - 0.12}
-        y={end.y - 0.12}
-        width={0.24}
-        height={0.24}
-        fill="#3b82f6"
-        fillOpacity={0.5}
-        stroke={isSelected ? "#3b82f6" : "#2563eb"}
-        strokeWidth={0.03}
-        onClick={() => onSelectId(objectId)}
-        style={{ cursor: 'grab' }}
-      />
-      {/* Arrow indicating direction */}
-      <path
-        d={`M ${end.x - 0.2} ${end.y} L ${end.x - 0.05} ${end.y - 0.05} L ${end.x - 0.05} ${end.y + 0.05} Z`}
-        fill="#3b82f6"
-      />
-      {/* Control points */}
-      {[start, end].map((coord, i) => (
-        <g key={i}>
-          <circle
-            cx={coord.x}
-            cy={coord.y}
-            r={0.15}
-            fill="transparent"
-            stroke={isSelected ? "#3b82f6" : "transparent"}
-            strokeWidth={0.04}
-            style={{ cursor: 'grab' }}
-            className="hover:stroke-blue-400"
-            pointerEvents="none"
-          />
-          {/* Larger invisible hit area */}
-          <circle
-            cx={coord.x}
-            cy={coord.y}
-            r={0.35}
-            fill="transparent"
-            style={{ cursor: 'grab' }}
-            onMouseDown={(e) => onMouseDown(objectId, i, e)}
-          />
-        </g>
-      ))}
-      {/* Middle drag point - X shape */}
-      <g
-        onMouseDown={(e) => onMouseDown(objectId, 2, e)}
-        style={{ cursor: 'move' }}
-        className="group-hover:opacity-100"
-        opacity={isSelected ? 1 : 0}
-      >
-        <line
-          x1={midX - xSize}
-          y1={midY - xSize}
-          x2={midX + xSize}
-          y2={midY + xSize}
-          stroke="#3b82f6"
-          strokeWidth={0.04}
-          strokeLinecap="round"
-        />
-        <line
-          x1={midX - xSize}
-          y1={midY + xSize}
-          x2={midX + xSize}
-          y2={midY - xSize}
-          stroke="#3b82f6"
-          strokeWidth={0.04}
-          strokeLinecap="round"
-        />
-        {/* Invisible larger hit area for easier hover */}
-        <circle
-          cx={midX}
-          cy={midY}
-          r={0.35}
-          fill="transparent"
-        />
-      </g>
     </g>
   );
 }
