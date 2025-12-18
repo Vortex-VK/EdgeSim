@@ -24,7 +24,6 @@ import {
   RackObject,
   ObstacleObject,
   WetPatchObject,
-  SpillObject,
   FallingObjectInjector,
   CartBlockObject
 } from "./components/WarehouseObjects";
@@ -54,7 +53,6 @@ type ObjectType =
   | "obstacle"
   | "cart_block"
   | "wet_patch"
-  | "spill"
   | "falling_object";
 
 type SceneObject = {
@@ -106,8 +104,7 @@ const OBJECT_CATEGORIES = {
     { type: "cart_block" as ObjectType, label: "Cart Block", color: "#6b7280", coords: 1 } // Gray
   ],
   hazards: [
-    { type: "wet_patch" as ObjectType, label: "Wet Patch", color: "#7dd3fc", coords: 2 }, // Light blue
-    { type: "spill" as ObjectType, label: "Oil Spill", color: "#6b7280", coords: 1 } // Dark gray
+    { type: "wet_patch" as ObjectType, label: "Wet Patch", color: "#7dd3fc", coords: 2 } // Light blue
   ],
   injectors: [
     { type: "falling_object" as ObjectType, label: "Falling Object", color: "#a855f7", coords: 1 } // Purple - visualized as landing spot
@@ -685,12 +682,20 @@ function VisualMode({ onBack }: { onBack: () => void }) {
   };
 
   const addObject = (type: ObjectType, coordCount: number) => {
+    const baseCoords = coordCount === 1
+      ? [{ x: 10, y: 10 }]
+      : [{ x: 8, y: 10 }, { x: 12, y: 10 }];
+
+    if (coordCount > 1) {
+      if (type === "wet_patch") {
+        baseCoords[1] = { x: baseCoords[0].x + 2.0, y: baseCoords[0].y + 1.0 };
+      }
+    }
+
     const newObj: SceneObject = {
       id: Date.now().toString(),
       type,
-      coords: coordCount === 1 
-        ? [{ x: 10, y: 10 }]
-        : [{ x: 8, y: 10 }, { x: 12, y: 10 }],
+      coords: baseCoords,
       options: defaultOptionsForType(type)
     };
     setObjects([...objects, newObj]);
@@ -760,9 +765,6 @@ function VisualMode({ onBack }: { onBack: () => void }) {
           break;
         case "wet_patch":
           parts.push(`wet patch from ${c[0].x},${c[0].y} to ${c[1].x},${c[1].y}`);
-          break;
-        case "spill":
-          parts.push(`spill at ${c[0].x},${c[0].y}`);
           break;
         case "falling_object":
           parts.push(`falling object at ${c[0].x},${c[0].y}`);
@@ -1633,8 +1635,6 @@ function WarehouseCanvas({
         return <CartBlockObject key={obj.id} pos={obj.coords[0]} {...commonProps} />;
       case "wet_patch":
         return <WetPatchObject key={obj.id} start={obj.coords[0]} end={obj.coords[1]} {...commonProps} />;
-      case "spill":
-        return <SpillObject key={obj.id} pos={obj.coords[0]} {...commonProps} />;
       case "falling_object":
         return <FallingObjectInjector key={obj.id} pos={obj.coords[0]} {...commonProps} />;
       default:

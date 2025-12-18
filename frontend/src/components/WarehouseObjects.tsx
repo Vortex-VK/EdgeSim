@@ -953,7 +953,7 @@ export function CartBlockObject({ pos, isSelected, objectId, onSelectId, onMouse
   );
 }
 
-// Traction patches: wet/cleaning_liquid light blue, oil dark gray. Transition zones are colored patches
+// Traction patches: wet/cleaning_liquid light blue. Transition zones are colored patches
 export function WetPatchObject({ start, end, isSelected, objectId, onSelectId, onMouseDown }: PathObjectRenderProps) {
   const width = Math.abs(end.x - start.x);
   const height = Math.abs(end.y - start.y);
@@ -1069,63 +1069,115 @@ export function WetPatchObject({ start, end, isSelected, objectId, onSelectId, o
   );
 }
 
-// Spill - using this as oil spill (dark gray overlay)
-export function SpillObject({ pos, isSelected, objectId, onSelectId, onMouseDown }: ObjectRenderProps) {
-  const size = 0.5;
-  
+// Cleaning spill (soapy water) - teal patch with bubbles
+export function SpillObject({ start, end, isSelected, objectId, onSelectId, onMouseDown }: PathObjectRenderProps) {
+  const width = Math.abs(end.x - start.x);
+  const height = Math.abs(end.y - start.y);
+  const x = Math.min(start.x, end.x);
+  const y = Math.min(start.y, end.y);
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  const xSize = 0.12;
+
   return (
-    <g>
-      {/* Irregular oil spill - dark gray */}
-      <ellipse
-        cx={pos.x}
-        cy={pos.y}
-        rx={size * 0.6}
-        ry={size * 0.4}
-        fill="#6b7280"
-        fillOpacity={0.6}
-        stroke={isSelected ? "#3b82f6" : "#4b5563"}
+    <g className="group">
+      {/* Invisible wide path for easier hovering */}
+      <line
+        x1={start.x}
+        y1={start.y}
+        x2={end.x}
+        y2={end.y}
+        stroke="transparent"
+        strokeWidth={0.4}
+        strokeLinecap="round"
+        style={{ cursor: 'grab' }}
+        onClick={() => onSelectId(objectId)}
+      />
+      {/* Cleaning spill - teal translucent */}
+      <rect
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        fill="#a5f3fc"
+        fillOpacity={0.5}
+        stroke={isSelected ? "#3b82f6" : "#38bdf8"}
         strokeWidth={0.03}
+        rx={0.06}
         onClick={() => onSelectId(objectId)}
         style={{ cursor: 'grab' }}
       />
-      {/* Additional blob */}
-      <ellipse
-        cx={pos.x + size * 0.2}
-        cy={pos.y - size * 0.15}
-        rx={size * 0.3}
-        ry={size * 0.25}
-        fill="#6b7280"
-        fillOpacity={0.6}
-        onClick={() => onSelectId(objectId)}
-        style={{ cursor: 'grab' }}
-      />
-      {/* Droplet effects */}
-      {[0, 120, 240].map((angle, i) => {
-        const rad = (angle * Math.PI) / 180;
-        const dx = pos.x + Math.cos(rad) * size * 0.25;
-        const dy = pos.y + Math.sin(rad) * size * 0.25;
+      {/* Soapy bubbles */}
+      {Array.from({ length: 5 }).map((_, i) => {
+        const jitterX = x + (width || 0.8) * (0.15 + 0.16 * i);
+        const jitterY = y + (height || 0.8) * (0.2 + 0.12 * (i % 3));
         return (
           <circle
             key={i}
-            cx={dx}
-            cy={dy}
-            r={0.05}
-            fill="#4b5563"
-            fillOpacity={0.7}
+            cx={jitterX}
+            cy={jitterY}
+            r={0.08 + 0.02 * (i % 2)}
+            fill="#67e8f9"
+            fillOpacity={0.6}
           />
         );
       })}
-      <circle
-        cx={pos.x}
-        cy={pos.y}
-        r={size / 2 + 0.1}
-        fill="transparent"
-        stroke="transparent"
-        strokeWidth={0.3}
-        style={{ cursor: 'grab' }}
-        onMouseDown={(e) => onMouseDown(objectId, 0, e)}
-        className="hover:stroke-blue-400"
-      />
+      {/* Control points */}
+      {[start, end].map((coord, i) => (
+        <g key={i}>
+          <circle
+            cx={coord.x}
+            cy={coord.y}
+            r={0.15}
+            fill="transparent"
+            stroke={isSelected ? "#3b82f6" : "transparent"}
+            strokeWidth={0.04}
+            style={{ cursor: 'grab' }}
+            className="hover:stroke-blue-400"
+            pointerEvents="none"
+          />
+          <circle
+            cx={coord.x}
+            cy={coord.y}
+            r={0.35}
+            fill="transparent"
+            style={{ cursor: 'grab' }}
+            onMouseDown={(e) => onMouseDown(objectId, i, e)}
+          />
+        </g>
+      ))}
+      {/* Middle drag point - X shape */}
+      <g
+        onMouseDown={(e) => onMouseDown(objectId, 2, e)}
+        style={{ cursor: 'move' }}
+        className="group-hover:opacity-100"
+        opacity={isSelected ? 1 : 0}
+      >
+        <line
+          x1={midX - xSize}
+          y1={midY - xSize}
+          x2={midX + xSize}
+          y2={midY + xSize}
+          stroke="#3b82f6"
+          strokeWidth={0.04}
+          strokeLinecap="round"
+        />
+        <line
+          x1={midX - xSize}
+          y1={midY + xSize}
+          x2={midX + xSize}
+          y2={midY - xSize}
+          stroke="#3b82f6"
+          strokeWidth={0.04}
+          strokeLinecap="round"
+        />
+        <circle
+          cx={midX}
+          cy={midY}
+          r={0.35}
+          fill="transparent"
+        />
+      </g>
     </g>
   );
 }

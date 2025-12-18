@@ -5,14 +5,45 @@
     10.0
   ],
   "goal": [
-    18.0,
+    6.25,
     10.0
   ],
   "aabbs": [],
   "hazards": {
-    "traction": [],
+    "traction": [
+      {
+        "zone": [
+          8.5,
+          7.0,
+          12.5,
+          12.0
+        ],
+        "mu": 0.33
+      },
+      {
+        "zone": [
+          4.5,
+          7.0,
+          8.5,
+          12.0
+        ],
+        "mu": 0.45
+      }
+    ],
     "human": [],
-    "floor_events": [],
+    "floor_events": [
+      {
+        "id": null,
+        "type": "cleaning_liquid",
+        "zone": [
+          8.0,
+          8.75,
+          12.0,
+          11.25
+        ],
+        "spawn_time_s": 5.0
+      }
+    ],
     "vehicles": []
   },
   "floor_zones": [
@@ -26,6 +57,39 @@
         20.0
       ],
       "mu": 0.85
+    },
+    {
+      "id": "cleaning_02",
+      "type": "cleaning_liquid",
+      "zone": [
+        8.0,
+        8.75,
+        12.0,
+        11.25
+      ],
+      "mu": 0.33
+    },
+    {
+      "id": "Traction_01",
+      "type": "cleaning_liquid",
+      "zone": [
+        8.5,
+        7.0,
+        12.5,
+        12.0
+      ],
+      "mu": 0.33
+    },
+    {
+      "id": "Traction_02",
+      "type": "wet",
+      "zone": [
+        4.5,
+        7.0,
+        8.5,
+        12.0
+      ],
+      "mu": 0.45
     },
     {
       "id": "A_coord_01",
@@ -50,7 +114,19 @@
       "length_m": 16.0
     }
   ],
-  "transition_zones": [],
+  "transition_zones": [
+    {
+      "id": "DoorExtra_01",
+      "type": "threshold_bump",
+      "zone": [
+        8.0,
+        8.75,
+        12.0,
+        11.25
+      ],
+      "mu": null
+    }
+  ],
   "static_obstacles": [],
   "vehicles": [],
   "safety_zones": [],
@@ -84,10 +160,10 @@
       21.5
     ],
     "floor_summary": {
-      "mu_min": 0.85,
+      "mu_min": 0.33,
       "mu_max": 0.88,
-      "wet_count": 0,
-      "zones": 2
+      "wet_count": 3,
+      "zones": 5
     },
     "layout_summary": {
       "aisle_count": 1,

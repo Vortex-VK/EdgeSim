@@ -22,4 +22,6 @@ High-level targets
 5) incorporate lidar replay into edgesim report
 6) make it so that edgesim report is generated in the app rather than a separate page
 7) make a 3d test of the simulation incorporated into the app (currently opens local pybullet)
-8) the falling object has a 50/50 to spill or not. If it does not, it sinks and then places itself properly. Need to fix it.
+8) the falling object has a 50/50 to spill. If it does not, it sinks and then places itself properly. Need to fix it.
+9) fix oil spill
+uvicorn backend.main:app --reload --port 8000

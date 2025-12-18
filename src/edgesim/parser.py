@@ -95,7 +95,10 @@ _HUMAN_SEG_RE = re.compile(
     re.IGNORECASE,
 )
 _VEHICLE_SEG_RE = re.compile(rf"(forklift|vehicle|cart|tugger|pallet jack)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
-_PATCH_SEG_RE = re.compile(rf"(wet\s+patch|spill|oil|traction)[^\n]*?(?:from|covering|zone)\s+{_SEG_RE}", re.IGNORECASE)
+_PATCH_SEG_RE = re.compile(
+    rf"((?:wet\s+patch)|spill|oil|traction|cleaning(?:\s+liquid|\s+spill)|soapy\s+spill)[^\n]*?(?:from|covering|zone)\s+{_SEG_RE}",
+    re.IGNORECASE,
+)
 _STATIC_PT_RE = re.compile(rf"(pallet|obstacle|box|cart block|cart|column|cone)[^\n]*?(?:at|center(?:ed)? at)\s+{_PT_RE}", re.IGNORECASE)
 _FALLING_PT_RE = re.compile(rf"falling object[^\n]*?(?:at|near)\s+{_PT_RE}", re.IGNORECASE)
 _WALL_SEG_RE = re.compile(rf"(?P<wlabel>high wall|tall wall|wall|barrier)[^\n]*?from\s+{_SEG_RE}", re.IGNORECASE)
@@ -1198,11 +1201,23 @@ def _apply_coordinate_overrides(scn: Dict[str, Any], prompt: str, nums: Dict[str
         x0 = float(m.group("x0")); y0 = float(m.group("y0"))
         x1 = float(m.group("x1")); y1 = float(m.group("y1"))
         rect = _clamp_rect([x0, y0, x1, y1], bounds)
+        label = (m.group(1) or "").lower()
+        patch_type = "wet"
+        mu = 0.45
+        extra: Dict[str, Any] = {}
+        if "clean" in label or "soapy" in label:
+            patch_type = "cleaning_liquid"
+            mu = 0.33
+            extra = {"brake_scale": 1.7, "slip_boost": 0.6, "imu_vibe_g": 0.4}
+        elif "oil" in label:
+            patch_type = "oil"
+            mu = 0.25
         traction_entries.append({
             "id": f"Traction_{len(traction_entries)+1:02d}",
             "zone": rect,
-            "mu": 0.45,
-            "type": "wet",
+            "mu": float(mu),
+            "type": patch_type,
+            **extra,
         })
     if traction_entries:
         hazards.setdefault("traction", []).extend(traction_entries)
@@ -2162,48 +2177,51 @@ def prompt_to_scenario_legacy(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
         _add_default_wet_patch_if_needed(geom_center, half=patch_half)
 
     if _has_any(text, KEYWORDS["cleaning"]):
-        layout_obj = scn.get("layout", {})
-        clean_zone = [5.0, 1.0, 9.0, 2.4]
-        aisles = layout_obj.get("aisles") or []
-        if aisles and isinstance(aisles[0].get("rect"), (list, tuple)) and len(aisles[0]["rect"]) == 4:
-            rect = list(map(float, aisles[0]["rect"]))
-            horizontal = abs(rect[2] - rect[0]) >= abs(rect[3] - rect[1])
-            if horizontal:
-                cx = 0.5 * (rect[0] + rect[2])
-                y0, y1 = rect[1], rect[3]
-                clean_zone = [cx - 2.0, y0, cx + 2.0, y1]
-            else:
-                cy = 0.5 * (rect[1] + rect[3])
-                x0, x1 = rect[0], rect[2]
-                clean_zone = [x0, cy - 2.0, x1, cy + 2.0]
-        floor_list = _layout_list(scn, "floor_surfaces")
-        floor_list.append({
-            "id": f"cleaning_{len(floor_list)+1:02d}",
-            "type": "cleaning_liquid",
-            "zone": clean_zone,
-            "mu": 0.33,
-            "brake_scale": 1.7,
-            "slip_boost": 0.6,
-            "imu_vibe_g": 0.4,
-        })
-        _add_floor_event(scn, {
-            "type": "cleaning_liquid",
-            "zone": clean_zone,
-            "spawn_time_s": 5.0,
-            "spread_rate_mps": 0.12,
-            "mu": 0.33,
-        })
-        scn["taxonomy"]["traction"] = True
-        # avoid also adding generic traction patches when cleaning is present
-        coord_flags["traction"] = True
-        # add a small threshold bump for the doorway
-        _add_transition_zone(scn, {
-            "type": "threshold_bump",
-            "zone": clean_zone,
-            "threshold_cm": 2.0,
-            "slope_deg": 4.0,
-            "sensor_shadow": False,
-        })
+        explicit_cleaning = any(str(z.get("type", "")).lower() == "cleaning_liquid"
+                                for z in hazards.get("traction", []) or [])
+        if not explicit_cleaning:
+            layout_obj = scn.get("layout", {})
+            clean_zone = [5.0, 1.0, 9.0, 2.4]
+            aisles = layout_obj.get("aisles") or []
+            if aisles and isinstance(aisles[0].get("rect"), (list, tuple)) and len(aisles[0]["rect"]) == 4:
+                rect = list(map(float, aisles[0]["rect"]))
+                horizontal = abs(rect[2] - rect[0]) >= abs(rect[3] - rect[1])
+                if horizontal:
+                    cx = 0.5 * (rect[0] + rect[2])
+                    y0, y1 = rect[1], rect[3]
+                    clean_zone = [cx - 2.0, y0, cx + 2.0, y1]
+                else:
+                    cy = 0.5 * (rect[1] + rect[3])
+                    x0, x1 = rect[0], rect[2]
+                    clean_zone = [x0, cy - 2.0, x1, cy + 2.0]
+            floor_list = _layout_list(scn, "floor_surfaces")
+            floor_list.append({
+                "id": f"cleaning_{len(floor_list)+1:02d}",
+                "type": "cleaning_liquid",
+                "zone": clean_zone,
+                "mu": 0.33,
+                "brake_scale": 1.7,
+                "slip_boost": 0.6,
+                "imu_vibe_g": 0.4,
+            })
+            _add_floor_event(scn, {
+                "type": "cleaning_liquid",
+                "zone": clean_zone,
+                "spawn_time_s": 5.0,
+                "spread_rate_mps": 0.12,
+                "mu": 0.33,
+            })
+            # avoid also adding generic traction patches when cleaning is present
+            coord_flags["traction"] = True
+            # add a small threshold bump for the doorway
+            _add_transition_zone(scn, {
+                "type": "threshold_bump",
+                "zone": clean_zone,
+                "threshold_cm": 2.0,
+                "slope_deg": 4.0,
+                "sensor_shadow": False,
+            })
+        scn.setdefault("taxonomy", {})["traction"] = True
 
     # --- Human crossing (generic, single stream) ---
     if (_has_any(text, KEYWORDS["human"]) and not scn["layout"].get("main_lr_case")
