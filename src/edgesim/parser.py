@@ -2177,6 +2177,7 @@ def prompt_to_scenario_legacy(prompt: str, n_runs: int = 100) -> Dict[str, Any]:
         _add_default_wet_patch_if_needed(geom_center, half=patch_half)
 
     if _has_any(text, KEYWORDS["cleaning"]):
+        hazards = scn.setdefault("hazards", {})
         explicit_cleaning = any(str(z.get("type", "")).lower() == "cleaning_liquid"
                                 for z in hazards.get("traction", []) or [])
         if not explicit_cleaning:

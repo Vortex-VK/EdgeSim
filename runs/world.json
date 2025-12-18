@@ -5,45 +5,27 @@
     10.0
   ],
   "goal": [
-    6.25,
+    18.0,
     10.0
   ],
-  "aabbs": [],
+  "aabbs": [
+    [
+      5.5,
+      7.85,
+      12.0,
+      8.15
+    ],
+    [
+      5.5,
+      7.85,
+      12.0,
+      8.15
+    ]
+  ],
   "hazards": {
-    "traction": [
-      {
-        "zone": [
-          8.5,
-          7.0,
-          12.5,
-          12.0
-        ],
-        "mu": 0.33
-      },
-      {
-        "zone": [
-          4.5,
-          7.0,
-          8.5,
-          12.0
-        ],
-        "mu": 0.45
-      }
-    ],
+    "traction": [],
     "human": [],
-    "floor_events": [
-      {
-        "id": null,
-        "type": "cleaning_liquid",
-        "zone": [
-          8.0,
-          8.75,
-          12.0,
-          11.25
-        ],
-        "spawn_time_s": 5.0
-      }
-    ],
+    "floor_events": [],
     "vehicles": []
   },
   "floor_zones": [
@@ -57,39 +39,6 @@
         20.0
       ],
       "mu": 0.85
-    },
-    {
-      "id": "cleaning_02",
-      "type": "cleaning_liquid",
-      "zone": [
-        8.0,
-        8.75,
-        12.0,
-        11.25
-      ],
-      "mu": 0.33
-    },
-    {
-      "id": "Traction_01",
-      "type": "cleaning_liquid",
-      "zone": [
-        8.5,
-        7.0,
-        12.5,
-        12.0
-      ],
-      "mu": 0.33
-    },
-    {
-      "id": "Traction_02",
-      "type": "wet",
-      "zone": [
-        4.5,
-        7.0,
-        8.5,
-        12.0
-      ],
-      "mu": 0.45
     },
     {
       "id": "A_coord_01",
@@ -114,20 +63,29 @@
       "length_m": 16.0
     }
   ],
-  "transition_zones": [
+  "transition_zones": [],
+  "static_obstacles": [
     {
-      "id": "DoorExtra_01",
-      "type": "threshold_bump",
-      "zone": [
-        8.0,
-        8.75,
+      "id": "Wall_01",
+      "type": "wall",
+      "aabb": [
+        5.5,
+        7.85,
         12.0,
-        11.25
+        8.15
       ],
-      "mu": null
+      "height": 2.2,
+      "center": [
+        8.75,
+        8.0
+      ],
+      "half_extents": [
+        3.25,
+        0.15
+      ],
+      "yaw": 0.0
     }
   ],
-  "static_obstacles": [],
   "vehicles": [],
   "safety_zones": [],
   "aisles": [
@@ -160,19 +118,21 @@
       21.5
     ],
     "floor_summary": {
-      "mu_min": 0.33,
+      "mu_min": 0.85,
       "mu_max": 0.88,
-      "wet_count": 3,
-      "zones": 5
+      "wet_count": 0,
+      "zones": 2
     },
     "layout_summary": {
       "aisle_count": 1,
       "junction_count": 0,
       "rack_area_m2": 0.0,
-      "obstructed_area_m2": 0.0,
+      "obstructed_area_m2": 1.95,
       "endcaps": 0,
       "blind_corners": 0,
-      "static_obstacles": {}
+      "static_obstacles": {
+        "wall": 1
+      }
     }
   }
 }
