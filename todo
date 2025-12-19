@@ -3,8 +3,7 @@ TODOs for EdgeSim (what’s still missing vs. current baseline)
 
 High-level targets
 - Expose a user-friendly interface (CLI first, no “main aisle” magic).
-- Improve explainability (edgesim-report).
-- Add a Waymo-like viewer for recorded data.
+- Make the app ask user less (domain randomization).
 
 1) Geometry fidelity (atomic, realistic defaults)
 -------------------------------------------------
@@ -16,12 +15,33 @@ High-level targets
 2) Robot path authoring & extra robot actor
 -------------------------------------------
 - Allow robot path via coordinates (like humans/vehicles): parse “robot from x0,y0 to x1,y1 …”, store as agent waypoints/raw_coords, project into aisles if enabled, and drive PID segment-to-segment instead of single start→goal.
-- Add secondary robot actor (hazard/occluder): treat as a dynamic body with its own path/size, include in actors.csv/world.json, collide/occlude/scan like forklifts/humans, and keep AMR vs AMR collisions/event logging consistent.
+- Add secondary robot actor (hazard/occluder): treat as a dynamic body with its own path/size, include in actors.csv/world.json, collide/occlude/scan like forklifts/humans, and keep AMR vs AMR collisions/event logging consistent. (similarly to tugger train or human)
 3) Add more site and batch profiles
 4) add different LiDAR heights
 5) incorporate lidar replay into edgesim report
 6) make it so that edgesim report is generated in the app rather than a separate page
 7) make a 3d test of the simulation incorporated into the app (currently opens local pybullet)
 8) the falling object has a 50/50 to spill. If it does not, it sinks and then places itself properly. Need to fix it.
-9) fix oil spill
+9) domain randomization: make objects spawn in realistic places for the same environment setting (static objects placed same, dynamic objects and edge case objects placed in various logically sound places. (e.g. different paths for humans, but not through walls)). In our case, path coordinates and object states should be randomized instead of being set manually. 
+10) add checkpoint movement
+11) add warehouse blueprint reading
+
+
+When presenting:
+Start with the problem and people who need it solved. When showing the strengths, compare edgesim speed, data quality, pc/setup requirements to other sims (Isaac sim, so on)
+
+Community engagement:
+1) research communities that may need this app, see what is currently being developed.
+2) understand the connection of me -> robot manufacturer -> client. What does manufacturer get that I can use to make the app better. 
+
+How to run:
+Conda terminal:
+
+cd C:\Users\kalin\Projects\EdgeSim
+conda activate edgesim
 uvicorn backend.main:app --reload --port 8000
+
+CMD:
+
+cd C:\Users\kalin\Projects\EdgeSim\frontend
+npm run dev
