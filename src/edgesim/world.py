@@ -1425,6 +1425,8 @@ def build_world(scn: Dict[str, Any], use_gui: bool = False) -> Dict[str, Any]:
 	Returns IDs and helpful info.
 	"""
 	client = p.connect(p.GUI if use_gui else p.DIRECT)
+	if use_gui:
+		p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)  # hide built-in side panels
 	p.resetSimulation()
 	p.setAdditionalSearchPath(pybullet_data.getDataPath())
 	p.setGravity(0, 0, -9.81)

@@ -1,27 +1,14 @@
 {
   "version": 1,
   "start": [
-    2.0,
+    3.0,
     10.0
   ],
   "goal": [
-    18.0,
+    17.0,
     10.0
   ],
-  "aabbs": [
-    [
-      5.5,
-      7.85,
-      12.0,
-      8.15
-    ],
-    [
-      5.5,
-      7.85,
-      12.0,
-      8.15
-    ]
-  ],
+  "aabbs": [],
   "hazards": {
     "traction": [],
     "human": [],
@@ -41,13 +28,13 @@
       "mu": 0.85
     },
     {
-      "id": "A_coord_01",
+      "id": "Aisle_Default",
       "type": "aisle_straight",
       "zone": [
-        2.0,
-        8.75,
-        18.0,
-        11.25
+        3.0,
+        9.4,
+        17.0,
+        10.6
       ],
       "mu": 0.88,
       "center": [
@@ -55,48 +42,26 @@
         10.0
       ],
       "half_extents": [
-        8.0,
-        1.25
+        7.0,
+        0.6
       ],
       "yaw": 0.0,
-      "width_m": 2.5,
-      "length_m": 16.0
+      "width_m": 1.1999999999999993
     }
   ],
   "transition_zones": [],
-  "static_obstacles": [
-    {
-      "id": "Wall_01",
-      "type": "wall",
-      "aabb": [
-        5.5,
-        7.85,
-        12.0,
-        8.15
-      ],
-      "height": 2.2,
-      "center": [
-        8.75,
-        8.0
-      ],
-      "half_extents": [
-        3.25,
-        0.15
-      ],
-      "yaw": 0.0
-    }
-  ],
+  "static_obstacles": [],
   "vehicles": [],
   "safety_zones": [],
   "aisles": [
     {
-      "id": "A_coord_01",
+      "id": "Aisle_Default",
       "type": "aisle_straight",
       "zone": [
-        2.0,
-        8.75,
-        18.0,
-        11.25
+        3.0,
+        9.4,
+        17.0,
+        10.6
       ],
       "mu": 0.88,
       "center": [
@@ -104,12 +69,11 @@
         10.0
       ],
       "half_extents": [
-        8.0,
-        1.25
+        7.0,
+        0.6
       ],
       "yaw": 0.0,
-      "width_m": 2.5,
-      "length_m": 16.0
+      "width_m": 1.1999999999999993
     }
   ],
   "environment": {
@@ -127,12 +91,10 @@
       "aisle_count": 1,
       "junction_count": 0,
       "rack_area_m2": 0.0,
-      "obstructed_area_m2": 1.95,
+      "obstructed_area_m2": 0.0,
       "endcaps": 0,
       "blind_corners": 0,
-      "static_obstacles": {
-        "wall": 1
-      }
+      "static_obstacles": {}
     }
   }
 }
