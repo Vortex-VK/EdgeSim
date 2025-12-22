@@ -26,15 +26,21 @@ High-level targets
 10) add checkpoint movement
 11) add warehouse blueprint reading
 
+#################################################################
 
 When presenting:
 Start with the problem and people who need it solved. When showing the strengths, compare edgesim speed, data quality, pc/setup requirements to other sims (Isaac sim, so on)
 
-Community engagement:
+#################################################################
+
+COMMUNITY ENGAGEMENT:
 1) research communities that may need this app, see what is currently being developed.
 2) understand the connection of me -> robot manufacturer -> client. What does manufacturer get that I can use to make the app better. 
 
+#################################################################
+
 How to run:
+
 Conda terminal:
 
 cd C:\Users\kalin\Projects\EdgeSim
@@ -45,3 +51,4 @@ CMD:
 
 cd C:\Users\kalin\Projects\EdgeSim\frontend
 npm run dev
+

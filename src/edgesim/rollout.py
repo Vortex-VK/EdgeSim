@@ -4,6 +4,7 @@ from pathlib import Path
 import csv
 import json
 import os
+import sys
 import time
 import copy
 from .io_utils import ensure_dir, write_json
@@ -66,6 +67,39 @@ def _estimate_cost_per_sim_min(wallclock_s: float, sim_minutes_total: float) -> 
 	wallclock_hours = max(0.0, wallclock_s) / 3600.0
 	return (wallclock_hours * rate) / sim_minutes_total
 
+def _format_eta(eta_s: Optional[float]) -> str:
+	try:
+		if eta_s is None:
+			return "--:--"
+		eta = float(eta_s)
+	except Exception:
+		return "--:--"
+	if eta < 0:
+		return "--:--"
+	total_s = int(round(eta))
+	hours, rem = divmod(total_s, 3600)
+	mins, secs = divmod(rem, 60)
+	if hours > 0:
+		return f"{hours}h{mins:02d}m"
+	return f"{mins:02d}:{secs:02d}"
+
+def _progress_line(completed: int, total: int, elapsed_s: float, width: int = 28) -> str:
+	if total <= 0:
+		pct = 0.0
+	else:
+		pct = max(0.0, min(1.0, completed / float(total)))
+	filled = int(width * pct)
+	bar = "#" * filled + "-" * (width - filled)
+	if completed > 0:
+		runs_per_min = (completed / max(1e-6, elapsed_s)) * 60.0
+		remaining = max(0, total - completed)
+		runs_per_sec = completed / max(1e-6, elapsed_s)
+		eta_s = remaining / max(1e-6, runs_per_sec)
+	else:
+		runs_per_min = 0.0
+		eta_s = None
+	return f"[{bar}] {completed}/{total} | {runs_per_min:.1f} runs/min | ETA {_format_eta(eta_s)}"
+
 def run_batch(
 	prompt: str,
 	scn: Dict[str, Any],
@@ -107,6 +141,7 @@ def run_batch(
 		"duration_cap_s": None,  # float
 		"lidar_hz_cap": None,    # float
 	}
+	use_progress = sys.stdout.isatty()
 
 	for k, seed in enumerate(seeds):
 		prd = _per_run_dir(run_dir, k)
@@ -172,6 +207,13 @@ def run_batch(
 		sim_seconds_accum += runtime_s
 		completed += 1
 
+		elapsed = time.perf_counter() - t0
+		line = _progress_line(completed, total, elapsed)
+		if use_progress:
+			print(f"\r{line}", end="", flush=True)
+		else:
+			print(line)
+
 		# Periodically check whether finishing all runs will exceed the budget.
 		# Note: since we *degrade* dynamically above, we no longer break early here unless
 		# the user asked for auto_degrade=False (in which case we ignore the budget entirely).
@@ -186,6 +228,9 @@ def run_batch(
 	with open(per_run / "index.csv", "w", newline="", encoding="utf-8") as f:
 		w = csv.writer(f)
 		w.writerows(index_rows)
+
+	if use_progress:
+		print()
 
 	elapsed = time.perf_counter() - t0
 	sims_per_min = (completed / max(1e-6, elapsed)) * 60.0
