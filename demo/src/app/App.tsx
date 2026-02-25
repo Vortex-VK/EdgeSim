@@ -238,7 +238,7 @@ function App() {
             <Button variant="outline" className="border-slate-700 bg-transparent text-slate-100" onClick={() => scrollTo("explorer")}>
               Scenario Explorer
             </Button>
-            <Button className="bg-cyan-600 text-white hover:bg-cyan-500" onClick={() => scrollTo("comparison")}>
+            <Button variant="outline" className="border-slate-700 bg-transparent text-slate-100" onClick={() => scrollTo("comparison")}>
               Compare Prompts
             </Button>
           </div>
@@ -251,9 +251,8 @@ function App() {
           <div className="absolute inset-0 bg-gradient-to-b from-slate-900/40 via-slate-950/90 to-slate-950" />
         </div>
 
-        <div className="relative mx-auto max-w-7xl px-6 pb-20 pt-16 sm:pt-24">
+        <div className="relative mx-auto max-w-7xl px-6 pb-20 pt-14 sm:pt-20">
           <div className="max-w-3xl">
-            <p className="mb-3 text-sm uppercase tracking-[0.2em] text-cyan-300">EdgeSim Public Demo</p>
             <h1 className="mb-4 text-4xl leading-tight sm:text-6xl">
               Understand the simulator through
               <span className="text-cyan-300"> real run results</span>
@@ -329,7 +328,8 @@ function App() {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-[330px_1fr]">
-            <Card className="border-slate-800 bg-slate-950/70 p-3">
+            <Card className="border-cyan-500/25 bg-cyan-950/10 p-3 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]">
+              <p className="mb-3 px-1 text-xs uppercase tracking-wide text-cyan-200/85">Prompt Scenarios</p>
               <div className="space-y-3">
                 {demoData.scenarios.map((scenario) => {
                   const isActive = scenario.id === activeScenario.id;
@@ -363,14 +363,10 @@ function App() {
 
             <div className="space-y-4">
               <Card className="border-slate-800 bg-slate-950/80 p-6">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+                <div className="mb-4 flex flex-wrap items-center gap-4">
                   <div>
                     <h3 className="text-2xl text-white">{activeScenario.title}</h3>
                     <p className="mt-1 text-sm text-slate-400">Test run: {activeScenario.timestamps.test} | Batch run: {activeScenario.timestamps.batch}</p>
-                  </div>
-                  <div className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-sm text-slate-300">
-                    <Gauge className="h-4 w-4 text-cyan-300" />
-                    Profile: <span className="text-cyan-200">{activeScenario.batch.perf.profile}</span>
                   </div>
                 </div>
 
@@ -399,7 +395,7 @@ function App() {
                     title="100-Run Batch"
                     outcome={Math.max(0, 100 - activeScenario.batch.coverage_pct.success) >= 50 ? "collision_dominant" : "low_collision"}
                     timeValue={`${activeScenario.batch.avg_time_s.toFixed(2)}s avg`}
-                    detailA={`${Math.max(0, 100 - activeScenario.batch.coverage_pct.success).toFixed(1)}% collision / non-success`}
+                    detailA={`${Math.max(0, 100 - activeScenario.batch.coverage_pct.success).toFixed(1)}% collision`}
                     detailB={`${activeScenario.batch.successes}/${activeScenario.batch.runs} success`}
                   />
                 </div>
@@ -410,14 +406,14 @@ function App() {
                   </p>
                   <div className="mb-2 flex flex-wrap gap-2 text-xs">
                     <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-blue-200">Success</span>
-                    <span className="rounded-full bg-orange-500/20 px-2 py-0.5 text-orange-200">Collision / non-success</span>
+                    <span className="rounded-full bg-orange-500/20 px-2 py-0.5 text-orange-200">Collision</span>
                   </div>
                   <div className="grid grid-cols-20 gap-1">
                     {activeScenario.batch.success_curve.map((point) => (
                       <span
                         key={point.idx}
-                        title={`Run ${point.idx}: ${point.success ? "non-collision" : "collision / non-success"} (${point.time_s.toFixed(2)}s)`}
-                        className={`h-2 rounded-sm ${point.success ? "bg-blue-400/85" : "bg-orange-500/95"}`}
+                        title={`Run ${point.idx}: ${point.success ? "non-collision" : "collision"} (${point.time_s.toFixed(2)}s)`}
+                        className={`h-2 rounded-sm ${point.success ? "bg-blue-400/55" : "bg-orange-400/55"}`}
                       />
                     ))}
                   </div>
@@ -478,20 +474,6 @@ function App() {
           </div>
         </Card>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
-          <Card className="border-slate-800 bg-slate-900/40 p-5">
-            <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Hardest Prompt</p>
-            <p className="text-lg text-slate-200">{demoData.global.hardest_prompt ?? "n/a"}</p>
-          </Card>
-          <Card className="border-slate-800 bg-slate-900/40 p-5">
-            <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Easiest Prompt</p>
-            <p className="text-lg text-cyan-300">{demoData.global.easiest_prompt ?? "n/a"}</p>
-          </Card>
-          <Card className="border-slate-800 bg-slate-900/40 p-5">
-            <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Mean Throughput</p>
-            <p className="text-lg text-cyan-300">{demoData.global.avg_sims_per_min.toFixed(2)} sims/min</p>
-          </Card>
-        </div>
       </section>
 
       <footer className="border-t border-slate-800 bg-slate-950/80">
@@ -580,11 +562,12 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
 function OverviewTab({ scenario }: { scenario: Scenario }) {
   return (
     <Card className="border-slate-800 bg-slate-950/70 p-6">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard label="LiDAR Rate" value={`${scenario.config.lidar_hz.toFixed(1)} Hz`} icon={<Gauge className="h-4 w-4" />} />
         <MetricCard label="Sim Step" value={`${scenario.config.dt.toFixed(2)} s`} icon={<Timer className="h-4 w-4" />} />
         <MetricCard label="Humans / Vehicles" value={`${scenario.config.humans} / ${scenario.config.vehicles}`} icon={<CircleAlert className="h-4 w-4" />} />
         <MetricCard label="Racks / Walls" value={`${scenario.config.racks} / ${scenario.config.walls}`} icon={<Map className="h-4 w-4" />} />
+        <MetricCard label="Mean Throughput" value={`${scenario.batch.perf.sims_per_min.toFixed(2)} sims/min`} icon={<Database className="h-4 w-4" />} />
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
@@ -680,7 +663,8 @@ function MapTab({ scenario }: { scenario: Scenario }) {
 
   const clampedFrameIdx = hasFrames ? Math.min(frameIdx, lidarFrames.length - 1) : 0;
   const activeFrame = hasFrames ? lidarFrames[clampedFrameIdx] : null;
-  const activeTime = activeFrame ? activeFrame.t : scenario.test.path[Math.min(frameIdx, Math.max(0, scenario.test.path.length - 1))]?.t ?? 0;
+  const fallbackTime = scenario.test.path[scenario.test.path.length - 1]?.t ?? 0;
+  const activeTime = activeFrame ? activeFrame.t : fallbackTime;
 
   return (
     <Card className="border-slate-800 bg-slate-950/70 p-6">
@@ -742,11 +726,9 @@ function MapPlaybackPanel({
   const toSvgY = (y: number) => mapH - y;
   const gridX = Array.from({ length: Math.floor(mapW) + 1 }, (_, idx) => idx);
   const gridY = Array.from({ length: Math.floor(mapH) + 1 }, (_, idx) => idx);
-  const fullPath = scenario.test.path.map((point) => `${point.x},${toSvgY(point.y)}`).join(" ");
-  const traversedPath = scenario.test.path
-    .filter((point) => point.t <= activeTime)
-    .map((point) => `${point.x},${toSvgY(point.y)}`)
-    .join(" ");
+  const robotPathPoints = scenario.test.path.map((point) => `${point.x},${toSvgY(point.y)}`).join(" ");
+  const robotTraversedPoints = scenario.test.path.filter((point) => point.t <= activeTime);
+  const robotTraversedPath = robotTraversedPoints.map((point) => `${point.x},${toSvgY(point.y)}`).join(" ");
 
   const robotPose = robotPoseAtTime(scenario, activeFrame, activeTime);
   const headingLength = 0.65;
@@ -758,6 +740,11 @@ function MapPlaybackPanel({
   const actorSnapshots = scenario.test.actors
     .map((track) => ({ track, pose: sampleAtTime(track.samples, activeTime) }))
     .filter((item) => item.pose !== null);
+  const hasHumans = scenario.test.actors.some((track) => actorKind(track.type) === "human");
+  const hasVehicles = scenario.test.actors.some((track) => actorKind(track.type) === "vehicle");
+  const hasWalls = scenario.world.walls.length > 0;
+  const hasRacks = scenario.world.racks.length > 0;
+  const hasTraction = scenario.world.traction.length > 0;
 
   return (
     <div>
@@ -780,17 +767,6 @@ function MapPlaybackPanel({
             <line key={`grid-y-${yVal}`} x1={0} y1={toSvgY(yVal)} x2={mapW} y2={toSvgY(yVal)} stroke="#e2e8f0" strokeWidth={0.02} />
           ))}
 
-          {scenario.world.aisles.map((rect, idx) => (
-            <rect
-              key={`aisle-${idx}`}
-              x={rect[0]}
-              y={toSvgY(rect[3])}
-              width={rect[2] - rect[0]}
-              height={rect[3] - rect[1]}
-              fill="#bfdbfe"
-              opacity={0.25}
-            />
-          ))}
           {scenario.world.traction.map((rect, idx) => (
             <rect
               key={`traction-${idx}`}
@@ -830,27 +806,47 @@ function MapPlaybackPanel({
             />
           ))}
 
-          <line
-            x1={scenario.world.start[0]}
-            y1={toSvgY(scenario.world.start[1])}
-            x2={scenario.world.goal[0]}
-            y2={toSvgY(scenario.world.goal[1])}
-            stroke="#ef4444"
-            strokeWidth={0.05}
-            strokeDasharray="0.25 0.2"
-            opacity={0.45}
-          />
-
-          {fullPath && <polyline points={fullPath} fill="none" stroke="#7dd3fc" strokeWidth={0.07} opacity={0.45} />}
-          {traversedPath && <polyline points={traversedPath} fill="none" stroke="#0284c7" strokeWidth={0.13} opacity={0.95} />}
+          {robotPathPoints && (
+            <polyline
+              points={robotPathPoints}
+              fill="none"
+              stroke="#ef4444"
+              strokeWidth={0.06}
+              strokeDasharray="0.25 0.2"
+              opacity={0.45}
+            />
+          )}
+          {robotTraversedPath && (
+            <polyline
+              points={robotTraversedPath}
+              fill="none"
+              stroke="#b91c1c"
+              strokeWidth={0.1}
+              opacity={0.9}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+          {robotTraversedPoints.length === 1 && (
+            <circle
+              cx={robotTraversedPoints[0].x}
+              cy={toSvgY(robotTraversedPoints[0].y)}
+              r={0.14}
+              fill="#b91c1c"
+              opacity={0.95}
+            />
+          )}
 
           {actorSnapshots.map(({ track, pose }) => {
             if (!pose) return null;
             const kind = actorKind(track.type);
             if (kind === "amr") return null;
 
-            const trail = track.samples.filter((sample) => sample.t <= activeTime).slice(-15);
-            const trailPoints = trail.map((sample) => `${sample.x},${toSvgY(sample.y)}`).join(" ");
+            const fullTrackPoints = track.samples.map((sample) => `${sample.x},${toSvgY(sample.y)}`).join(" ");
+            const traversedTrackPoints = track.samples
+              .filter((sample) => sample.t <= activeTime)
+              .map((sample) => `${sample.x},${toSvgY(sample.y)}`)
+              .join(" ");
             const color = kind === "human" ? "#22c55e" : "#f59e0b";
             const stroke = kind === "human" ? "#15803d" : "#b45309";
             const headingLen = kind === "human" ? 0.38 : 0.54;
@@ -859,18 +855,32 @@ function MapPlaybackPanel({
 
             return (
               <g key={`actor-${track.id}`}>
-                {trailPoints && (
-                  <polyline points={trailPoints} fill="none" stroke={color} strokeWidth={0.05} opacity={0.35} strokeDasharray="0.18 0.12" />
+                {fullTrackPoints && (
+                  <polyline
+                    points={fullTrackPoints}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={0.04}
+                    opacity={0.3}
+                    strokeDasharray="0.18 0.12"
+                  />
+                )}
+                {traversedTrackPoints && (
+                  <polyline
+                    points={traversedTrackPoints}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={0.08}
+                    opacity={0.85}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 )}
                 <line x1={pose.x} y1={toSvgY(pose.y)} x2={hx} y2={toSvgY(hy)} stroke={stroke} strokeWidth={0.04} opacity={0.95} />
                 <circle cx={pose.x} cy={toSvgY(pose.y)} r={kind === "human" ? 0.22 : 0.28} fill={color} stroke={stroke} strokeWidth={0.04} />
               </g>
             );
           })}
-
-          {scenario.test.timeline.map((moment, idx) => (
-            <circle key={`event-${idx}`} cx={moment.x} cy={toSvgY(moment.y)} r={0.15} fill="#e11d48" />
-          ))}
 
           <line
             x1={robotPose.x}
@@ -885,13 +895,14 @@ function MapPlaybackPanel({
         </svg>
       </Card>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
-        <LegendItem color="bg-red-500" label="Robot position" />
-        <LegendItem color="bg-sky-500" label="Robot path (to frame)" />
-        <LegendItem color="bg-green-500" label="Human dynamic track" />
-        <LegendItem color="bg-amber-500" label="Vehicle dynamic track" />
-        <LegendItem color="bg-blue-500" label="Wet/traction patches" />
-        <LegendItem color="bg-rose-600" label="Flagged events" />
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <LegendItem glyph="robot" label="Robot position" />
+        <LegendItem glyph="robot_planned_path" label="Robot path" />
+        {hasHumans && <LegendItem glyph="human_track" label="Human trajectory" />}
+        {hasVehicles && <LegendItem glyph="vehicle_track" label="Vehicle trajectory" />}
+        {hasWalls && <LegendItem glyph="wall" label="Walls" />}
+        {hasRacks && <LegendItem glyph="rack" label="Racks" />}
+        {hasTraction && <LegendItem glyph="wet_patch" label="Wet/traction patches" />}
       </div>
     </div>
   );
@@ -1030,10 +1041,77 @@ function MetricCard({ label, value, icon }: { label: string; value: string; icon
   );
 }
 
-function LegendItem({ color, label }: { color: string; label: string }) {
+type LegendGlyph =
+  | "robot"
+  | "robot_planned_path"
+  | "human_track"
+  | "vehicle_track"
+  | "wet_patch"
+  | "wall"
+  | "rack";
+
+function LegendItem({ glyph, label }: { glyph: LegendGlyph; label: string }) {
+  const icon = (() => {
+    if (glyph === "robot") {
+      return (
+        <svg viewBox="0 0 28 16" className="h-4 w-7 shrink-0">
+          <circle cx="8" cy="8" r="3.8" fill="#ef4444" stroke="#b91c1c" strokeWidth="1.3" />
+        </svg>
+      );
+    }
+    if (glyph === "robot_planned_path") {
+      return (
+        <svg viewBox="0 0 28 16" className="h-4 w-7 shrink-0">
+          <line x1="2" y1="8" x2="26" y2="8" stroke="#ef4444" strokeWidth="1.6" strokeDasharray="3 2" opacity="0.65" />
+          <line x1="2" y1="8" x2="17" y2="8" stroke="#b91c1c" strokeWidth="2.2" strokeLinecap="round" opacity="0.95" />
+        </svg>
+      );
+    }
+    if (glyph === "human_track") {
+      return (
+        <svg viewBox="0 0 28 16" className="h-4 w-7 shrink-0">
+          <line x1="2" y1="8" x2="26" y2="8" stroke="#22c55e" strokeWidth="1.2" strokeDasharray="2 1.4" opacity="0.65" />
+          <circle cx="21" cy="8" r="2.2" fill="#22c55e" stroke="#15803d" strokeWidth="1.1" />
+        </svg>
+      );
+    }
+    if (glyph === "vehicle_track") {
+      return (
+        <svg viewBox="0 0 28 16" className="h-4 w-7 shrink-0">
+          <line x1="2" y1="8" x2="26" y2="8" stroke="#f59e0b" strokeWidth="1.2" strokeDasharray="2 1.4" opacity="0.65" />
+          <rect x="18.5" y="5.3" width="6" height="5.4" rx="1" fill="#f59e0b" stroke="#b45309" strokeWidth="1.1" />
+        </svg>
+      );
+    }
+    if (glyph === "wet_patch") {
+      return (
+        <svg viewBox="0 0 28 16" className="h-4 w-7 shrink-0">
+          <rect x="3" y="3" width="22" height="10" rx="1.5" fill="#bfdbfe" opacity="0.7" stroke="#3b82f6" strokeWidth="1" />
+          <circle cx="9" cy="8" r="1" fill="#1d4ed8" opacity="0.65" />
+          <circle cx="14" cy="8" r="1" fill="#1d4ed8" opacity="0.65" />
+          <circle cx="19" cy="8" r="1" fill="#1d4ed8" opacity="0.65" />
+        </svg>
+      );
+    }
+    if (glyph === "wall") {
+      return (
+        <svg viewBox="0 0 28 16" className="h-4 w-7 shrink-0">
+          <rect x="2.5" y="5.2" width="23" height="5.6" rx="0.8" fill="#4b5563" stroke="#374151" strokeWidth="1" />
+        </svg>
+      );
+    }
+    return (
+      <svg viewBox="0 0 28 16" className="h-4 w-7 shrink-0">
+        <rect x="3" y="3" width="22" height="10" rx="1.2" fill="#92400e" fillOpacity="0.72" stroke="#78350f" strokeWidth="1" />
+        <line x1="3" y1="6.4" x2="25" y2="6.4" stroke="#78350f" strokeWidth="0.8" />
+        <line x1="3" y1="9.6" x2="25" y2="9.6" stroke="#78350f" strokeWidth="0.8" />
+      </svg>
+    );
+  })();
+
   return (
-    <div className="flex items-center gap-2 text-xs text-slate-300">
-      <span className={`inline-block h-2.5 w-2.5 rounded-full ${color}`} />
+    <div className="inline-flex min-h-9 items-center gap-2 rounded-full border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-xs text-slate-200">
+      {icon}
       {label}
     </div>
   );
