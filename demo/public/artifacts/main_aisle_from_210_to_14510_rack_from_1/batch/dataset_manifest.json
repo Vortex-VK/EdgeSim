@@ -1,0 +1,1738 @@
+{
+  "prompt": "main aisle from 2,10 to 14.5,10, rack from 17,16 to 17,4.5, rack from 1.5,7 to 13,7, rack from 1.5,13 to 13,13, human crossing from 14,5.5 to 14,15.5, wet patch from 13.5,9 to 15,11",
+  "runs": [
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440625299754282,
+      "min_ttc": 3.0991659027889282,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0000"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7448030396241867,
+      "min_ttc": 2.189979044189387,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0001"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.744782429814807,
+      "min_ttc": 2.7200160701915173,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0002"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7453056542976775,
+      "min_ttc": 1.6912360459898792,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 6,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0003"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440844379829803,
+      "min_ttc": 3.3541563519189808,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0004"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.74409670856426,
+      "min_ttc": 3.4539408012489434,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0005"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7453784123549174,
+      "min_ttc": 2.3356627351111223,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0006"
+    },
+    {
+      "duration_s": 6.6000000000000005,
+      "avg_speed_mps": 1.7317699933381439,
+      "min_ttc": 2.02749595805971,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0007"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7448239948884365,
+      "min_ttc": 2.3070197185402135,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0008"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7453805496315664,
+      "min_ttc": 2.380392207886,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0009"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.3436249221843943,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0010"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.745380549746513,
+      "min_ttc": 2.461725489727386,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0011"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.189039654936294,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0012"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.1875984340478762,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0013"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440844379110934,
+      "min_ttc": 3.0685995283126,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0014"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7448030396121663,
+      "min_ttc": 2.2003802770695775,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0015"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.3888904881650403,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0016"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 3.2097072984134756,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0017"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.744789797351331,
+      "min_ttc": 2.758820181393779,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0018"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.141912502103938,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0019"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.649613206196483,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0020"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7452069999666031,
+      "min_ttc": 3.2028222743602797,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0021"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 1.4310287415365008,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 13,
+        "occluded_hazard": 1
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": true
+      },
+      "run_id": "run_0022"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.745305654283053,
+      "min_ttc": 1.6506206549931095,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 6,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0023"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440625299040802,
+      "min_ttc": 2.8879908352600108,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0024"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7447583785318308,
+      "min_ttc": 2.0030656583893283,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0025"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440967085381613,
+      "min_ttc": 3.4128037966623865,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0026"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 3.013358009618478,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0027"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7441259716528419,
+      "min_ttc": 3.3134368886312715,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0028"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.9252710360188496,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0029"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7453815096827676,
+      "min_ttc": 2.722213077057698,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0030"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.1488456852699325,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0031"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.7294525603684567,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0032"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 1.671619603190205,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 11,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0033"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7448117335855484,
+      "min_ttc": 3.077338085037191,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0034"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.926282578547592,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0035"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.877851447812303,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0036"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 1.2870484943063856,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 15,
+        "occluded_hazard": 3
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": true
+      },
+      "run_id": "run_0037"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.744062529781138,
+      "min_ttc": 2.7592052463732974,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0038"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 3.225310821996979,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0039"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7457301189652292,
+      "min_ttc": 1.9544379989065395,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 2,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0040"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440981416011518,
+      "min_ttc": 3.2900123887429427,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0041"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 3.0470883899748076,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0042"
+    },
+    {
+      "duration_s": 6.6000000000000005,
+      "avg_speed_mps": 1.7312955544087514,
+      "min_ttc": 2.8675442726083546,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0043"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 1.248453977680657,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 15,
+        "occluded_hazard": 3
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": true
+      },
+      "run_id": "run_0044"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.430349197153335,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0045"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.744096708555478,
+      "min_ttc": 3.5031113415030175,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0046"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440926256327283,
+      "min_ttc": 3.575880886717382,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0047"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.757381279146572,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0048"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.744097494162361,
+      "min_ttc": 3.2486285258412986,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0049"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7447824298586143,
+      "min_ttc": 2.7864921711535637,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0050"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7454090487677758,
+      "min_ttc": 2.9822578766810333,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0051"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7448239949433964,
+      "min_ttc": 2.479731618033448,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0052"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7453784122643425,
+      "min_ttc": 2.101035653468495,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0053"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 3.323610349921038,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0054"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7441259717125075,
+      "min_ttc": 3.436081435469325,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0055"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7452254205810414,
+      "min_ttc": 3.0006567108949507,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0056"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.744092625675216,
+      "min_ttc": 3.6199073883855224,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0057"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.744125971686398,
+      "min_ttc": 3.3209048432002786,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0058"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7448082638741984,
+      "min_ttc": 2.750031660706457,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0059"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440981416067436,
+      "min_ttc": 3.3072069225605016,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0060"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.744084437901769,
+      "min_ttc": 3.0967710842822767,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 2
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": true
+      },
+      "run_id": "run_0061"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.744062529904689,
+      "min_ttc": 2.889770971549604,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0062"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7453815096329544,
+      "min_ttc": 2.5623802028732627,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0063"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7447897973302966,
+      "min_ttc": 2.6593019487939213,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0064"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7451311623185124,
+      "min_ttc": 3.22514796033905,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0065"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440981415897243,
+      "min_ttc": 3.22195988501234,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0066"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 3.1769172429582624,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0067"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440844378995197,
+      "min_ttc": 3.0583533492882085,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0068"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.5910706405939696,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0069"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7447824298881431,
+      "min_ttc": 2.8955166405093107,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0070"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.744125971701681,
+      "min_ttc": 3.3776689867426524,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0071"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 3.1251983541120785,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0072"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7451595957475576,
+      "min_ttc": 1.7878164485174943,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 7,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0073"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7444210821115955,
+      "min_ttc": 3.647202480223291,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0074"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.744092625651467,
+      "min_ttc": 3.5838514805357575,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0075"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7443743495056674,
+      "min_ttc": 1.1518063027039012,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 15,
+        "occluded_hazard": 2
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": true
+      },
+      "run_id": "run_0076"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7448239948723736,
+      "min_ttc": 2.2575477537996687,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0077"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.527233813232527,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0078"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440974941388592,
+      "min_ttc": 3.232844528792389,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0079"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7453815097588015,
+      "min_ttc": 2.921495369761509,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0080"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7451311622482362,
+      "min_ttc": 3.0038218254259843,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 1
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": true
+      },
+      "run_id": "run_0081"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7453056542225434,
+      "min_ttc": 1.5115966445071811,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 7,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0082"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 3.084184336280479,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0083"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.745380549790365,
+      "min_ttc": 2.562098701261728,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0084"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 3.3096636965228603,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0085"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7453784122569864,
+      "min_ttc": 2.112793603809953,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0086"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7443892246430985,
+      "min_ttc": 1.338375491650839,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 12,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0087"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440625299147365,
+      "min_ttc": 2.919162049226864,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0088"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440844378184945,
+      "min_ttc": 3.047570517369351,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0089"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440625299776247,
+      "min_ttc": 3.1058994680945773,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0090"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 1.4556347014588351,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 13,
+        "occluded_hazard": 1
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": true
+      },
+      "run_id": "run_0091"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.996224968761473,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0092"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7451570845634095,
+      "min_ttc": 2.000113475167414,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0093"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440981416134098,
+      "min_ttc": 3.3272188504269353,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0094"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.74409814165181,
+      "min_ttc": 3.438447944809895,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0095"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7441259717065445,
+      "min_ttc": 3.3894814101365114,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0096"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7447824299816035,
+      "min_ttc": 3.162652632332479,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0097"
+    },
+    {
+      "duration_s": 6.5,
+      "avg_speed_mps": 1.7440844378945692,
+      "min_ttc": 3.057027109315641,
+      "events": {
+        "collision_human": 1,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0098"
+    },
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.0278243458459673,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0099"
+    }
+  ],
+  "event_counts": {
+    "collision_human": 69,
+    "collision_static": 0,
+    "slip": 69,
+    "near_miss": 122,
+    "occluded_hazard": 13,
+    "collisions": 69
+  },
+  "stats": {
+    "duration_avg_s": 6.75,
+    "avg_speed_mean_mps": 1.7063764701738728,
+    "min_ttc_min_s": 1.1518063027039012
+  },
+  "tags": {
+    "visibility": false,
+    "traction": false,
+    "localization": false,
+    "human_behavior": false,
+    "occlusion": false,
+    "sensor_fault": false,
+    "multi_actor": false
+  },
+  "randomization": {
+    "traction_mu": [
+      0.45,
+      0.85,
+      0.88
+    ],
+    "lidar_noise_sigma": 0.02,
+    "lidar_dropout_pct": 0.01,
+    "clutter_level": null,
+    "behavior_presets": []
+  }
+}

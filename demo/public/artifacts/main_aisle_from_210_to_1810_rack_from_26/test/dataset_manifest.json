@@ -1,0 +1,54 @@
+{
+  "prompt": "main aisle from 2,10 to 18,10, rack from 2,6.5 to 18,6.5, rack from 2,13.5 to 7.5,13.5, rack from 12.5,13.5 to 18,13.5, human crossing from 12,14 to 7.5,9, forklift moving from 18,9.5 to 4,11",
+  "runs": [
+    {
+      "duration_s": 5.0,
+      "avg_speed_mps": 1.838007098269672,
+      "min_ttc": 0.7050916189532992,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 1,
+        "slip": 0,
+        "near_miss": 18,
+        "occluded_hazard": 9
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": true
+      },
+      "run_id": "run_0000"
+    }
+  ],
+  "event_counts": {
+    "collision_human": 0,
+    "collision_static": 1,
+    "slip": 0,
+    "near_miss": 18,
+    "occluded_hazard": 9,
+    "collisions": 1
+  },
+  "stats": {
+    "duration_avg_s": 5.0,
+    "avg_speed_mean_mps": 1.838007098269672,
+    "min_ttc_min_s": 0.7050916189532992
+  },
+  "tags": {
+    "visibility": false,
+    "traction": false,
+    "localization": false,
+    "human_behavior": false,
+    "occlusion": false,
+    "sensor_fault": false,
+    "multi_actor": true
+  },
+  "randomization": {
+    "traction_mu": [
+      0.85,
+      0.88
+    ],
+    "lidar_noise_sigma": 0.02,
+    "lidar_dropout_pct": 0.01,
+    "clutter_level": null,
+    "behavior_presets": []
+  }
+}

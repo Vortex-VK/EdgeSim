@@ -1,0 +1,55 @@
+{
+  "prompt": "main aisle from 2,10 to 14.5,10, rack from 17,16 to 17,4.5, rack from 1.5,7 to 13,7, rack from 1.5,13 to 13,13, human crossing from 14,5.5 to 14,15.5, wet patch from 13.5,9 to 15,11",
+  "runs": [
+    {
+      "duration_s": 7.300000000000001,
+      "avg_speed_mps": 1.6220960233495063,
+      "min_ttc": 2.297124427344376,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0000"
+    }
+  ],
+  "event_counts": {
+    "collision_human": 0,
+    "collision_static": 0,
+    "slip": 0,
+    "near_miss": 0,
+    "occluded_hazard": 0,
+    "collisions": 0
+  },
+  "stats": {
+    "duration_avg_s": 7.300000000000001,
+    "avg_speed_mean_mps": 1.6220960233495063,
+    "min_ttc_min_s": 2.297124427344376
+  },
+  "tags": {
+    "visibility": false,
+    "traction": false,
+    "localization": false,
+    "human_behavior": false,
+    "occlusion": false,
+    "sensor_fault": false,
+    "multi_actor": false
+  },
+  "randomization": {
+    "traction_mu": [
+      0.45,
+      0.85,
+      0.88
+    ],
+    "lidar_noise_sigma": 0.02,
+    "lidar_dropout_pct": 0.01,
+    "clutter_level": null,
+    "behavior_presets": []
+  }
+}

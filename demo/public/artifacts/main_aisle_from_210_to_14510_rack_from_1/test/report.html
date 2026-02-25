@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>EdgeSim Report — 2026-02-24_11-48-55_main_aisle_from_210_to_14510_rack_from_1</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --accent: #0f172a;
+      --accent-2: #1d4ed8;
+      --accent-3: #0ea5e9;
+      --good: #16a34a;
+      --warn: #f59e0b;
+      --bad: #dc2626;
+      --rack: #a16207;
+      --aisle: #e2e8f0;
+      --traction: #bae6fd;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      background: radial-gradient(circle at 10% 20%, #e0f2fe 0%, #f8fafc 30%, #eef2ff 60%, #f8fafc 100%);
+      font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #0f172a;
+    }
+    .page {
+      max-width: 1180px;
+      margin: 24px auto;
+      padding: 0 18px 32px;
+    }
+    h1 { font-size: 28px; margin: 0 0 6px 0; letter-spacing: -0.02em; }
+    h2 { font-size: 20px; margin: 0 0 12px 0; letter-spacing: -0.01em; }
+    h3 { font-size: 15px; margin: 0 0 6px 0; color: var(--muted); }
+    .muted { color: var(--muted); font-size: 13px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px 18px;
+      box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06);
+    }
+    .cards-2 { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); margin-top: 14px; }
+    .cards-3 { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); margin-top: 14px; }
+    .cards-1 { display: grid; gap: 14px; grid-template-columns: 1fr; margin-top: 14px; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #eef2ff;
+      color: #312e81;
+      font-size: 12px;
+      border: 1px solid #e0e7ff;
+    }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 8px; }
+    .metric-grid.tight { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); }
+    .metric {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+    }
+    .metric .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; display: block; }
+    .metric .value { font-size: 18px; font-weight: 700; }
+    .pill { padding: 2px 8px; border-radius: 10px; font-size: 12px; display: inline-block; }
+    .pill.good { background: #dcfce7; color: #166534; }
+    .pill.bad { background: #fee2e2; color: #991b1b; }
+    .pill.warn { background: #fef3c7; color: #92400e; }
+    .table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+    .table th, .table td { padding: 8px 6px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13px; }
+    .table th { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: 0.01em; }
+    .tag { display: inline-block; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 12px; padding: 3px 9px; margin: 2px 4px 2px 0; font-size: 12px; }
+    .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+    .gallery figure { margin: 0; }
+    .gallery img { width: 100%; border-radius: 12px; border: 1px solid var(--border); }
+    .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .map-wrapper { width: 100%; height: 420px; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: #f8fafc; }
+    svg { font-family: "Inter", system-ui, sans-serif; }
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; }
+    .section { margin-top: 16px; }
+    .section > h2 { margin-bottom: 8px; }
+    footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
+    .badge { padding: 3px 8px; border-radius: 999px; background: #e0f2fe; color: #075985; font-size: 12px; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 8px; font-size: 12px; }
+    .prewrap { white-space: pre-wrap; word-break: break-word; }
+    .prompt-block { background:#f8fafc; border:1px solid var(--border); border-radius:12px; padding:10px 12px; margin-top:8px; }
+    .note { font-size:12px; color: var(--muted); margin-top:6px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border);
+      background: linear-gradient(135deg, #e0f2fe, #eef2ff);
+      color: #0f172a; font-weight: 600; font-size: 13px; cursor: pointer;
+      transition: transform 120ms ease, box-shadow 120ms ease;
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(15,23,42,0.08); }
+    .btn:active { transform: translateY(0px); box-shadow: none; }
+    .replay-box { margin-top: 12px; padding: 10px 12px; border:1px dashed var(--border); border-radius:12px; background:#f8fafc; }
+    .replay-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .toast { position: fixed; top: 20px; right: 20px; background: #0f172a; color: #fff; padding: 10px 14px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); opacity: 0; pointer-events: none; transition: opacity 160ms ease; font-size: 13px; }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="section">
+      <h1>EdgeSim Report</h1>
+      <div class="muted">Scenario: <span class="code">2026-02-24_11-48-55_main_aisle_from_210_to_14510_rack_from_1</span> • Runs: <b>1</b> • Generated: 2026-02-24 16:49 UTC</div>
+      <div class="muted">Seeds: <span class="code">598444</span> • Manifest digests: CSV <span class="code">5965acdaf65a…</span> • world.json <span class="code">bb19c5abb8cc…</span></div>
+    </div>
+
+    <div class="cards-2 section">
+      <div class="card">
+        <h2>Scenario & Randomization</h2>
+        <div class="prompt-block prewrap">main aisle from 2,10 to 14.5,10, rack from 17,16 to 17,4.5, rack from 1.5,7 to 13,7, rack from 1.5,13 to 13,13, human crossing from 14,5.5 to 14,15.5, wet patch from 13.5,9 to 15,11</div>
+        <div class="metric-grid" style="margin-top:12px;">
+          <div class="metric"><span class="label">Site / Profile</span><div class="value">default</div></div>
+          <div class="metric"><span class="label">LiDAR noise / dropout</span><div class="value">0.02, drop 0.01</div></div>
+          <div class="metric"><span class="label">Traction μ (dry / wet)</span><div class="value">dry 0.85-0.85</div></div>
+          <div class="metric"><span class="label">Runtime / dt</span><div class="value">120s @ dt=0.1</div></div>
+          <div class="metric"><span class="label">Seeds</span><div class="value">598444</div></div>
+        </div>
+        <div style="margin-top:10px;"><span class='tag'>visibility=False</span><span class='tag'>traction=False</span><span class='tag'>localization=False</span><span class='tag'>human_behavior=False</span><span class='tag'>occlusion=False</span><span class='tag'>sensor_fault=False</span><span class='tag'>multi_actor=False</span></div>
+      </div>
+      <div class="card">
+        <h2>Run Overview</h2>
+        <div class="metric-grid">
+          <div class="metric"><span class="label">Success</span><div class="value">1</div></div>
+          <div class="metric"><span class="label">Collisions</span><div class="value">0</div></div>
+          <div class="metric"><span class="label">Other / Timeout</span><div class="value">0</div></div>
+          <div class="metric"><span class="label">Worst clearance</span><div class="value">1.44 m</div></div>
+          <div class="metric"><span class="label">Min TTC</span><div class="value">2.30 s</div></div>
+        </div>
+        <div class="prompt-block prewrap" style="margin-top:12px;"><b>Representative run:</b> 2026-02-24_11-48-55_main_aisle_from_210_to_14510_rack_from_1</div>
+        
+        <div class="replay-box">
+          <div class="muted" style="margin-bottom:6px;">Quick replay (opens viewer for the representative run)</div>
+          <div class="replay-row">
+            <div class="code" style="font-size:12px; padding:6px 8px;">edgesim replay runs/2026-02-24_11-48-55_main_aisle_from_210_to_14510_rack_from_1 --viewer --follow-robot</div>
+            <button class="btn" onclick="copyReplay()">Copy command</button>
+          </div>
+          <div class="note">Requires <span class="code">edgesim</span> CLI; paste the command in a terminal from repo root.</div>
+        </div>
+        
+      </div>
+    </div>
+
+    <div class="cards-2 section">
+      <div class="card">
+        <h2>Hazards & Layout</h2>
+        <div class="metric-grid">
+          <div class="metric"><span class="label">Aisles</span><div class="value">1</div></div>
+          <div class="metric"><span class="label">Traction patches</span><div class="value">3</div></div>
+          <div class="metric"><span class="label">Humans</span><div class="value">1</div></div>
+          <div class="metric"><span class="label">Vehicles</span><div class="value">0</div></div>
+          <div class="metric"><span class="label">Static obstacles</span><div class="value">129</div></div>
+        </div>
+        <div class="muted" style="margin-top:8px;">Traction zones, aisles, racks, start/goal are drawn on the map below.</div>
+      </div>
+      <div class="card">
+        <h2>Repro & digests</h2>
+        <div class="metric-grid">
+          <div class="metric"><span class="label">CSV digest</span><div class="value" style="font-size:13px;">5965acdaf65a…</div></div>
+          <div class="metric"><span class="label">scenario.yaml</span><div class="value" style="font-size:13px;">9ff357ed6d6c…</div></div>
+          <div class="metric"><span class="label">seeds.json</span><div class="value" style="font-size:13px;">e08bf0c9143b…</div></div>
+          <div class="metric"><span class="label">world.json</span><div class="value" style="font-size:13px;">bb19c5abb8cc…</div></div>
+        </div>
+        <div class="muted" style="margin-top:8px;">Run <span class="code">edgesim verify --run runs/2026-02-24_11-48-55_main_aisle_from_210_to_14510_rack_from_1</span> to re-check digests.</div>
+      </div>
+    </div>
+
+    <div class="cards-1 section">
+      <div class="card">
+        <h2>Top-down Map & Trajectory</h2>
+        <div class="map-wrapper" style="height:480px;"><svg viewBox="0 0 1000 420" preserveAspectRatio="xMidYMid meet"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f8fafc"/><stop offset="100%" stop-color="#eef2ff"/></linearGradient></defs><rect x="0" y="0" width="1000" height="420" fill="url(#bg)" /><rect x="28.0" y="53.4" width="878.1" height="338.6" fill="#bae6fd" fill-opacity="0.35" stroke="#bae6fd" stroke-width="1" /><rect x="620.7" y="205.8" width="65.9" height="33.9" fill="#bae6fd" fill-opacity="0.35" stroke="#bae6fd" stroke-width="1" /><rect x="115.8" y="201.5" width="548.8" height="42.3" fill="#bae6fd" fill-opacity="0.35" stroke="#bae6fd" stroke-width="1" /><polygon points="115.8,243.9 664.7,243.9 664.7,201.5 115.8,201.5" fill="#e2e8f0" fill-opacity="0.7" stroke="#cbd5e1" stroke-width="1" /><polygon points="712.5,121.6 712.5,123.7 717.8,123.7 717.8,121.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="831.1,121.6 831.1,123.7 836.3,123.7 836.3,121.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="712.5,153.6 712.5,155.6 717.8,155.6 717.8,153.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="831.1,153.6 831.1,155.6 836.3,155.6 836.3,153.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="712.5,185.5 712.5,187.5 717.8,187.5 717.8,185.5" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="831.1,185.5 831.1,187.5 836.3,187.5 836.3,185.5" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="712.5,217.4 712.5,219.5 717.8,219.5 717.8,217.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="831.1,217.4 831.1,219.5 836.3,219.5 836.3,217.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="712.5,249.4 712.5,251.4 717.8,251.4 717.8,249.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="831.1,249.4 831.1,251.4 836.3,251.4 836.3,249.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="712.5,281.3 712.5,283.4 717.8,283.4 717.8,281.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="831.1,281.3 831.1,283.4 836.3,283.4 836.3,281.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="712.5,313.3 712.5,315.3 717.8,315.3 717.8,313.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="831.1,313.3 831.1,315.3 836.3,315.3 836.3,313.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="718.8,122.6 718.7,314.3 830.1,314.3 830.2,122.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="718.8,122.6 718.7,314.3 830.1,314.3 830.2,122.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="714.3,123.3 714.3,142.4 814.8,142.5 814.8,123.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="752.9,144.4 752.9,152.9 822.6,152.9 822.6,144.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="722.7,155.3 722.7,173.2 801.8,173.2 801.8,155.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="742.6,175.9 742.6,183.8 812.3,183.8 812.3,175.9" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="750.9,187.2 750.9,205.9 825.0,205.9 825.0,187.2" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="739.2,207.7 739.2,216.7 837.5,216.7 837.5,207.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="736.2,219.2 736.2,235.8 815.6,235.8 815.7,219.2" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="718.1,237.8 718.1,246.4 796.5,246.5 796.5,237.9" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="763.6,251.1 763.6,270.7 821.7,270.7 821.8,251.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="734.9,272.7 734.9,280.4 831.8,280.4 831.8,272.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="745.7,283.1 745.7,296.0 806.7,296.0 806.7,283.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="727.4,298.7 727.3,306.8 803.4,306.8 803.4,298.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="755.2,123.3 755.2,141.3 828.2,141.3 828.3,123.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="733.8,143.8 733.8,152.7 832.7,152.7 832.7,143.8" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="713.8,155.3 713.8,166.8 800.1,166.8 800.2,155.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="751.6,168.5 751.6,178.7 830.1,178.7 830.1,168.5" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="746.0,180.0 746.0,185.0 816.5,185.0 816.5,180.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="733.7,187.2 733.7,195.5 824.6,195.5 824.6,187.2" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="718.1,197.7 718.1,210.3 821.3,210.3 821.3,197.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="737.7,211.1 737.7,216.9 806.7,216.9 806.7,211.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="727.5,219.2 727.5,237.4 825.8,237.4 825.8,219.2" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="742.8,239.4 742.8,247.1 805.5,247.1 805.5,239.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="710.3,251.1 710.3,267.1 803.4,267.1 803.4,251.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="750.8,268.8 750.8,277.6 833.7,277.7 833.7,268.8" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="725.1,283.1 725.1,300.1 801.7,300.1 801.7,283.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="728.6,301.8 728.6,309.8 805.2,309.8 805.2,301.8" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="95.2,297.4 100.4,297.4 100.4,295.3 95.2,295.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="95.2,251.6 100.4,251.6 100.4,249.6 95.2,249.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="178.0,297.4 183.3,297.4 183.3,295.3 178.0,295.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="178.0,251.6 183.3,251.6 183.3,249.6 178.0,249.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="260.8,297.4 266.1,297.4 266.1,295.3 260.8,295.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="260.8,251.6 266.1,251.6 266.1,249.6 260.8,249.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="343.7,297.4 349.0,297.4 349.0,295.3 343.7,295.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="343.7,251.6 349.0,251.6 349.0,249.6 343.7,249.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="426.5,297.4 431.8,297.4 431.8,295.3 426.5,295.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="426.5,251.6 431.8,251.6 431.8,249.6 426.5,249.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="509.4,297.4 514.6,297.4 514.6,295.3 509.4,295.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="509.4,251.6 514.6,251.6 514.6,249.6 509.4,249.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="592.2,297.4 597.5,297.4 597.5,295.3 592.2,295.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="592.2,251.6 597.5,251.6 597.5,249.6 592.2,249.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="97.8,295.0 594.8,295.0 594.8,252.0 97.8,252.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="97.8,295.0 594.8,295.0 594.8,252.0 97.8,252.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="99.7,282.8 143.4,282.8 143.4,250.3 99.7,250.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="147.3,282.9 169.0,282.9 169.0,258.0 147.3,258.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="182.5,289.9 226.2,289.9 226.2,264.9 182.5,264.9" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="233.6,296.3 256.9,296.3 256.9,258.4 233.6,258.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="265.3,290.1 299.2,290.1 299.2,253.0 265.3,253.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="304.4,292.0 336.3,292.0 336.3,264.1 304.4,264.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="348.2,287.5 393.0,287.5 393.0,247.6 348.2,247.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="395.5,292.4 420.3,292.4 420.3,267.8 395.5,267.8" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="431.0,292.5 464.2,292.5 464.2,254.0 431.0,254.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="470.2,278.8 507.9,278.8 507.9,255.3 470.2,255.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="513.9,294.8 556.7,294.8 556.7,255.1 513.9,255.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="559.9,291.8 588.3,291.8 588.3,260.4 559.9,260.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="99.7,286.9 140.7,286.9 140.7,251.8 99.7,251.8" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="147.1,296.3 172.5,296.3 172.5,260.2 147.1,260.2" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="182.5,286.1 203.7,286.1 203.7,260.4 182.5,260.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="208.0,294.4 227.9,294.4 227.9,262.8 208.0,262.8" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="233.0,285.1 254.8,285.1 254.8,257.9 233.0,257.9" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="265.3,284.5 306.5,284.5 306.5,256.9 265.3,256.9" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="312.8,277.9 342.2,277.9 342.2,254.8 312.8,254.8" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="348.2,284.4 394.0,284.4 394.0,255.5 348.2,255.5" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="396.4,284.6 418.9,284.6 418.9,248.3 396.4,248.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="431.0,293.6 458.4,293.6 458.4,259.4 431.0,259.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="462.5,289.1 507.0,289.1 507.0,258.7 462.5,258.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="513.8,281.1 540.9,281.1 540.9,252.3 513.8,252.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="544.0,285.2 571.8,285.2 571.8,254.5 544.0,254.5" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="575.9,295.3 590.8,295.3 590.8,265.1 575.9,265.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="95.2,195.8 100.4,195.8 100.4,193.7 95.2,193.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="95.2,150.1 100.4,150.1 100.4,148.0 95.2,148.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="178.0,195.8 183.3,195.8 183.3,193.7 178.0,193.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="178.0,150.1 183.3,150.1 183.3,148.0 178.0,148.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="260.8,195.8 266.1,195.8 266.1,193.7 260.8,193.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="260.8,150.1 266.1,150.1 266.1,148.0 260.8,148.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="343.7,195.8 349.0,195.8 349.0,193.7 343.7,193.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="343.7,150.1 349.0,150.1 349.0,148.0 343.7,148.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="426.5,195.8 431.8,195.8 431.8,193.7 426.5,193.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="426.5,150.1 431.8,150.1 431.8,148.0 426.5,148.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="509.4,195.8 514.6,195.8 514.6,193.7 509.4,193.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="509.4,150.1 514.6,150.1 514.6,148.0 509.4,148.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="592.2,195.8 597.5,195.8 597.5,193.7 592.2,193.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="592.2,150.1 597.5,150.1 597.5,148.0 592.2,148.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="97.8,193.4 594.8,193.4 594.8,150.4 97.8,150.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="97.8,193.4 594.8,193.4 594.8,150.4 97.8,150.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="99.7,184.3 150.9,184.3 150.9,157.3 99.7,157.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="157.0,194.2 176.6,194.2 176.6,154.3 157.0,154.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="182.5,186.2 231.9,186.2 231.9,157.3 182.5,157.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="234.5,192.6 257.2,192.6 257.2,163.4 234.5,163.4" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="265.3,180.3 294.4,180.3 294.4,155.7 265.3,155.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="297.7,189.5 322.9,189.5 322.9,161.7 297.7,161.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="329.4,187.7 342.3,187.7 342.3,148.3 329.4,148.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="348.2,191.5 397.4,191.5 397.4,163.1 348.2,163.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="402.6,185.6 424.9,185.6 424.9,149.8 402.6,149.8" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="431.0,186.5 453.0,186.5 453.0,162.2 431.0,162.2" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="456.8,193.4 477.2,193.4 477.2,158.0 456.8,158.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="480.7,197.2 507.6,197.2 507.6,160.2 480.7,160.2" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="513.8,195.0 556.1,195.0 556.1,156.6 513.8,156.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="560.8,187.1 580.7,187.1 580.7,157.9 560.8,157.9" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="99.7,177.2 151.0,177.2 151.0,154.6 99.7,154.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="157.9,186.8 176.6,186.8 176.6,153.6 157.9,153.6" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="182.5,195.9 220.8,195.9 220.8,160.1 182.5,160.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="223.3,188.5 247.8,188.5 247.8,166.5 223.3,166.5" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="265.3,186.8 291.4,186.8 291.4,153.3 265.3,153.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="295.0,193.6 320.8,193.6 320.8,160.7 295.0,160.7" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="325.3,191.6 342.3,191.6 342.3,165.3 325.3,165.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="348.2,178.4 369.9,178.4 369.9,154.9 348.2,154.9" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="372.5,187.0 401.7,187.0 401.7,160.3 372.5,160.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="404.6,187.1 424.9,187.1 424.9,155.5 404.6,155.5" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="431.0,188.6 470.7,188.6 470.7,161.0 431.0,161.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="476.4,187.6 502.3,187.6 502.3,153.2 476.4,153.2" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="513.8,188.2 538.7,188.2 538.7,160.0 513.8,160.0" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="543.2,182.8 572.1,182.8 572.1,154.3 543.2,154.3" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><polygon points="578.0,187.4 590.8,187.4 590.8,165.1 578.0,165.1" fill="#a16207" fill-opacity="0.65" stroke="#8b5cf6" stroke-width="1" /><circle cx="115.8" cy="222.7" r="7" fill="#16a34a" stroke="#065f46" stroke-width="2"/><text x="115.8" y="210.7" font-size="12" text-anchor="middle" fill="#065f46">start</text><rect x="657.7" y="215.7" width="14" height="14" fill="#f97316" stroke="#c2410c" stroke-width="2" rx="3"/><text x="664.7" y="242.7" font-size="12" text-anchor="middle" fill="#c2410c">goal</text><polyline points="123.7,222.7 131.6,222.7 139.5,222.7 147.4,222.6 155.4,222.6 163.3,222.5 171.3,222.5 179.2,222.4 187.2,222.3 195.1,222.3 203.0,222.3 210.9,222.3 218.8,222.4 226.7,222.4 234.6,222.4 242.5,222.4 250.4,222.4 258.3,222.4 266.1,222.4 274.1,222.4 282.0,222.4 289.9,222.5 297.8,222.5 305.7,222.6 313.6,222.6 321.5,222.6 329.3,222.7 337.2,222.7 345.1,222.7 353.0,222.7 360.9,222.7 368.8,222.7 376.7,222.7 384.6,222.7 392.5,222.7 400.7,222.9 408.8,222.9 416.8,222.8 424.9,222.6 433.0,222.8 441.1,222.7 449.1,222.9 457.2,222.7 465.3,222.6 473.3,222.8 481.4,222.7 489.4,222.9 497.4,222.7 505.4,222.6 513.4,222.8 521.5,222.7 529.5,222.8 537.5,222.7 545.5,222.6 553.4,222.8 561.4,222.7 569.4,222.7 577.4,222.7 584.7,222.7 591.4,222.7 597.6,222.8 603.3,222.9 608.4,222.9 613.1,222.9 617.4,223.0 621.4,223.0 625.0,223.0 628.3,223.0 631.3,223.0 634.1,223.0 636.7,222.9 639.1,222.9 641.3,222.9 643.4,222.9" fill="none" stroke="#2563eb" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/><circle cx="584.7" cy="222.7" r="6" fill="#f97316" stroke="#0f172a" stroke-width="1.2" opacity="0.95"><title>near_miss @ 5.8s</title></circle><circle cx="591.4" cy="222.7" r="6" fill="#f97316" stroke="#0f172a" stroke-width="1.2" opacity="0.95"><title>near_miss @ 5.9s</title></circle><circle cx="597.6" cy="222.8" r="6" fill="#f97316" stroke="#0f172a" stroke-width="1.2" opacity="0.95"><title>near_miss @ 6.0s</title></circle><circle cx="643.4" cy="222.9" r="6" fill="#16a34a" stroke="#0f172a" stroke-width="1.2" opacity="0.95"><title>mission_success @ 7.3s</title></circle></svg></div>
+        <div class="legend">
+          <span><span class="dot" style="background:#2563eb;"></span>Robot path</span>
+          <span><span class="dot" style="background:#dc2626;"></span>Collisions</span>
+          <span><span class="dot" style="background:#06b6d4;"></span>Slips</span>
+          <span><span class="dot" style="background:#f97316;"></span>Near-miss / occluded</span>
+          <span><span class="dot" style="background:#bae6fd;"></span>Traction patches</span>
+          <span><span class="dot" style="background:#a16207;"></span>Racks / obstacles</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cards-2 section">
+      <div class="card">
+        <h2>Clearance over time</h2>
+        <div>
+    <svg viewBox="0 0 520 240" preserveAspectRatio="xMidYMid meet">
+      <rect x="0" y="0" width="520" height="240" fill="#f8fafc" rx="10" />
+      <line x1="36" y1="204" x2="484" y2="204" stroke="#e5e7eb" />
+      <line x1="36" y1="36" x2="36" y2="204" stroke="#e5e7eb" />
+      <polyline points="36.0,36.0 42.1,36.7 48.3,39.4 54.4,44.4 60.5,51.4 66.7,60.2 72.8,70.4 79.0,81.1 85.1,91.3 91.2,100.6 97.4,100.6 103.5,100.6 109.6,100.6 115.8,100.6 121.9,100.6 128.1,100.6 134.2,100.6 140.3,100.6 146.5,100.6 152.6,100.6 158.7,100.6 164.9,100.6 171.0,100.6 177.2,100.6 183.3,100.6 189.4,100.6 195.6,100.6 201.7,100.6 207.8,116.2 214.0,120.3 220.1,158.7 226.2,158.7 232.4,180.3 238.5,204.0 244.7,204.0 250.8,204.0 256.9,204.0 263.1,204.0 269.2,204.0 275.3,204.0 281.5,204.0 287.6,204.0 293.8,204.0 299.9,204.0 306.0,204.0 312.2,204.0 318.3,204.0 324.4,204.0 330.6,204.0 336.7,204.0 342.8,204.0 349.0,204.0 355.1,204.0 361.3,204.0 367.4,204.0 373.5,204.0 379.7,204.0 385.8,204.0 391.9,204.0 398.1,204.0 404.2,204.0 410.4,204.0 416.5,204.0 422.6,204.0 428.8,204.0 434.9,204.0 441.0,204.0 447.2,204.0 453.3,204.0 459.5,204.0 465.6,204.0 471.7,204.0 477.9,204.0 484.0,204.0" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      <line x1="391.9" x2="391.9" y1="36" y2="204" stroke="#e5e7eb" stroke-dasharray="4 4"/><line x1="398.1" x2="398.1" y1="36" y2="204" stroke="#e5e7eb" stroke-dasharray="4 4"/><line x1="404.2" x2="404.2" y1="36" y2="204" stroke="#e5e7eb" stroke-dasharray="4 4"/><line x1="484.0" x2="484.0" y1="36" y2="204" stroke="#e5e7eb" stroke-dasharray="4 4"/>
+      <text x="36.0" y="222.0" font-size="11" text-anchor="start" fill="#6b7280">0.0</text><text x="260.0" y="222.0" font-size="11" text-anchor="middle" fill="#6b7280">3.7</text><text x="484.0" y="222.0" font-size="11" text-anchor="end" fill="#6b7280">7.3</text>
+      <text x="30.0" y="204.0" font-size="11" text-anchor="end" fill="#6b7280">1.44</text><text x="30.0" y="120.0" font-size="11" text-anchor="end" fill="#6b7280">1.47</text><text x="30.0" y="36.0" font-size="11" text-anchor="end" fill="#6b7280">1.50</text>
+      <text x="484" y="26" font-size="12" text-anchor="end" fill="#6b7280">meters</text>
+    </svg>
+    </div>
+      </div>
+      <div class="card">
+        <h2>Time-to-collision (TTC)</h2>
+        <div>
+    <svg viewBox="0 0 520 240" preserveAspectRatio="xMidYMid meet">
+      <rect x="0" y="0" width="520" height="240" fill="#f8fafc" rx="10" />
+      <line x1="36" y1="204" x2="484" y2="204" stroke="#e5e7eb" />
+      <line x1="36" y1="36" x2="36" y2="204" stroke="#e5e7eb" />
+      <polyline points="36.0,59.4 42.2,90.2 48.4,92.0 54.7,93.8 60.9,95.7 67.1,97.5 73.3,99.4 79.6,101.3 85.8,103.2 92.0,105.2 98.2,107.0 104.4,108.8 110.7,110.6 116.9,112.4 123.1,114.1 129.3,115.9 135.6,117.7 141.8,119.5 148.0,121.4 154.2,123.3 160.4,125.0 166.7,126.7 172.9,128.4 179.1,130.0 185.3,131.7 191.6,133.4 197.8,135.0 204.0,136.6 210.2,138.2 216.4,139.8 222.7,141.4 228.9,142.9 235.1,144.4 241.3,145.9 247.6,149.3 253.8,150.1 260.0,151.2 266.2,152.6 272.4,153.9 278.7,155.2 284.9,155.7 291.1,157.4 297.3,158.2 303.6,157.9 309.8,159.2 316.0,158.1 322.2,159.3 328.4,159.0 334.7,155.4 340.9,156.2 347.1,149.0 353.3,148.8 359.6,142.1 365.8,117.1 372.0,104.4 378.2,53.2 384.4,36.0 390.7,159.3 396.9,159.3 403.1,159.3 409.3,159.3 415.6,159.3 421.8,159.3 428.0,159.3 434.2,159.3 440.4,159.3 446.7,159.3 452.9,159.3 459.1,159.3 465.3,159.3 471.6,159.3 477.8,159.3 484.0,159.3" fill="none" stroke="#f97316" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      <line x1="390.7" x2="390.7" y1="36" y2="204" stroke="#e5e7eb" stroke-dasharray="4 4"/><line x1="396.9" x2="396.9" y1="36" y2="204" stroke="#e5e7eb" stroke-dasharray="4 4"/><line x1="403.1" x2="403.1" y1="36" y2="204" stroke="#e5e7eb" stroke-dasharray="4 4"/><line x1="484.0" x2="484.0" y1="36" y2="204" stroke="#e5e7eb" stroke-dasharray="4 4"/>
+      <text x="36.0" y="222.0" font-size="11" text-anchor="start" fill="#6b7280">0.1</text><text x="260.0" y="222.0" font-size="11" text-anchor="middle" fill="#6b7280">3.7</text><text x="484.0" y="222.0" font-size="11" text-anchor="end" fill="#6b7280">7.3</text>
+      <text x="30.0" y="204.0" font-size="11" text-anchor="end" fill="#6b7280">0.00</text><text x="30.0" y="120.0" font-size="11" text-anchor="end" fill="#6b7280">4.32</text><text x="30.0" y="36.0" font-size="11" text-anchor="end" fill="#6b7280">8.64</text>
+      <text x="484" y="26" font-size="12" text-anchor="end" fill="#6b7280">seconds</text>
+    </svg>
+    </div>
+      </div>
+    </div>
+
+    <div class="cards-1 section">
+      <div class="card">
+        <h2>Edge-case events</h2>
+        <table class='table'><thead><tr><th>Event</th><th>t (s)</th><th>min_clear (m)</th><th>min_ttc (s)</th><th>Note</th></tr></thead><tbody><tr><td>hard_brake</td><td>5.8</td><td>1.44</td><td>2.30</td><td></td></tr><tr><td>hard_brake</td><td>5.9</td><td>1.44</td><td>2.30</td><td></td></tr><tr><td>hard_brake</td><td>6.0</td><td>1.44</td><td>2.30</td><td></td></tr><tr><td>mission_success</td><td>7.3</td><td>1.44</td><td>2.30</td><td></td></tr></tbody></table>
+      </div>
+    </div>
+
+    <div class="cards-2 section">
+      <div class="card">
+        <h2>Actors</h2>
+        <table class='table'><thead><tr><th>ID</th><th>Type</th><th>Path pts</th><th>Phases seen</th></tr></thead><tbody><tr><td>amr_0</td><td>AMR</td><td>74</td><td>running</td></tr><tr><td>human_1</td><td>human</td><td>74</td><td>idle, running</td></tr></tbody></table>
+      </div>
+      <div class="card">
+        <h2>Coverage & Outcomes</h2>
+        <h3>Outcomes</h3><div class='metric-grid tight'><div class='metric'><span class='label'>success</span><div class='value'>1</div></div><div class='metric'><span class='label'>collisions</span><div class='value'>0</div></div><div class='metric'><span class='label'>other</span><div class='value'>0</div></div></div><h3>Coverage</h3><div class="muted" style="margin-top:6px;">coverage.json not found; coverage stats skipped.</div>
+      </div>
+    </div>
+
+    <footer>EdgeSim • offline HTML report • v1 • Digests: CSV 5965acdaf65a…, scenario 9ff357ed6d6c…, seeds e08bf0c9143b…</footer>
+  </div>
+  
+  <div id="toast" class="toast"></div>
+  <script>
+    const replayCmd = "edgesim replay runs/2026-02-24_11-48-55_main_aisle_from_210_to_14510_rack_from_1 --viewer --follow-robot";
+    function copyReplay() {
+      if (!replayCmd) return;
+      const toast = document.getElementById('toast');
+      function show(msg) {
+        toast.textContent = msg;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 1800);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(replayCmd).then(() => show('Copied replay command to clipboard')).catch(() => show('Copy failed; select manually.'));
+      } else {
+        show('Copy unsupported; select manually.');
+      }
+    }
+  </script>
+        
+</body>
+</html>

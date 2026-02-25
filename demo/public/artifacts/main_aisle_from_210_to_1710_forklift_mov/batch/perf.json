@@ -1,0 +1,16 @@
+{
+  "completed": 100,
+  "requested": 100,
+  "elapsed_sec": 15.16,
+  "sims_per_min": 395.79,
+  "time_budget_min": 120.0,
+  "profile": "minimal",
+  "sim_minutes_total": 7.493,
+  "est_cost_per_sim_min": 0.0,
+  "auto_degraded": false,
+  "auto_degrade_policy": null,
+  "original_knobs": {
+    "duration_s": 120.0,
+    "lidar_hz": 10.0
+  }
+}
