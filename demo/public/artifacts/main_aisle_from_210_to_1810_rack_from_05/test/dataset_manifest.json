@@ -1,0 +1,55 @@
+{
+  "prompt": "main aisle from 2,10 to 18,10, rack from 0.5,7.5 to 12.5,7.5, wall from 0.5,11 to 19.5,11, rack from 19.5,7.5 to 14.5,7.5, wet patch from 13,8 to 14,10.5, human crossing from 13.5,6.5 to 13.5,10, wall from 0.5,11 to 0.5,9, wall from 19.5,11 to 19.5,9",
+  "runs": [
+    {
+      "duration_s": 9.200000000000001,
+      "avg_speed_mps": 1.6701160469445049,
+      "min_ttc": 4.09099450703312,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 1,
+        "near_miss": 0,
+        "occluded_hazard": 0
+      },
+      "flags": {
+        "near_miss": false,
+        "occluded_hazard": false
+      },
+      "run_id": "run_0000"
+    }
+  ],
+  "event_counts": {
+    "collision_human": 0,
+    "collision_static": 0,
+    "slip": 1,
+    "near_miss": 0,
+    "occluded_hazard": 0,
+    "collisions": 0
+  },
+  "stats": {
+    "duration_avg_s": 9.200000000000001,
+    "avg_speed_mean_mps": 1.6701160469445049,
+    "min_ttc_min_s": 4.09099450703312
+  },
+  "tags": {
+    "visibility": false,
+    "traction": false,
+    "localization": false,
+    "human_behavior": false,
+    "occlusion": false,
+    "sensor_fault": false,
+    "multi_actor": false
+  },
+  "randomization": {
+    "traction_mu": [
+      0.45,
+      0.85,
+      0.88
+    ],
+    "lidar_noise_sigma": 0.02,
+    "lidar_dropout_pct": 0.01,
+    "clutter_level": null,
+    "behavior_presets": []
+  }
+}

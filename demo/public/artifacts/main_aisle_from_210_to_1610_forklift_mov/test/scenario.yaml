@@ -1,0 +1,288 @@
+layout:
+  map_size_m:
+  - 21.5
+  - 21.5
+  aisles:
+  - id: A_coord_01
+    name: main_aisle
+    rect:
+    - 2.0
+    - 8.75
+    - 16.0
+    - 11.25
+    type: straight
+    racking: false
+    center:
+    - 9.0
+    - 10.0
+    half_extents:
+    - 7.0
+    - 1.25
+    yaw: 0.0
+    width_m: 2.5
+    length_m: 14.0
+    centerline:
+    - - 2.0
+      - 10.0
+    - - 16.0
+      - 10.0
+  walls:
+  - poly:
+    - - 0
+      - 0
+    - - 20
+      - 0
+    - - 20
+      - 20
+    - - 0
+      - 20
+  - id: Wall_01
+    aabb:
+    - 0.8499999999999996
+    - 6.0
+    - 1.1500000000000001
+    - 16.0
+    height_m: 2.2
+    center:
+    - 1.0
+    - 11.0
+    half_extents:
+    - 5.0
+    - 0.15
+    yaw: 1.5707963267948966
+  start:
+  - 2.0
+  - 10.0
+  goal:
+  - 16.0
+  - 10.0
+  geometry:
+    aisles: []
+    junctions: []
+    blind_corners: []
+    racking:
+    - id: Rack_01
+      aabb:
+      - 1.0
+      - 4.5
+      - 15.0
+      - 7.5
+      height_m: 3.0
+      type: rack
+      reflective: false
+      center:
+      - 8.0
+      - 6.0
+      half_extents:
+      - 7.0
+      - 1.5
+      yaw: 0.0
+      width_m: 3.0
+      length_m: 14.0
+      centerline:
+      - - 1.0
+        - 6.0
+      - - 15.0
+        - 6.0
+    - id: Rack_02
+      aabb:
+      - 17.0
+      - 4.5
+      - 20.0
+      - 17.5
+      height_m: 3.0
+      type: rack
+      reflective: false
+      center:
+      - 18.5
+      - 11.0
+      half_extents:
+      - 6.5
+      - 1.5
+      yaw: 1.5707963267948966
+      width_m: 3.0
+      length_m: 13.0
+      centerline:
+      - - 18.5
+        - 4.5
+      - - 18.5
+        - 17.5
+    - id: Rack_03
+      aabb:
+      - 1.0
+      - 14.5
+      - 15.0
+      - 17.5
+      height_m: 3.0
+      type: rack
+      reflective: false
+      center:
+      - 8.0
+      - 16.0
+      half_extents:
+      - 7.0
+      - 1.5
+      yaw: 0.0
+      width_m: 3.0
+      length_m: 14.0
+      centerline:
+      - - 1.0
+        - 16.0
+      - - 15.0
+        - 16.0
+    open_storage: []
+    endcaps: []
+  floor_surfaces:
+  - id: base_floor
+    type: dry
+    zone:
+    - 0.0
+    - 0.0
+    - 20.0
+    - 20.0
+    mu: 0.85
+    brake_scale: 1.0
+    slip_boost: 0.0
+    imu_vibe_g: 0.2
+  transition_zones: []
+  static_obstacles:
+  - id: Static_01
+    type: standing_pallet
+    aabb:
+    - 15.7
+    - 12.7
+    - 16.3
+    - 13.3
+    height: 1.0
+  - id: Static_02
+    type: cart_block
+    aabb:
+    - 13.2
+    - 8.2
+    - 13.8
+    - 8.8
+    height: 1.0
+    occlusion: true
+  lock_aisles: true
+  _raw_coord_aisles: true
+  auto_aisles_from_paths: false
+  paths_define_aisles: false
+agents:
+- id: amr_0
+  type: AMR
+  radius_m: 0.4
+  max_speed_mps: 1.2
+hazards:
+  traction: []
+  human:
+  - path: waypoints
+    waypoints:
+    - - 16.0
+      - 0.5
+    - - 16.0
+      - 8.5
+    group_size: 1
+    rate_per_min: 1.0
+    speed_mps:
+    - 0.9
+    - 1.5
+    motion_patterns:
+    - linear
+    raw_coords: true
+  vehicles:
+  - id: Veh_coord_01
+    type: forklift
+    path:
+    - - 3.0
+      - 13.0
+    - - 14.0
+      - 13.0
+    speed_mps: 1.0
+    ping_pong: true
+    raw_coords: true
+  floor_events: []
+sensors:
+  lidar:
+    hz: 10.0
+    max_range_m: 8.0
+    noise_sigma: 0.02
+    dropout_pct: 0.01
+    log:
+      full: true
+      events_only: false
+  imu:
+    noise_std: 0.01
+  odom:
+    bias_v: 0.02
+    bias_w: 0.01
+runtime:
+  duration_s: 120
+  dt: 0.1
+  N_runs: 1
+environment: {}
+taxonomy:
+  visibility: false
+  traction: false
+  localization: false
+  human_behavior: false
+  occlusion: false
+  sensor_fault: false
+  multi_actor: true
+site_overrides:
+  injectors:
+    falling_object:
+      drop_x: 16.0
+      drop_y: 9.0
+      p: 1.0
+      drop_z: 3.2
+      puddle_half:
+      - 1.2
+      - 0.7
+_debug:
+  parser_intent:
+    intent:
+      wants_long_main_passage: false
+      wants_narrow_passage: false
+      wants_parallel_passages: false
+      has_coordinate_passages: true
+      mentions_humans: true
+      busy_crossing: false
+      distracted_worker: false
+      mentions_crossing: true
+      no_humans_global: false
+      mentions_forklift: true
+      mentions_pallet_jack: false
+      traffic_heavy: false
+      no_vehicles_global: false
+      forklift_reverse: false
+      slippery_surface: false
+      cleaning_in_progress: false
+      blind_corner: false
+      high_racks: false
+      endcap_rack: false
+      low_visibility: false
+      reflective_clothing: false
+      dark_clothing: false
+      sensor_fault: false
+      degraded_mode: false
+      falling_object: true
+      wants_walls: false
+      wants_between_racks: false
+      wants_passage_generic: true
+    coord_flags:
+      aisle: true
+      human: true
+      vehicle: true
+      traction: false
+      static: true
+      falling: true
+      wall: true
+      rack: true
+      cart_block: true
+    counts:
+      aisles: 1
+      humans: 1
+      vehicles: 1
+      traction: 0
+logging:
+  full_lidar: true

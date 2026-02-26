@@ -52,6 +52,13 @@ type Scenario = {
     aisles: Rect[];
     walls: Rect[];
     racks: Rect[];
+    objects?: Array<{
+      type: string;
+      aabb: Rect;
+      center?: [number, number];
+      half_extents?: [number, number];
+      yaw?: number;
+    }>;
     traction: Rect[];
     humans: Array<{ waypoints: [number, number][] }>;
     vehicles: Array<{ type: string; path: [number, number][] }>;
@@ -186,6 +193,11 @@ const artifactLabels: Record<string, string> = {
   "per_run_index.csv": "Per-run index (CSV)",
 };
 
+const RUN_DOT_BASELINE_RUNS = 1000;
+const RUN_DOT_BASE_RADIUS_PX = 6.6;
+const RUN_DOT_MIN_RADIUS_PX = 1.4;
+const RUN_DOT_GAP_PX = 3;
+
 function isCollisionCategory(outcome: string): boolean {
   return outcome === "collision_human" || outcome === "collision_static" || outcome === "collision_dominant";
 }
@@ -211,6 +223,11 @@ function App() {
   if (!activeScenario) {
     return <div className="min-h-screen bg-slate-950 text-slate-100 p-10">No demo scenarios found.</div>;
   }
+
+  const repeatedRunCount = Math.max(1, activeScenario.batch.success_curve.length);
+  const repeatedRadiusScale = repeatedRunCount > RUN_DOT_BASELINE_RUNS ? Math.sqrt(RUN_DOT_BASELINE_RUNS / repeatedRunCount) : 1;
+  const repeatedDotRadiusPx = Math.max(RUN_DOT_MIN_RADIUS_PX, RUN_DOT_BASE_RADIUS_PX * repeatedRadiusScale);
+  const repeatedDotDiameterPx = repeatedDotRadiusPx * 2;
 
   const scrollTo = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -412,14 +429,29 @@ function App() {
                     <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-blue-200">Success</span>
                     <span className="rounded-full bg-orange-500/20 px-2 py-0.5 text-orange-200">Collision</span>
                   </div>
-                  <div className="grid grid-cols-20 gap-1">
-                    {activeScenario.batch.success_curve.map((point) => (
-                      <span
-                        key={point.idx}
-                        title={`Run ${point.idx}: ${point.success ? "non-collision" : "collision"} (${point.time_s.toFixed(2)}s)`}
-                        className={`h-2 rounded-sm ${point.success ? "bg-blue-400/55" : "bg-orange-400/55"}`}
-                      />
-                    ))}
+                  <div className="overflow-x-auto rounded-md border border-slate-800/70 bg-slate-950/40 p-2">
+                    <div
+                      className="grid"
+                      style={{
+                        width: "100%",
+                        gridAutoFlow: "row",
+                        gridTemplateColumns: `repeat(auto-fill, minmax(${repeatedDotDiameterPx}px, ${repeatedDotDiameterPx}px))`,
+                        gap: `${RUN_DOT_GAP_PX}px`,
+                      }}
+                    >
+                      {activeScenario.batch.success_curve.map((point) => (
+                        <span
+                          key={point.idx}
+                          title={`Run ${point.idx}: ${point.success ? "non-collision" : "collision"} (${point.time_s.toFixed(2)}s)`}
+                          className={point.success ? "bg-blue-400/80" : "bg-orange-400/80"}
+                          style={{
+                            width: `${repeatedDotDiameterPx}px`,
+                            height: `${repeatedDotDiameterPx}px`,
+                            borderRadius: "9999px",
+                          }}
+                        />
+                      ))}
+                    </div>
                   </div>
                 </div>
               </Card>
@@ -678,6 +710,50 @@ function actorKind(type: string): "amr" | "human" | "vehicle" | "other" {
   return "other";
 }
 
+type ObjectCategory = "storage" | "structure" | "safety" | "other";
+
+function objectCategory(type: string): ObjectCategory {
+  const normalized = String(type ?? "").toLowerCase();
+  if (normalized.includes("column") || normalized.includes("bollard") || normalized.includes("cone") || normalized.includes("extinguisher")) {
+    return "safety";
+  }
+  if (normalized.includes("door") || normalized.includes("dock") || normalized.includes("endcap") || normalized.includes("blind")) {
+    return "structure";
+  }
+  if (normalized.includes("storage") || normalized.includes("pallet") || normalized.includes("cart") || normalized.includes("box") || normalized.includes("obstacle")) {
+    return "storage";
+  }
+  return "other";
+}
+
+function objectCategoryStyle(category: ObjectCategory): { fill: string; stroke: string; opacity: number } {
+  if (category === "storage") return { fill: "#c2410c", stroke: "#9a3412", opacity: 0.82 };
+  if (category === "structure") return { fill: "#64748b", stroke: "#475569", opacity: 0.8 };
+  if (category === "safety") return { fill: "#0891b2", stroke: "#0e7490", opacity: 0.85 };
+  return { fill: "#4b5563", stroke: "#334155", opacity: 0.76 };
+}
+
+function orientedRectPoints(
+  center: [number, number],
+  halfExtents: [number, number],
+  yaw: number,
+  toSvgY: (y: number) => number,
+): string {
+  const [cx, cy] = center;
+  const [hx, hy] = halfExtents;
+  if (![cx, cy, hx, hy, yaw].every((val) => Number.isFinite(val))) return "";
+  if (hx <= 0 || hy <= 0) return "";
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  const corners: [number, number][] = [
+    [-hx, -hy],
+    [hx, -hy],
+    [hx, hy],
+    [-hx, hy],
+  ].map(([lx, ly]) => [cx + lx * c - ly * s, cy + lx * s + ly * c]);
+  return corners.map(([x, y]) => `${x},${toSvgY(y)}`).join(" ");
+}
+
 function MapTab({ scenario }: { scenario: Scenario }) {
   const lidarFrames = scenario.test.lidar.playback?.frames ?? [];
   const hasFrames = lidarFrames.length > 0;
@@ -776,15 +852,21 @@ function MapPlaybackPanel({
   const actorSnapshots = scenario.test.actors
     .map((track) => ({ track, pose: sampleAtTime(track.samples, activeTime) }))
     .filter((item) => item.pose !== null);
+  const worldObjects = scenario.world.objects ?? [];
+  const objectCategories = new Set(worldObjects.map((obj) => objectCategory(obj.type)));
   const hasHumans = scenario.test.actors.some((track) => actorKind(track.type) === "human");
   const hasVehicles = scenario.test.actors.some((track) => actorKind(track.type) === "vehicle");
   const hasWalls = scenario.world.walls.length > 0;
   const hasRacks = scenario.world.racks.length > 0;
   const hasTraction = scenario.world.traction.length > 0;
+  const hasStorageObjects = objectCategories.has("storage");
+  const hasStructureObjects = objectCategories.has("structure");
+  const hasSafetyObjects = objectCategories.has("safety");
+  const hasOtherObjects = objectCategories.has("other");
 
   return (
     <div>
-      <p className="mb-3 text-xs uppercase tracking-wide text-slate-400">Top-down replay (robot, people, and vehicles)</p>
+      <p className="mb-3 text-xs uppercase tracking-wide text-slate-400">Top-down replay (robot, people, vehicles, and obstacles)</p>
       <Card className="border-slate-800 bg-slate-900/60 p-3">
         <svg viewBox={`-1 -1 ${mapW + 2} ${mapH + 2}`} className="aspect-square w-full rounded bg-slate-950">
           <defs>
@@ -851,6 +933,44 @@ function MapPlaybackPanel({
               opacity={0.95}
             />
           ))}
+          {worldObjects.map((obj, idx) => {
+            const style = objectCategoryStyle(objectCategory(obj.type));
+            const center = obj.center;
+            const halfExtents = obj.half_extents;
+            const yaw = obj.yaw ?? 0;
+            if (center && halfExtents) {
+              const points = orientedRectPoints(center, halfExtents, yaw, toSvgY);
+              if (!points) return null;
+              return (
+                <polygon
+                  key={`world-object-${idx}`}
+                  points={points}
+                  fill={style.fill}
+                  stroke={style.stroke}
+                  strokeWidth={0.03}
+                  opacity={style.opacity}
+                >
+                  <title>{obj.type}</title>
+                </polygon>
+              );
+            }
+            const [x0, y0, x1, y1] = obj.aabb;
+            return (
+              <rect
+                key={`world-object-${idx}`}
+                x={x0}
+                y={toSvgY(y1)}
+                width={x1 - x0}
+                height={y1 - y0}
+                fill={style.fill}
+                stroke={style.stroke}
+                strokeWidth={0.03}
+                opacity={style.opacity}
+              >
+                <title>{obj.type}</title>
+              </rect>
+            );
+          })}
 
           {robotPathPoints && (
             <polyline
@@ -964,6 +1084,10 @@ function MapPlaybackPanel({
         {hasVehicles && <LegendItem glyph="vehicle_track" label="Vehicle path" />}
         {hasWalls && <LegendItem glyph="wall" label="Walls" />}
         {hasRacks && <LegendItem glyph="rack" label="Racks" />}
+        {hasStorageObjects && <LegendItem glyph="object_storage" label="Storage obstacles" />}
+        {hasStructureObjects && <LegendItem glyph="object_structure" label="Structural obstacles" />}
+        {hasSafetyObjects && <LegendItem glyph="object_safety" label="Safety markers" />}
+        {hasOtherObjects && <LegendItem glyph="object_other" label="Other static obstacles" />}
         {hasTraction && <LegendItem glyph="wet_patch" label="Wet or low-traction floor" />}
       </div>
     </div>
@@ -1116,6 +1240,10 @@ type LegendGlyph =
   | "robot_planned_path"
   | "human_track"
   | "vehicle_track"
+  | "object_storage"
+  | "object_structure"
+  | "object_safety"
+  | "object_other"
   | "wet_patch"
   | "wall"
   | "rack";
@@ -1160,6 +1288,34 @@ function LegendItem({ glyph, label }: { glyph: LegendGlyph; label: string }) {
           <circle cx="9" cy="8" r="1" fill="#1d4ed8" opacity="0.65" />
           <circle cx="14" cy="8" r="1" fill="#1d4ed8" opacity="0.65" />
           <circle cx="19" cy="8" r="1" fill="#1d4ed8" opacity="0.65" />
+        </svg>
+      );
+    }
+    if (glyph === "object_storage") {
+      return (
+        <svg viewBox="0 0 28 16" className="h-4 w-7 shrink-0">
+          <rect x="10" y="4" width="8" height="8" fill="#c2410c" stroke="#9a3412" strokeWidth="1" opacity="0.85" />
+        </svg>
+      );
+    }
+    if (glyph === "object_structure") {
+      return (
+        <svg viewBox="0 0 28 16" className="h-4 w-7 shrink-0">
+          <rect x="3" y="4" width="22" height="8" rx="1" fill="#64748b" stroke="#475569" strokeWidth="1" opacity="0.85" />
+        </svg>
+      );
+    }
+    if (glyph === "object_safety") {
+      return (
+        <svg viewBox="0 0 28 16" className="h-4 w-7 shrink-0">
+          <circle cx="14" cy="8" r="4.1" fill="#0891b2" stroke="#0e7490" strokeWidth="1" opacity="0.9" />
+        </svg>
+      );
+    }
+    if (glyph === "object_other") {
+      return (
+        <svg viewBox="0 0 28 16" className="h-4 w-7 shrink-0">
+          <rect x="4.5" y="4.5" width="19" height="7" rx="1" fill="#4b5563" stroke="#334155" strokeWidth="1" opacity="0.82" />
         </svg>
       );
     }

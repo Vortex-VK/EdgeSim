@@ -1,0 +1,43 @@
+{
+  "runs": 1000,
+  "traction_pct": {
+    "wet_encountered": 100.0,
+    "dry_only": 0.0
+  },
+  "human_phase_pct": {
+    "none": 0.0,
+    "running": 24.8,
+    "fallen": 75.2
+  },
+  "clearance_bands_pct": {
+    "<0.20": 0.0,
+    "0.20\u20130.50": 60.9,
+    ">=0.50": 39.1
+  },
+  "outcomes_pct": {
+    "success": 43.8,
+    "collision_human": 56.2,
+    "other_failure": 0.0
+  },
+  "counts": {
+    "traction": {
+      "wet_encountered": 1000,
+      "dry_only": 0
+    },
+    "human_phase": {
+      "none": 0,
+      "running": 248,
+      "fallen": 752
+    },
+    "clearance_bands": {
+      "<0.20": 0,
+      "0.20\u20130.50": 609,
+      ">=0.50": 391
+    },
+    "outcomes": {
+      "success": 438,
+      "collision_human": 562,
+      "other_failure": 0
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "prompt": "main aisle from 2,10 to 16,10, forklift moving from 3,13 to 14,13, obstacle at 16,13, cart block at 13.5,8.5, rack from 1,6 to 15,6, rack from 18.5,4.5 to 18.5,17.5, rack from 1,16 to 15,16, wall from 1,6 to 1,16, falling object at 16,9, human crossing from 16,0.5 to 16,8.5",
+  "runs": [
+    {
+      "duration_s": 8.1,
+      "avg_speed_mps": 1.6485936794535514,
+      "min_ttc": 1.2479870978054914,
+      "events": {
+        "collision_human": 0,
+        "collision_static": 0,
+        "slip": 0,
+        "near_miss": 12,
+        "occluded_hazard": 48
+      },
+      "flags": {
+        "near_miss": true,
+        "occluded_hazard": true
+      },
+      "run_id": "run_0000"
+    }
+  ],
+  "event_counts": {
+    "collision_human": 0,
+    "collision_static": 0,
+    "slip": 0,
+    "near_miss": 12,
+    "occluded_hazard": 48,
+    "collisions": 0
+  },
+  "stats": {
+    "duration_avg_s": 8.1,
+    "avg_speed_mean_mps": 1.6485936794535514,
+    "min_ttc_min_s": 1.2479870978054914
+  },
+  "tags": {
+    "visibility": false,
+    "traction": false,
+    "localization": false,
+    "human_behavior": false,
+    "occlusion": false,
+    "sensor_fault": false,
+    "multi_actor": true
+  },
+  "randomization": {
+    "traction_mu": [
+      0.85,
+      0.88
+    ],
+    "lidar_noise_sigma": 0.02,
+    "lidar_dropout_pct": 0.01,
+    "clutter_level": null,
+    "behavior_presets": []
+  }
+}

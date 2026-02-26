@@ -46,6 +46,18 @@ TITLE_OVERRIDES = {
         "title": "Dual-Forklift Cross Traffic",
         "summary": "Two opposing forklifts plus a crossing human create persistent conflict inside the shared aisle.",
     },
+    "main_aisle_from_210_to_1810_rack_from_05": {
+        "title": "Pinned Wall Choke With Wet Crossing",
+        "summary": "Long wall and rack pinch point with a wet-floor patch and a vertical human crossing near the choke.",
+    },
+    "main_aisle_from_210_to_1610_forklift_mov": {
+        "title": "Forklift Lane With Cart Block and Drop Zone",
+        "summary": "Moving forklift lane with cart and pallet clutter plus a falling-object zone near the goal corridor.",
+    },
+    "main_aisle_from_210_to_16510_human_cross": {
+        "title": "Central Human Crossing at Rack Crossroad",
+        "summary": "Mid-aisle pedestrian crossing at a rack-lined crossroad with a wet patch at the centerline.",
+    },
 }
 
 TEST_ARTIFACTS = [
@@ -71,6 +83,7 @@ BATCH_ARTIFACTS = [
 ]
 
 Rect = tuple[float, float, float, float]
+RACK_LIKE_TYPES = {"rack", "high_bay", "it_rack"}
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -142,6 +155,79 @@ def normalize_rect(rect: Iterable[Any]) -> list[float] | None:
     if y1 < y0:
         y0, y1 = y1, y0
     return [round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3)]
+
+
+def normalize_xy_pair(vals: Any) -> tuple[float, float] | None:
+    if not isinstance(vals, (list, tuple)) or len(vals) < 2:
+        return None
+    x = as_float(vals[0], float("nan"))
+    y = as_float(vals[1], float("nan"))
+    if not (math.isfinite(x) and math.isfinite(y)):
+        return None
+    return (x, y)
+
+
+def oriented_aabb_from_pose(center: tuple[float, float], half_extents: tuple[float, float], yaw: float) -> list[float] | None:
+    cx, cy = center
+    hx = abs(as_float(half_extents[0], float("nan")))
+    hy = abs(as_float(half_extents[1], float("nan")))
+    if not (math.isfinite(cx) and math.isfinite(cy) and math.isfinite(hx) and math.isfinite(hy)):
+        return None
+    if hx <= 0 or hy <= 0:
+        return None
+    yaw_val = yaw if math.isfinite(yaw) else 0.0
+    c = abs(math.cos(yaw_val))
+    s = abs(math.sin(yaw_val))
+    ax = hx * c + hy * s
+    ay = hx * s + hy * c
+    return normalize_rect([cx - ax, cy - ay, cx + ax, cy + ay])
+
+
+def normalize_static_objects(world: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for obj in world.get("static_obstacles", []) or []:
+        if not isinstance(obj, dict):
+            continue
+        kind = str(obj.get("type") or "object").strip().lower() or "object"
+        rect_aabb = normalize_rect(obj.get("aabb", []))
+        center_xy = normalize_xy_pair(obj.get("center"))
+        half_xy = normalize_xy_pair(obj.get("half_extents"))
+        yaw = as_float(obj.get("yaw"), 0.0)
+        if not math.isfinite(yaw):
+            yaw = 0.0
+
+        pose_aabb = oriented_aabb_from_pose(center_xy, half_xy, yaw) if center_xy and half_xy else None
+        if kind == "wall" and pose_aabb is not None:
+            aabb = pose_aabb
+        else:
+            aabb = rect_aabb or pose_aabb
+        if aabb is None:
+            continue
+
+        entry: dict[str, Any] = {"type": kind, "aabb": aabb}
+        if center_xy and half_xy:
+            entry["center"] = [round(center_xy[0], 3), round(center_xy[1], 3)]
+            entry["half_extents"] = [round(abs(half_xy[0]), 3), round(abs(half_xy[1]), 3)]
+            entry["yaw"] = round(yaw, 3)
+
+        if kind == "wall" and center_xy and half_xy:
+            key = (
+                "wall_pose",
+                round(center_xy[0], 3),
+                round(center_xy[1], 3),
+                round(abs(half_xy[0]), 3),
+                round(abs(half_xy[1]), 3),
+                round(yaw, 3),
+            )
+        else:
+            key = ("aabb", kind, aabb[0], aabb[1], aabb[2], aabb[3])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(entry)
+
+    return out
 
 
 def parse_timestamp(ts_raw: str) -> str:
@@ -762,19 +848,29 @@ def build_scenario(pair: dict[str, Any], artifacts_root: Path) -> dict[str, Any]
         else {}
     )
     static_summary = layout_summary.get("static_obstacles", {}) if isinstance(layout_summary, dict) else {}
+    world_static_objects = normalize_static_objects(test_world)
 
     scenario_aisles = sanitize_zone_list(layout.get("aisles", []), "rect")
     world_aisles = sanitize_zone_list(test_world.get("aisles", []), "zone")
     aisles = scenario_aisles or world_aisles
 
     scenario_walls = sanitize_zone_list(layout.get("walls", []), "aabb")
-    world_walls = static_rects_by_type(test_world, "wall")
-    walls = scenario_walls or world_walls
+    world_walls = [obj["aabb"] for obj in world_static_objects if obj.get("type") == "wall"]
+    walls = world_walls or scenario_walls
 
     scenario_racks = sanitize_zone_list(geometry.get("racking", []), "aabb")
-    world_rack_rects_raw = static_rects_by_type(test_world, "rack")
+    world_rack_rects_raw = [
+        obj["aabb"]
+        for obj in world_static_objects
+        if str(obj.get("type", "")).lower() in RACK_LIKE_TYPES
+    ]
     world_racks = merge_rect_clusters([tuple(rect) for rect in world_rack_rects_raw], gap=0.35)
     racks = scenario_racks or world_racks
+    world_objects = [
+        obj
+        for obj in world_static_objects
+        if obj.get("type") != "wall" and str(obj.get("type", "")).lower() not in RACK_LIKE_TYPES
+    ]
 
     scenario_traction = sanitize_zone_list(hazards.get("traction", []), "zone")
     world_traction = sanitize_zone_list(world_hazards_data.get("traction", []), "zone")
@@ -841,6 +937,7 @@ def build_scenario(pair: dict[str, Any], artifacts_root: Path) -> dict[str, Any]
             "aisles": aisles,
             "walls": walls,
             "racks": racks,
+            "objects": world_objects,
             "traction": traction,
             "humans": humans,
             "vehicles": vehicles,
