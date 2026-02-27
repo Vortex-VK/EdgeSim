@@ -1,6 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowRight,
   Check,
   ChevronDown,
   CircleAlert,
@@ -305,7 +304,7 @@ function App() {
           <div className="absolute inset-0 bg-gradient-to-b from-slate-900/40 via-slate-950/90 to-slate-950" />
         </div>
 
-        <div className="relative mx-auto max-w-7xl px-6 pb-20 pt-10">
+        <div className="relative mx-auto max-w-7xl px-6 pb-16 pt-10">
           <div className="max-w-3xl">
             <h1 className="mb-4 text-4xl leading-tight sm:text-6xl">
               Evaluate warehouse robot safety
@@ -317,18 +316,9 @@ function App() {
               backed by downloadable logs and reports.
             </p>
 
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Button className="bg-cyan-600 text-white hover:bg-cyan-500" onClick={() => scrollTo("explorer")}>
-                Open Scenario Explorer
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Button>
-              <Button variant="outline" className="border-slate-600 bg-slate-900/30 text-slate-100" onClick={() => scrollTo("workflow")}>
-                How EdgeSim works
-              </Button>
-            </div>
           </div>
 
-          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mt-16 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <StatCard label="Scenarios analyzed" value={String(demoData.global.prompt_count)} icon={<FileText className="h-5 w-5" />} />
             <StatCard label="Total recorded runs" value={String(demoData.global.total_runs)} icon={<Database className="h-5 w-5" />} />
             <StatCard
@@ -549,7 +539,7 @@ function App() {
       <footer className="border-t border-slate-800 bg-slate-950/80">
         <div className="mx-auto max-w-7xl px-6 pb-10 pt-6">
           <div className="mt-2 space-y-1 text-sm text-slate-500">
-            <p>Made by Vlad Kalinin</p>
+            <p>Built by Vlad Kalinin</p>
             <p>
               GitHub Repository:{" "}
               <a
@@ -945,7 +935,7 @@ function MobileDemo({
       <footer className="border-t border-slate-800 bg-slate-950/80">
         <div className="px-4 pb-8 pt-6">
           <div className="space-y-1 text-sm text-slate-500">
-            <p>Made by Vlad Kalinin</p>
+            <p>Built by Vlad Kalinin</p>
             <p>
               GitHub Repository:{" "}
               <a href="https://github.com/Vortex-VK/EdgeSim" target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
