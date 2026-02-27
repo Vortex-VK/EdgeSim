@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowRight,
+  Check,
+  ChevronDown,
   CircleAlert,
   Database,
   Download,
@@ -14,7 +16,7 @@ import {
 
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
-import heroImage from "../assets/a9237e4d5d4f6425eeda2fc91d3834f1a381c233.png";
+import heroImage from "../assets/hero-background.png";
 import demoDataRaw from "./data/demoData.json";
 
 type DemoPayload = {
@@ -197,6 +199,10 @@ const RUN_DOT_BASELINE_RUNS = 1000;
 const RUN_DOT_BASE_RADIUS_PX = 6.6;
 const RUN_DOT_MIN_RADIUS_PX = 1.4;
 const RUN_DOT_GAP_PX = 3;
+const RUN_DOT_MOBILE_BASELINE_RUNS = 300;
+const RUN_DOT_MOBILE_BASE_RADIUS_PX = 4.6;
+const RUN_DOT_MOBILE_MIN_RADIUS_PX = 1.1;
+const RUN_DOT_MOBILE_GAP_PX = 2;
 
 function isCollisionCategory(outcome: string): boolean {
   return outcome === "collision_human" || outcome === "collision_static" || outcome === "collision_dominant";
@@ -238,6 +244,18 @@ function App() {
       className="min-h-screen bg-slate-950 text-slate-100"
       style={{ fontFamily: '"Sora", "Avenir Next", "Segoe UI", sans-serif' }}
     >
+      <MobileDemo
+        activeScenario={activeScenario}
+        activeTab={activeTab}
+        onPickScenario={(scenarioId) => {
+          setActiveScenarioId(scenarioId);
+          setActiveTab("overview");
+        }}
+        onSetTab={setActiveTab}
+        onScrollTo={scrollTo}
+      />
+
+      <div className="hidden md:block">
       <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <button
@@ -245,15 +263,14 @@ function App() {
             onClick={() => scrollTo("hero")}
             aria-label="Jump to top of page"
           >
-            <div className="text-xl tracking-tight">EdgeSim: Warehouse Safety Simulation Demo</div>
-            <div className="text-xs text-slate-400">Precomputed results for quick review, with evidence files for every metric.</div>
+            <div className="text-xl tracking-tight">EdgeSim</div>
           </button>
           <div className="hidden gap-3 sm:flex">
-            <Button variant="outline" className="border-slate-700 bg-transparent text-slate-100" onClick={() => scrollTo("workflow")}>
-              Workflow
-            </Button>
             <Button variant="outline" className="border-slate-700 bg-transparent text-slate-100" onClick={() => scrollTo("explorer")}>
               Scenario Explorer
+            </Button>
+            <Button variant="outline" className="border-slate-700 bg-transparent text-slate-100" onClick={() => scrollTo("workflow")}>
+              Workflow
             </Button>
             <Button variant="outline" className="border-slate-700 bg-transparent text-slate-100" onClick={() => scrollTo("comparison")}>
               Compare Scenarios
@@ -275,7 +292,7 @@ function App() {
               <span className="text-cyan-300"> before deployment</span>
             </h1>
             <p className="max-w-2xl text-lg text-slate-300">
-              EdgeSim lets teams describe a warehouse situation in plain English, then automatically builds and runs a simulation for it. You can
+              EdgeSim lets teams describe a warehouse situation through text and coordinates, then automatically builds and runs a simulation for it. You can
               inspect one example replay, then compare repeated runs to see how often collisions, near-misses, and delays occur. Each metric is
               backed by downloadable logs and reports.
             </p>
@@ -305,48 +322,8 @@ function App() {
         </div>
       </section>
 
-      <section id="workflow" className="mx-auto max-w-7xl px-6 pb-16 pt-10">
-        <div className="mb-8 max-w-3xl">
-          <h2 className="text-3xl sm:text-4xl">How this demo proves EdgeSim works</h2>
-          <p className="mt-3 text-slate-300">
-            This demo shows the full workflow: define a warehouse situation, run one replay, run repeated batches, and inspect the evidence files.
-            The goal is practical and clear: verify safety and reliability before live deployment.
-          </p>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <WorkflowCard
-            title="1. Define the Situation"
-            detail="Describe the warehouse situation in plain language. EdgeSim converts it into map layout, moving actors, floor conditions, and sensor settings."
-            code="edgesim simulate <scenario_text>"
-          />
-          <WorkflowCard
-            title="2. Run One Replay"
-            detail="Run once to inspect behavior over time and confirm the setup behaves as intended."
-            code="edgesim run-one <scenario_text>"
-          />
-          <WorkflowCard
-            title="3. Reliability Batch"
-            detail="Run controlled repeats to measure success rate, collision frequency, near-misses, and completion-time spread."
-            code="edgesim run-batch <scenario_text> --runs <n>"
-          />
-          <WorkflowCard
-            title="4. Evidence Review"
-            detail="Use charts, map replay, and downloadable files to verify every reported result, including LiDAR logs for future robot training."
-            code="summary.json + coverage.json + report.html"
-          />
-        </div>
-        <div className="mt-8 rounded-xl border border-slate-800 bg-slate-900/45 p-5">
-          <h3 className="text-xl text-white">Why this project matters</h3>
-          <p className="mt-2 text-slate-300">
-            In robotics, the hardest failures are the ones you can't reproduce. EdgeSim turns "what if?" situations into the same test you can
-            run again and again, so that teams can verify fixes, catch regressions early, generate lidar data for training AMRs, and build
-            confidence that improvements hold up across messy real-world conditions.
-          </p>
-        </div>
-      </section>
-
       <section id="explorer" className="border-y border-slate-800 bg-slate-900/30">
-        <div className="mx-auto max-w-7xl px-6 py-16">
+        <div className="mx-auto max-w-7xl px-6 pb-16 pt-10">
           <div className="mb-8 max-w-3xl">
             <h2 className="text-3xl sm:text-4xl">Scenario Explorer</h2>
             <p className="mt-3 text-slate-300">
@@ -355,8 +332,8 @@ function App() {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-[330px_1fr]">
-            <Card className="border-cyan-500/25 bg-cyan-950/10 p-3 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]">
-              <p className="mb-3 px-1 text-xs uppercase tracking-wide text-cyan-200/85">Scenarios</p>
+            <Card className="self-start border-cyan-500/25 bg-cyan-950/10 p-3 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]">
+              <p className="mb-1 px-1 text-xs uppercase tracking-wide text-cyan-200/85">Pick a scenario</p>
               <div className="space-y-3">
                 {demoData.scenarios.map((scenario) => {
                   const isActive = scenario.id === activeScenario.id;
@@ -374,14 +351,12 @@ function App() {
                           : "border-slate-800 bg-slate-900/50 hover:border-slate-700 hover:bg-slate-900"
                       }`}
                     >
-                      <div className="mb-2 flex items-center justify-between gap-3">
-                        <p className="text-sm uppercase tracking-wide text-slate-400">{scenario.timestamps.test}</p>
+                      <div className="mb-2 flex items-center justify-start gap-3">
                         <span className="rounded-full bg-orange-500/20 px-2 py-0.5 text-xs text-orange-200">
                           {collisionRate.toFixed(1)}% collision risk
                         </span>
                       </div>
-                      <h3 className="mb-1 text-lg leading-tight text-white">{scenario.title}</h3>
-                      <p className="text-sm text-slate-300">{scenario.summary}</p>
+                      <h3 className="text-lg leading-tight text-white">{scenario.title}</h3>
                     </button>
                   );
                 })}
@@ -393,9 +368,6 @@ function App() {
                 <div className="mb-4 flex flex-wrap items-center gap-4">
                   <div>
                     <h3 className="text-2xl text-white">{activeScenario.title}</h3>
-                    <p className="mt-1 text-sm text-slate-400">
-                      Example replay: {activeScenario.timestamps.test} | Repeated-run batch: {activeScenario.timestamps.batch}
-                    </p>
                   </div>
                 </div>
 
@@ -468,51 +440,95 @@ function App() {
         </div>
       </section>
 
-      <section id="comparison" className="mx-auto max-w-7xl px-6 py-16">
-        <div className="mb-6 max-w-3xl">
-          <h2 className="text-3xl sm:text-4xl">Scenario Comparison</h2>
+      <section id="workflow" className="mx-auto max-w-7xl px-6 pb-16 pt-10">
+        <div className="mb-8 max-w-3xl">
+          <h2 className="text-3xl sm:text-4xl">How EdgeSim works</h2>
           <p className="mt-3 text-slate-300">
-            See how changes in layout and traffic affect safety outcomes and completion time.
+            This demo shows the full workflow: define a warehouse situation, run one replay, run repeated batches, and inspect the evidence files.
+            The goal is practical and clear: verify safety and reliability before live deployment.
           </p>
         </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <WorkflowCard
+            compact
+            title="1. Define the Situation"
+            detail="Describe the warehouse situation through text and coordinates. EdgeSim converts it into map layout, moving actors, floor conditions, and sensor settings."
+            code="edgesim simulate <scenario_text>"
+          />
+          <WorkflowCard
+            compact
+            title="2. Run One Replay"
+            detail="Run once to inspect behavior over time and confirm the setup behaves as intended."
+            code="edgesim run-one <scenario_text>"
+          />
+          <WorkflowCard
+            compact
+            title="3. Reliability Batch"
+            detail="Run controlled repeats to measure success rate, collision frequency, near-misses, and completion-time spread."
+            code="edgesim run-batch <scenario_text> --runs <n>"
+          />
+          <WorkflowCard
+            compact
+            title="4. Evidence Review"
+            detail="Use map replay, LiDAR logs, coverage and performance summaries to verify results and use them for future robot training/testing."
+            code="summary.json + coverage.json + report.html"
+          />
+        </div>
+        <div className="mt-8 rounded-xl border border-slate-800 bg-slate-900/45 p-5">
+          <h3 className="text-xl text-white">Why this project matters</h3>
+          <p className="mt-2 text-slate-300">
+            In robotics, the hardest failures are the ones you can't reproduce. EdgeSim turns "what if?" situations into the reproducible test
+            runs you can generate at insanely fast speeds, so that teams can verify fixes, catch regressions early, generate lidar and pose data
+            for training warehouse AMRs, and build confidence that improvements hold up across messy real-world conditions.
+          </p>
+        </div>
+      </section>
 
-        <Card className="overflow-hidden border-slate-800 bg-slate-900/50">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-900/80 text-slate-300">
-                <tr>
-                  <th className="px-4 py-3">Scenario</th>
-                  <th className="px-4 py-3">Test Outcome</th>
-                  <th className="px-4 py-3">Collision rate</th>
-                  <th className="px-4 py-3">Contact with person</th>
-                  <th className="px-4 py-3">Wet floor involved</th>
-                  <th className="px-4 py-3">Avg completion time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {demoData.scenarios.map((scenario) => (
-                  <tr key={scenario.id} className="border-t border-slate-800 text-slate-200">
-                    <td className="px-4 py-3">
-                      <p className="text-white">{scenario.title}</p>
-                      <p className="text-xs text-slate-400">{scenario.summary}</p>
-                    </td>
-                    <td className="px-4 py-3">{outcomeLabel(scenario.test.outcome)}</td>
-                    <td className="px-4 py-3">{Math.max(0, 100 - scenario.batch.coverage_pct.success).toFixed(1)}%</td>
-                    <td className="px-4 py-3">{scenario.batch.coverage_pct.collision_human.toFixed(1)}%</td>
-                    <td className="px-4 py-3">{scenario.batch.coverage_pct.wet.toFixed(1)}%</td>
-                    <td className="px-4 py-3">{scenario.batch.avg_time_s.toFixed(2)}s</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <section id="comparison" className="border-y border-slate-800/80 bg-slate-900/20">
+        <div className="mx-auto max-w-7xl px-6 pb-16 pt-10">
+          <div className="mb-6 max-w-3xl">
+            <h2 className="text-3xl sm:text-4xl">Scenario Comparison</h2>
+            <p className="mt-3 text-slate-300">
+              See how changes in layout and traffic affect safety outcomes and completion time.
+            </p>
           </div>
-        </Card>
 
+          <Card className="overflow-hidden border-slate-800 bg-slate-900/50">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-900/80 text-slate-300">
+                  <tr>
+                    <th className="px-4 py-3">Scenario</th>
+                    <th className="px-4 py-3">Collision rate</th>
+                    <th className="px-4 py-3">Contact with person</th>
+                    <th className="px-4 py-3">Avg completion time</th>
+                    <th className="px-4 py-3">Simulation speed</th>
+                    <th className="px-4 py-3">Number of runs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {demoData.scenarios.map((scenario) => (
+                    <tr key={scenario.id} className="border-t border-slate-800 text-slate-200">
+                      <td className="px-4 py-3">
+                        <p className="text-white">{scenario.title}</p>
+                      </td>
+                      <td className="px-4 py-3">{Math.max(0, 100 - scenario.batch.coverage_pct.success).toFixed(1)}%</td>
+                      <td className="px-4 py-3">{scenario.batch.coverage_pct.collision_human.toFixed(1)}%</td>
+                      <td className="px-4 py-3">{scenario.batch.avg_time_s.toFixed(2)}s</td>
+                      <td className="px-4 py-3">{scenario.batch.perf.sims_per_min.toFixed(2)} sims/min</td>
+                      <td className="px-4 py-3">{scenario.batch.runs}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
       </section>
 
       <footer className="border-t border-slate-800 bg-slate-950/80">
-        <div className="mx-auto max-w-7xl px-6 py-10">
-          <div className="mt-6 space-y-1 text-sm text-slate-500">
+        <div className="mx-auto max-w-7xl px-6 pb-10 pt-6">
+          <div className="mt-2 space-y-1 text-sm text-slate-500">
             <p>Made by Vlad Kalinin</p>
             <p>Contact details:</p>
             <p>
@@ -550,26 +566,29 @@ function App() {
           <p className="mt-6 text-sm text-slate-500">Data snapshot generated at {demoData.generated_at_utc} UTC from local run evidence files.</p>
         </div>
       </footer>
+      </div>
     </div>
   );
 }
 
-function StatCard({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
+function StatCard({ label, value, icon, compact = false }: { label: string; value: string; icon: ReactNode; compact?: boolean }) {
   return (
-    <Card className="border-slate-800 bg-slate-900/70 p-3">
-      <div className="mb-1 flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-300">{icon}</div>
-      <p className="text-2xl text-white">{value}</p>
-      <p className="text-sm text-slate-400">{label}</p>
+    <Card className={`border-slate-800 bg-slate-900/70 ${compact ? "p-2.5" : "p-3"}`}>
+      <div className={`flex items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-300 ${compact ? "mb-0.5 h-7 w-7" : "mb-1 h-8 w-8"}`}>
+        {icon}
+      </div>
+      <p className={`text-white ${compact ? "text-xl leading-none" : "text-2xl"}`}>{value}</p>
+      <p className={compact ? "text-xs text-slate-400" : "text-sm text-slate-400"}>{label}</p>
     </Card>
   );
 }
 
-function WorkflowCard({ title, detail, code }: { title: string; detail: string; code: string }) {
+function WorkflowCard({ title, detail, code, compact = false }: { title: string; detail: string; code: string; compact?: boolean }) {
   return (
-    <Card className="border-slate-800 bg-slate-900/45 p-5">
+    <Card className={`border-slate-800 bg-slate-900/45 ${compact ? "p-2.5" : "p-5"}`}>
       <h3 className="text-lg text-white">{title}</h3>
-      <p className="mt-2 text-sm text-slate-300">{detail}</p>
-      <p className="mt-4 rounded bg-slate-950/80 px-3 py-2 font-mono text-xs text-cyan-200">{code}</p>
+      <p className={`${compact ? "mt-0.5 text-sm" : "mt-2 text-sm"} text-slate-300`}>{detail}</p>
+      <p className={`${compact ? "mt-1 px-2.5 py-1.5" : "mt-4 px-3 py-2"} rounded bg-slate-950/80 font-mono text-xs text-cyan-200`}>{code}</p>
     </Card>
   );
 }
@@ -580,17 +599,19 @@ function OutcomeCard({
   timeValue,
   detailA,
   detailB,
+  compact = false,
 }: {
   title: string;
   outcome: string;
   timeValue: string;
   detailA: string;
   detailB: string;
+  compact?: boolean;
 }) {
   const isCollision = isCollisionCategory(outcome);
   return (
-    <Card className={`border p-4 ${isCollision ? "border-orange-500/40 bg-orange-900/10" : "border-blue-500/40 bg-blue-900/10"}`}>
-      <div className="mb-3 flex items-center justify-between">
+    <Card className={`border ${compact ? "p-2.5" : "p-4"} ${isCollision ? "border-orange-500/40 bg-orange-900/10" : "border-blue-500/40 bg-blue-900/10"}`}>
+      <div className={`${compact ? "mb-1" : "mb-3"} flex items-center justify-between`}>
         <p className="text-sm uppercase tracking-wide text-slate-300">{title}</p>
         <span
           className={`rounded-full px-2 py-0.5 text-xs ${
@@ -601,8 +622,8 @@ function OutcomeCard({
         </span>
       </div>
       <p className="text-lg text-white">{outcomeLabel(outcome)}</p>
-      <p className="text-sm text-slate-300">{timeValue}</p>
-      <p className="mt-2 text-xs text-slate-400">{detailA}</p>
+      <p className={`${compact ? "text-xs leading-tight" : "text-sm"} text-slate-300`}>{timeValue}</p>
+      <p className={`${compact ? "mt-0.5 leading-tight" : "mt-2"} text-xs text-slate-400`}>{detailA}</p>
       <p className="text-xs text-slate-400">{detailB}</p>
     </Card>
   );
@@ -623,10 +644,359 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
   );
 }
 
+function MobileDemo({
+  activeScenario,
+  activeTab,
+  onPickScenario,
+  onSetTab,
+  onScrollTo,
+}: {
+  activeScenario: Scenario;
+  activeTab: ExplorerTab;
+  onPickScenario: (scenarioId: string) => void;
+  onSetTab: (tab: ExplorerTab) => void;
+  onScrollTo: (id: string) => void;
+}) {
+  const mobileRepeatedRunCount = Math.max(1, activeScenario.batch.success_curve.length);
+  const mobileRepeatedRadiusScale =
+    mobileRepeatedRunCount > RUN_DOT_MOBILE_BASELINE_RUNS ? Math.sqrt(RUN_DOT_MOBILE_BASELINE_RUNS / mobileRepeatedRunCount) : 1;
+  const mobileRepeatedDotRadiusPx = Math.max(RUN_DOT_MOBILE_MIN_RADIUS_PX, RUN_DOT_MOBILE_BASE_RADIUS_PX * mobileRepeatedRadiusScale);
+  const mobileRepeatedDotDiameterPx = mobileRepeatedDotRadiusPx * 2;
+  const [isScenarioMenuOpen, setIsScenarioMenuOpen] = useState(false);
+  const scenarioMenuRef = useRef<HTMLDivElement | null>(null);
+  const mobileHeaderRef = useRef<HTMLElement | null>(null);
+  const [mobileHeaderHeight, setMobileHeaderHeight] = useState(0);
+
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      const measuredHeight = mobileHeaderRef.current?.getBoundingClientRect().height ?? 0;
+      setMobileHeaderHeight(Math.ceil(measuredHeight));
+    };
+
+    updateHeaderHeight();
+    window.addEventListener("resize", updateHeaderHeight);
+    return () => window.removeEventListener("resize", updateHeaderHeight);
+  }, []);
+
+  useEffect(() => {
+    if (!isScenarioMenuOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!scenarioMenuRef.current?.contains(event.target as Node)) {
+        setIsScenarioMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isScenarioMenuOpen]);
+
+  const scrollToMobileSection = (id: string) => {
+    const target = document.getElementById(id);
+    if (!target) return;
+    const offset = mobileHeaderHeight + 8;
+    const top = target.getBoundingClientRect().top + window.scrollY - offset;
+    window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  };
+
+  return (
+    <div className="md:hidden">
+      <header ref={mobileHeaderRef} data-mobile-header="true" className="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950/90 backdrop-blur">
+        <div className="flex items-center justify-between px-4 py-3">
+          <button className="text-left text-lg tracking-tight" onClick={() => onScrollTo("hero-mobile")} aria-label="Jump to top of page">
+            EdgeSim
+          </button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="border-slate-700 bg-transparent px-3 py-1 text-xs text-slate-100"
+              onClick={() => scrollToMobileSection("explorer-mobile")}
+            >
+              Scenarios
+            </Button>
+            <Button
+              variant="outline"
+              className="border-slate-700 bg-transparent px-3 py-1 text-xs text-slate-100"
+              onClick={() => scrollToMobileSection("workflow-mobile")}
+            >
+              Workflow
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <section
+        id="hero-mobile"
+        className="relative overflow-hidden border-b border-slate-800"
+        style={{ minHeight: mobileHeaderHeight > 0 ? `calc(100svh - ${mobileHeaderHeight}px)` : undefined }}
+      >
+        <div className="absolute inset-0">
+          <img src={heroImage} alt="Warehouse aisle background" className="h-full w-full object-cover opacity-35" />
+          <div className="absolute inset-0 bg-gradient-to-b from-slate-900/40 via-slate-950/90 to-slate-950" />
+        </div>
+        <div className="relative px-4 pb-10 pt-10">
+          <h1 className="text-3xl leading-tight">
+            Evaluate warehouse robot safety
+            <span className="text-cyan-300"> before deployment</span>
+          </h1>
+          <p className="mt-3 text-sm text-slate-300">
+            Build scenarios through text and coordinates, run simulation batches, and review evidence files for safety verification.
+          </p>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <StatCard compact label="Scenarios" value={String(demoData.global.prompt_count)} icon={<FileText className="h-5 w-5" />} />
+            <StatCard compact label="Total runs" value={String(demoData.global.total_runs)} icon={<Database className="h-5 w-5" />} />
+            <StatCard
+              compact
+              label="Collision rate"
+              value={`${Math.max(0, 100 - demoData.global.batch_success_rate_pct).toFixed(2)}%`}
+              icon={<ShieldCheck className="h-5 w-5" />}
+            />
+            <StatCard compact label="Sim speed" value={`${demoData.global.avg_sims_per_min.toFixed(2)} sims/min`} icon={<Gauge className="h-5 w-5" />} />
+          </div>
+        </div>
+      </section>
+
+      <section id="explorer-mobile" className="px-4 pb-10 pt-8">
+        <div className="mb-4">
+          <h2 className="text-2xl">Scenario Explorer</h2>
+          <p className="mt-2 text-sm text-slate-300">Inspect one scenario at a time and switch between overview and generated files.</p>
+        </div>
+
+        <Card className="border-cyan-500/25 bg-cyan-950/10 p-4">
+          <p className="mb-2 text-xs uppercase tracking-wide text-cyan-200/85">Pick a scenario</p>
+          <div ref={scenarioMenuRef} className="relative">
+            <button
+              className="flex w-full items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-left text-sm text-slate-100 transition-colors hover:border-cyan-500/70"
+              onClick={() => setIsScenarioMenuOpen((prev) => !prev)}
+              aria-expanded={isScenarioMenuOpen}
+              aria-haspopup="listbox"
+            >
+              <span className="truncate pr-2">{activeScenario.title}</span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${isScenarioMenuOpen ? "rotate-180" : ""}`} />
+            </button>
+            <div
+              className={`pointer-events-none absolute left-0 right-0 top-[calc(100%+0.45rem)] z-30 origin-top transition-all duration-200 ${
+                isScenarioMenuOpen ? "translate-y-0 opacity-100" : "-translate-y-1 opacity-0"
+              }`}
+            >
+              <Card
+                className={`border-slate-700 bg-slate-950/95 p-1 shadow-2xl backdrop-blur ${
+                  isScenarioMenuOpen ? "pointer-events-auto" : "pointer-events-none"
+                }`}
+              >
+                <div role="listbox" aria-label="Scenario list" className="max-h-60 overflow-y-auto">
+                  {demoData.scenarios.map((scenario) => {
+                    const isSelected = scenario.id === activeScenario.id;
+                    return (
+                      <button
+                        key={scenario.id}
+                        role="option"
+                        aria-selected={isSelected}
+                        className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition ${
+                          isSelected
+                            ? "bg-cyan-500/20 text-cyan-200"
+                            : "text-slate-200 hover:bg-slate-800/80"
+                        }`}
+                        onClick={() => {
+                          onPickScenario(scenario.id);
+                          setIsScenarioMenuOpen(false);
+                        }}
+                      >
+                        <span className="pr-2">{scenario.title}</span>
+                        {isSelected && <Check className="h-4 w-4 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Card>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+            <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Scenario description</p>
+            <p className="font-mono text-sm text-slate-100">{activeScenario.prompt}</p>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <OutcomeCard
+              compact
+              title="Example Replay"
+              outcome={activeScenario.test.outcome}
+              timeValue={`${activeScenario.test.duration_s.toFixed(2)}s`}
+              detailA={`Closest near-miss (sec): ${activeScenario.test.min_ttc_s.toFixed(2)}`}
+              detailB={`${activeScenario.test.events.collisions ?? 0} contact events recorded`}
+            />
+            <OutcomeCard
+              compact
+              title={`${activeScenario.batch.runs} Repeats`}
+              outcome={Math.max(0, 100 - activeScenario.batch.coverage_pct.success) >= 50 ? "collision_dominant" : "low_collision"}
+              timeValue={`${activeScenario.batch.avg_time_s.toFixed(2)}s avg`}
+              detailA={`${Math.max(0, 100 - activeScenario.batch.coverage_pct.success).toFixed(1)}% collision`}
+              detailB={`${activeScenario.batch.successes}/${activeScenario.batch.runs} runs successful`}
+            />
+          </div>
+
+          <div className="mt-4">
+            <p className="mb-2 text-xs uppercase tracking-wide text-slate-400">Repeated-run outcomes</p>
+            <div className="max-h-32 overflow-auto rounded-md border border-slate-800/70 bg-slate-950/40 p-2">
+              <div
+                className="grid"
+                style={{
+                  width: "100%",
+                  gridAutoFlow: "row",
+                  gridTemplateColumns: `repeat(auto-fill, minmax(${mobileRepeatedDotDiameterPx}px, ${mobileRepeatedDotDiameterPx}px))`,
+                  gap: `${RUN_DOT_MOBILE_GAP_PX}px`,
+                }}
+              >
+                {activeScenario.batch.success_curve.map((point) => (
+                  <span
+                    key={point.idx}
+                    title={`Run ${point.idx}: ${point.success ? "non-collision" : "collision"} (${point.time_s.toFixed(2)}s)`}
+                    className={point.success ? "bg-blue-400/80" : "bg-orange-400/80"}
+                    style={{
+                      width: `${mobileRepeatedDotDiameterPx}px`,
+                      height: `${mobileRepeatedDotDiameterPx}px`,
+                      borderRadius: "9999px",
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <TabButton label="Overview" active={activeTab === "overview"} onClick={() => onSetTab("overview")} />
+          <TabButton label="Generated data" active={activeTab === "artifacts"} onClick={() => onSetTab("artifacts")} />
+        </div>
+
+        <div className="mt-4">{activeTab === "overview" ? <MobileOverviewTab scenario={activeScenario} /> : <ArtifactsTab scenario={activeScenario} />}</div>
+      </section>
+
+      <section id="workflow-mobile" className="border-y border-slate-800/80 bg-slate-900/20 px-4 pb-10 pt-8">
+        <div className="mb-4">
+          <h2 className="text-2xl">How EdgeSim works</h2>
+          <p className="mt-2 text-sm text-slate-300">Define a scenario, run replay and batch tests, then inspect evidence.</p>
+        </div>
+        <div className="space-y-3">
+          <WorkflowCard
+            compact
+            title="1. Define the Situation"
+            detail="Describe the warehouse situation through text and coordinates. EdgeSim converts it into map layout, moving actors, floor conditions, and sensor settings."
+            code="edgesim simulate <scenario_text>"
+          />
+          <WorkflowCard
+            compact
+            title="2. Run One Replay"
+            detail="Run once to inspect behavior over time and confirm the setup behaves as intended."
+            code="edgesim run-one <scenario_text>"
+          />
+          <WorkflowCard
+            compact
+            title="3. Reliability Batch"
+            detail="Run controlled repeats to measure success rate, collision frequency, near-misses, and completion-time spread."
+            code="edgesim run-batch <scenario_text> --runs <n>"
+          />
+          <WorkflowCard
+            compact
+            title="4. Evidence Review"
+            detail="Use map replay, LiDAR logs, coverage and performance summaries to verify results and use them for future robot training/testing."
+            code="summary.json + coverage.json + report.html"
+          />
+        </div>
+      </section>
+
+      <footer className="border-t border-slate-800 bg-slate-950/80">
+        <div className="px-4 pb-8 pt-6">
+          <div className="space-y-1 text-sm text-slate-500">
+            <p>Made by Vlad Kalinin</p>
+            <p>Contact details:</p>
+            <p>
+              <a href="tel:+17043020548" className="underline-offset-2 hover:underline">
+                +1 (704) 302 0548
+              </a>
+            </p>
+            <p>
+              <a href="mailto:kalinin.vlad.2003@gmail.com" className="underline-offset-2 hover:underline">
+                kalinin.vlad.2003@gmail.com
+              </a>
+            </p>
+            <p>
+              <a href="https://www.linkedin.com/in/kalinin-vlad/" target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+                https://www.linkedin.com/in/kalinin-vlad/
+              </a>
+            </p>
+            <p>
+              GitHub Repository:{" "}
+              <a href="https://github.com/Vortex-VK/EdgeSim" target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
+                https://github.com/Vortex-VK/EdgeSim
+              </a>
+            </p>
+          </div>
+          <p className="mt-5 text-sm text-slate-500">Data snapshot generated at {demoData.generated_at_utc} UTC from local run evidence files.</p>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+function MobileOverviewTab({ scenario }: { scenario: Scenario }) {
+  return (
+    <div className="space-y-4">
+      <MapTab scenario={scenario} compact />
+
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Sensor refresh rate" value={`${scenario.config.lidar_hz.toFixed(1)} Hz`} icon={<Gauge className="h-5 w-5" />} />
+        <StatCard label="Simulation time step" value={`${scenario.config.dt.toFixed(2)} s`} icon={<Timer className="h-5 w-5" />} />
+        <StatCard label="People / Vehicles" value={`${scenario.config.humans} / ${scenario.config.vehicles}`} icon={<CircleAlert className="h-5 w-5" />} />
+        <StatCard label="Racks / Barriers" value={`${scenario.config.racks} / ${scenario.config.walls}`} icon={<Map className="h-5 w-5" />} />
+        <div className="col-span-2">
+          <StatCard label="Simulation speed" value={`${scenario.batch.perf.sims_per_min.toFixed(2)} sims/min`} icon={<Database className="h-5 w-5" />} />
+        </div>
+      </div>
+
+      <div className="grid gap-4">
+        <Card className="border-slate-800 bg-slate-900/60 p-4">
+          <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Completion time spread (seconds)</p>
+          <ul className="space-y-1 text-sm text-slate-200">
+            <li>Fastest: {scenario.batch.time_distribution_s.min.toFixed(2)}</li>
+            <li>10th percentile: {scenario.batch.time_distribution_s.p10.toFixed(2)}</li>
+            <li>Median: {scenario.batch.time_distribution_s.p50.toFixed(2)}</li>
+            <li>90th percentile: {scenario.batch.time_distribution_s.p90.toFixed(2)}</li>
+            <li>Slowest: {scenario.batch.time_distribution_s.max.toFixed(2)}</li>
+          </ul>
+        </Card>
+
+        <Card className="border-slate-800 bg-slate-900/60 p-4">
+          <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Event counts across repeated runs</p>
+          <ul className="space-y-1 text-sm text-slate-200">
+            <li>Contacts with people: {scenario.batch.event_counts.collision_human ?? 0}</li>
+            <li>Contacts with objects: {scenario.batch.event_counts.collision_static ?? 0}</li>
+            <li>Slip events: {scenario.batch.event_counts.slip ?? 0}</li>
+            <li>Near-miss events: {scenario.batch.event_counts.near_miss ?? 0}</li>
+            <li>Potentially hidden hazards: {scenario.batch.event_counts.occluded_hazard ?? 0}</li>
+          </ul>
+        </Card>
+      </div>
+
+      {!scenario.validation.ok && (
+        <div className="rounded-lg border border-rose-600/40 bg-rose-900/20 p-3 text-sm text-rose-200">
+          <p className="font-medium">Data validation issues detected</p>
+          {scenario.validation.errors.map((error) => (
+            <p key={error}>{error}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OverviewTab({ scenario }: { scenario: Scenario }) {
   return (
     <Card className="border-slate-800 bg-slate-950/70 p-6">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <MapTab scenario={scenario} />
+
+      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard label="Sensor refresh rate" value={`${scenario.config.lidar_hz.toFixed(1)} Hz`} icon={<Gauge className="h-4 w-4" />} />
         <MetricCard label="Simulation time step" value={`${scenario.config.dt.toFixed(2)} s`} icon={<Timer className="h-4 w-4" />} />
         <MetricCard label="People / Vehicles" value={`${scenario.config.humans} / ${scenario.config.vehicles}`} icon={<CircleAlert className="h-4 w-4" />} />
@@ -667,9 +1037,6 @@ function OverviewTab({ scenario }: { scenario: Scenario }) {
         </div>
       )}
 
-      <div className="mt-6">
-        <MapTab scenario={scenario} />
-      </div>
     </Card>
   );
 }
@@ -754,7 +1121,7 @@ function orientedRectPoints(
   return corners.map(([x, y]) => `${x},${toSvgY(y)}`).join(" ");
 }
 
-function MapTab({ scenario }: { scenario: Scenario }) {
+function MapTab({ scenario, compact = false }: { scenario: Scenario; compact?: boolean }) {
   const lidarFrames = scenario.test.lidar.playback?.frames ?? [];
   const hasFrames = lidarFrames.length > 0;
   const [frameIdx, setFrameIdx] = useState(0);
@@ -779,47 +1146,35 @@ function MapTab({ scenario }: { scenario: Scenario }) {
   const activeTime = activeFrame ? activeFrame.t : fallbackTime;
 
   return (
-    <Card className="border-slate-800 bg-slate-950/70 p-6">
-      <div className="mb-4 rounded-lg border border-slate-800 bg-slate-900/50 p-3">
-        <p className="mb-2 text-xs uppercase tracking-wide text-slate-400">Replay controls (map + sensor view)</p>
+    <Card className={`border-slate-800 bg-slate-950/70 ${compact ? "p-4" : "p-6"}`}>
+      <div className={`mb-4 rounded-lg border border-slate-800 bg-slate-900/50 ${compact ? "p-2.5" : "p-3"}`}>
+        <p className={`mb-2 uppercase tracking-wide text-slate-400 ${compact ? "text-[10px]" : "text-xs"}`}>Replay controls (map + sensor view)</p>
         {!hasFrames && <p className="text-sm text-slate-400">No sensor replay frames are available for this scenario.</p>}
         {hasFrames && (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              className="border-slate-700 bg-slate-950 text-slate-100"
-              onClick={() => setFrameIdx((prev) => (prev - 1 + lidarFrames.length) % lidarFrames.length)}
-            >
-              Previous
-            </Button>
-            <Button className="bg-blue-600 text-white hover:bg-blue-500" onClick={() => setIsPlaying((prev) => !prev)}>
-              {isPlaying ? "Pause" : "Play"}
-            </Button>
-            <Button
-              variant="outline"
-              className="border-slate-700 bg-slate-950 text-slate-100"
-              onClick={() => setFrameIdx((prev) => (prev + 1) % lidarFrames.length)}
-            >
-              Next
-            </Button>
-            <input
-              type="range"
-              min={0}
-              max={Math.max(0, lidarFrames.length - 1)}
-              value={clampedFrameIdx}
-              onChange={(event) => setFrameIdx(Number(event.target.value))}
-              className="h-2 min-w-[220px] flex-1 accent-blue-500"
-            />
-            <span className="text-sm text-slate-300">
+          <div className={compact ? "space-y-2" : "flex flex-wrap items-center gap-2"}>
+            <div className="flex items-center gap-2">
+              <Button className={`bg-blue-600 text-white hover:bg-blue-500 ${compact ? "h-8 px-3 text-xs" : ""}`} onClick={() => setIsPlaying((prev) => !prev)}>
+                {isPlaying ? "Pause" : "Play"}
+              </Button>
+              <input
+                type="range"
+                min={0}
+                max={Math.max(0, lidarFrames.length - 1)}
+                value={clampedFrameIdx}
+                onChange={(event) => setFrameIdx(Number(event.target.value))}
+                className={`h-2 flex-1 accent-blue-500 ${compact ? "min-w-0" : "min-w-[220px]"}`}
+              />
+            </div>
+            <span className={compact ? "text-xs text-slate-300" : "text-sm text-slate-300"}>
               Frame {clampedFrameIdx + 1}/{lidarFrames.length} at t={activeTime.toFixed(2)}s
             </span>
           </div>
         )}
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <MapPlaybackPanel scenario={scenario} activeFrame={activeFrame} activeTime={activeTime} />
-        <LidarScanPanel scenario={scenario} activeFrame={activeFrame} />
+      <div className={compact ? "grid grid-cols-2 gap-3" : "grid gap-5 lg:grid-cols-2"}>
+        <MapPlaybackPanel scenario={scenario} activeFrame={activeFrame} activeTime={activeTime} compact={compact} />
+        <LidarScanPanel scenario={scenario} activeFrame={activeFrame} compact={compact} />
       </div>
     </Card>
   );
@@ -829,10 +1184,12 @@ function MapPlaybackPanel({
   scenario,
   activeFrame,
   activeTime,
+  compact = false,
 }: {
   scenario: Scenario;
   activeFrame: LidarPlaybackFrame | null;
   activeTime: number;
+  compact?: boolean;
 }) {
   const [mapW, mapH] = scenario.world.map_size_m;
   const toSvgY = (y: number) => mapH - y;
@@ -863,18 +1220,23 @@ function MapPlaybackPanel({
   const hasStructureObjects = objectCategories.has("structure");
   const hasSafetyObjects = objectCategories.has("safety");
   const hasOtherObjects = objectCategories.has("other");
+  const patternInstanceId = useId().replace(/:/g, "");
+  const wetPatternId = `wetDots-${scenario.id}-${patternInstanceId}`;
+  const rackPatternId = `rackTexture-${scenario.id}-${patternInstanceId}`;
 
   return (
     <div>
-      <p className="mb-3 text-xs uppercase tracking-wide text-slate-400">Top-down replay (robot, people, vehicles, and obstacles)</p>
-      <Card className="border-slate-800 bg-slate-900/60 p-3">
+      <p className={`mb-2 uppercase tracking-wide text-slate-400 ${compact ? "text-[10px]" : "text-xs"}`}>
+        {compact ? "Top-Down Replay" : "Top-down replay (robot, people, vehicles, and obstacles)"}
+      </p>
+      <Card className={`border-slate-800 bg-slate-900/60 ${compact ? "p-2" : "p-3"}`}>
         <svg viewBox={`-1 -1 ${mapW + 2} ${mapH + 2}`} className="aspect-square w-full rounded bg-slate-950">
           <defs>
-            <pattern id={`wetDots-${scenario.id}`} width="0.6" height="0.6" patternUnits="userSpaceOnUse">
+            <pattern id={wetPatternId} width="0.6" height="0.6" patternUnits="userSpaceOnUse">
               <circle cx="0.15" cy="0.15" r="0.06" fill="#1d4ed8" opacity="0.45" />
               <circle cx="0.45" cy="0.45" r="0.06" fill="#1d4ed8" opacity="0.45" />
             </pattern>
-            <pattern id={`rackTexture-${scenario.id}`} width="0.9" height="0.9" patternUnits="userSpaceOnUse">
+            <pattern id={rackPatternId} width="0.9" height="0.9" patternUnits="userSpaceOnUse">
               <rect x="0" y="0" width="0.9" height="0.9" fill="#7c3f11" />
               <rect x="0.08" y="0.08" width="0.33" height="0.33" fill="#b7793e" fillOpacity="0.58" />
               <rect x="0.49" y="0.08" width="0.33" height="0.33" fill="#b7793e" fillOpacity="0.58" />
@@ -901,7 +1263,7 @@ function MapPlaybackPanel({
               y={toSvgY(rect[3])}
               width={rect[2] - rect[0]}
               height={rect[3] - rect[1]}
-              fill={`url(#wetDots-${scenario.id})`}
+              fill={`url(#${wetPatternId})`}
               stroke="#3b82f6"
               strokeWidth={0.03}
               opacity={0.85}
@@ -926,7 +1288,7 @@ function MapPlaybackPanel({
               y={toSvgY(rect[3])}
               width={rect[2] - rect[0]}
               height={rect[3] - rect[1]}
-              fill={`url(#rackTexture-${scenario.id})`}
+              fill={`url(#${rackPatternId})`}
               stroke="#d6a677"
               strokeWidth={0.035}
               strokeDasharray="0.14 0.08"
@@ -1077,18 +1439,18 @@ function MapPlaybackPanel({
         </svg>
       </Card>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <LegendItem glyph="robot" label="Robot location" />
-        <LegendItem glyph="robot_planned_path" label="Planned robot path" />
-        {hasHumans && <LegendItem glyph="human_track" label="Human path" />}
-        {hasVehicles && <LegendItem glyph="vehicle_track" label="Vehicle path" />}
-        {hasWalls && <LegendItem glyph="wall" label="Walls" />}
-        {hasRacks && <LegendItem glyph="rack" label="Racks" />}
-        {hasStorageObjects && <LegendItem glyph="object_storage" label="Storage obstacles" />}
-        {hasStructureObjects && <LegendItem glyph="object_structure" label="Structural obstacles" />}
-        {hasSafetyObjects && <LegendItem glyph="object_safety" label="Safety markers" />}
-        {hasOtherObjects && <LegendItem glyph="object_other" label="Other static obstacles" />}
-        {hasTraction && <LegendItem glyph="wet_patch" label="Wet or low-traction floor" />}
+      <div className={compact ? "mt-2 grid max-h-28 gap-1 overflow-y-auto pr-1" : "mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3"}>
+        <LegendItem glyph="robot" label="Robot location" compact={compact} />
+        <LegendItem glyph="robot_planned_path" label="Planned robot path" compact={compact} />
+        {hasHumans && <LegendItem glyph="human_track" label="Human path" compact={compact} />}
+        {hasVehicles && <LegendItem glyph="vehicle_track" label="Vehicle path" compact={compact} />}
+        {hasWalls && <LegendItem glyph="wall" label="Walls" compact={compact} />}
+        {hasRacks && <LegendItem glyph="rack" label="Racks" compact={compact} />}
+        {hasStorageObjects && <LegendItem glyph="object_storage" label="Storage obstacles" compact={compact} />}
+        {hasStructureObjects && <LegendItem glyph="object_structure" label="Structural obstacles" compact={compact} />}
+        {hasSafetyObjects && <LegendItem glyph="object_safety" label="Safety markers" compact={compact} />}
+        {hasOtherObjects && <LegendItem glyph="object_other" label="Other static obstacles" compact={compact} />}
+        {hasTraction && <LegendItem glyph="wet_patch" label="Wet or low-traction floor" compact={compact} />}
       </div>
     </div>
   );
@@ -1097,14 +1459,16 @@ function MapPlaybackPanel({
 function LidarScanPanel({
   scenario,
   activeFrame,
+  compact = false,
 }: {
   scenario: Scenario;
   activeFrame: LidarPlaybackFrame | null;
+  compact?: boolean;
 }) {
   const lidarArtifact = scenario.artifacts.test["lidar.npz"];
   if (!activeFrame) {
     return (
-      <Card className="border-slate-800 bg-slate-900/60 p-4">
+      <Card className={`border-slate-800 bg-slate-900/60 ${compact ? "p-2.5" : "p-4"}`}>
         <p className="text-sm text-slate-400">No sensor replay data is available for this run.</p>
       </Card>
     );
@@ -1132,15 +1496,15 @@ function LidarScanPanel({
 
   return (
     <div>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <p className="text-xs uppercase tracking-wide text-slate-400">Distance sensor replay (rays only)</p>
-        {lidarArtifact && (
-          <a href={lidarArtifact} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 underline-offset-2 hover:underline">
+      <div className={`mb-2 flex items-center justify-between gap-2 ${compact ? "text-[10px]" : "text-xs"}`}>
+        <p className="uppercase tracking-wide text-slate-400">{compact ? "Distance sensor replay" : "Distance sensor replay (rays only)"}</p>
+        {!compact && lidarArtifact && (
+          <a href={lidarArtifact} target="_blank" rel="noreferrer" className={`${compact ? "text-[10px]" : "text-xs"} text-cyan-300 underline-offset-2 hover:underline`}>
             Open sensor log
           </a>
         )}
       </div>
-      <Card className="border-slate-800 bg-slate-900/60 p-3">
+      <Card className={`border-slate-800 bg-slate-900/60 ${compact ? "p-2" : "p-3"}`}>
         <svg viewBox={`${-viewRange} ${-viewRange} ${viewRange * 2} ${viewRange * 2}`} className="aspect-square w-full rounded bg-slate-950">
           <g transform="scale(1,-1)">
             {rings.map((radius, idx) => (
@@ -1166,7 +1530,7 @@ function LidarScanPanel({
           </g>
         </svg>
       </Card>
-      <p className="mt-2 text-xs text-slate-500">
+      <p className={`mt-2 text-slate-500 ${compact ? "text-[10px]" : "text-xs"}`}>
         This panel shows what the robot "sees" using its LiDAR. The center is the sensors location.
       </p>
     </div>
@@ -1248,7 +1612,7 @@ type LegendGlyph =
   | "wall"
   | "rack";
 
-function LegendItem({ glyph, label }: { glyph: LegendGlyph; label: string }) {
+function LegendItem({ glyph, label, compact = false }: { glyph: LegendGlyph; label: string; compact?: boolean }) {
   const icon = (() => {
     if (glyph === "robot") {
       return (
@@ -1344,7 +1708,11 @@ function LegendItem({ glyph, label }: { glyph: LegendGlyph; label: string }) {
   })();
 
   return (
-    <div className="inline-flex min-h-9 items-center gap-2 rounded-full border border-slate-700/80 bg-slate-950/60 px-3 py-1.5 text-xs text-slate-200">
+    <div
+      className={`inline-flex items-center rounded-full border border-slate-700/80 bg-slate-950/60 text-slate-200 ${
+        compact ? "min-h-7 gap-1 px-2 py-1 text-[10px] [&_svg]:h-3 [&_svg]:w-5" : "min-h-9 gap-2 px-3 py-1.5 text-xs"
+      }`}
+    >
       {icon}
       {label}
     </div>
