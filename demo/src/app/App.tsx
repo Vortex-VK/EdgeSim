@@ -281,7 +281,7 @@ function App() {
           </button>
           <div className="hidden gap-3 sm:flex">
             <Button variant="outline" className="border-slate-700 bg-transparent text-slate-100" onClick={() => scrollTo("explorer")}>
-              Scenario Explorer
+              Browse Scenarios
             </Button>
             <Button variant="outline" className="border-slate-700 bg-transparent text-slate-100" onClick={() => scrollTo("workflow")}>
               Workflow
@@ -312,7 +312,7 @@ function App() {
             </h1>
             <p className="max-w-2xl text-lg text-slate-300">
               EdgeSim lets teams describe a warehouse situation through text and coordinates, then automatically builds and runs a simulation for it. You can
-              inspect one example replay, then compare repeated runs to see how often collisions, near-misses, and delays occur. Each metric is
+              inspect one test run, then compare repeated runs to see how often collisions, near-misses, and delays occur. Each metric is
               backed by downloadable logs and reports.
             </p>
 
@@ -320,24 +320,24 @@ function App() {
 
           <div className="mt-16 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <StatCard label="Scenarios analyzed" value={String(demoData.global.prompt_count)} icon={<FileText className="h-5 w-5" />} />
-            <StatCard label="Total recorded runs" value={String(demoData.global.total_runs)} icon={<Database className="h-5 w-5" />} />
+            <StatCard label="Runs recorded" value={String(demoData.global.total_runs)} icon={<Database className="h-5 w-5" />} />
             <StatCard
               label="Runs with collisions"
               value={`${Math.max(0, 100 - demoData.global.batch_success_rate_pct).toFixed(2)}%`}
               icon={<ShieldCheck className="h-5 w-5" />}
             />
             <StatCard label="Average repeated-run time" value={`${demoData.global.avg_batch_time_s.toFixed(2)}s`} icon={<Timer className="h-5 w-5" />} />
-            <StatCard label="Average simulation speed" value={`${demoData.global.avg_sims_per_min.toFixed(2)} sims/min`} icon={<Gauge className="h-5 w-5" />} />
+            <StatCard label="Runs per minute" value={`${demoData.global.avg_sims_per_min.toFixed(2)} sims/min`} icon={<Gauge className="h-5 w-5" />} />
           </div>
         </div>
       </section>
 
       <section id="explorer" className="border-y border-slate-800 bg-slate-900/30">
         <div className="mx-auto max-w-7xl px-6 pb-16 pt-10">
-          <div className="mb-8 max-w-3xl">
-            <h2 className="text-3xl sm:text-4xl">Scenario Explorer</h2>
-            <p className="mt-3 text-slate-300">
-              Pick a scenario to inspect one replay, summary results from repeated runs, and the files used to compute each metric.
+          <div className="mb-8 max-w-5xl">
+            <h2 className="text-3xl sm:text-4xl">Browse Scenarios</h2>
+            <p className="mt-3 text-slate-300 lg:whitespace-nowrap">
+              Pick a scenario to inspect one test run, summary results from repeated runs, and the files used to compute each metric.
             </p>
           </div>
 
@@ -363,7 +363,7 @@ function App() {
                     >
                       <div className="mb-2 flex items-center justify-start gap-3">
                         <span className="rounded-full bg-orange-500/20 px-2 py-0.5 text-xs text-orange-200">
-                          {collisionRate.toFixed(1)}% collision risk
+                          {collisionRate.toFixed(1)}% collision rate
                         </span>
                       </div>
                       <h3 className="text-lg leading-tight text-white">{scenario.title}</h3>
@@ -373,28 +373,25 @@ function App() {
               </div>
             </Card>
 
-            <div className="space-y-4">
-              <Card className="border-slate-800 bg-slate-950/80 p-6">
+            <div className="min-w-0 space-y-4">
+              <Card className="min-w-0 border-slate-800 bg-slate-950/80 p-6">
                 <div className="mb-4 flex flex-wrap items-center gap-4">
                   <div>
                     <h3 className="text-2xl text-white">{activeScenario.title}</h3>
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
-                  <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Scenario description</p>
-                  <p className="font-mono text-sm text-slate-100">{activeScenario.prompt}</p>
-                </div>
+                <ScenarioDescription prompt={activeScenario.prompt} collapsedMaxChars={120} />
 
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
                   <OutcomeCard
-                    title="Example Replay"
+                    title="Test run"
                     outcome={activeScenario.test.outcome}
                     timeValue={`${activeScenario.test.duration_s.toFixed(2)}s`}
                     detailA={`Closest near-miss (sec): ${activeScenario.test.min_ttc_s.toFixed(2)}`}
                   />
                   <OutcomeCard
-                    title={`${activeScenario.batch.runs} Repeats`}
+                    title={`${activeScenario.batch.runs}-run batch`}
                     outcome={Math.max(0, 100 - activeScenario.batch.coverage_pct.success) >= 50 ? "collision_dominant" : "low_collision"}
                     timeValue={`${activeScenario.batch.avg_time_s.toFixed(2)}s avg`}
                     detailA={`${Math.max(0, 100 - activeScenario.batch.coverage_pct.success).toFixed(1)}% collision`}
@@ -405,9 +402,15 @@ function App() {
                   <p className="mb-2 text-xs uppercase tracking-wide text-slate-400">
                     Repeated-run outcomes (left to right: run 1 to {activeScenario.batch.runs})
                   </p>
-                  <div className="mb-2 flex flex-wrap gap-2 text-xs">
-                    <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-blue-200">Success</span>
-                    <span className="rounded-full bg-orange-500/20 px-2 py-0.5 text-orange-200">Collision</span>
+                  <div className="mb-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-2.5 w-2.5 rounded-full bg-blue-400/90" />
+                      Successful run
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-2.5 w-2.5 rounded-full bg-orange-400/90" />
+                      Collision during run
+                    </span>
                   </div>
                   <div className="overflow-x-auto rounded-md border border-slate-800/70 bg-slate-950/40 p-2">
                     <div
@@ -438,7 +441,7 @@ function App() {
 
               <div className="flex flex-wrap gap-2">
                 <TabButton label="Overview" active={activeTab === "overview"} onClick={() => setActiveTab("overview")} />
-                <TabButton label="Generated data" active={activeTab === "artifacts"} onClick={() => setActiveTab("artifacts")} />
+                <TabButton label="Results" active={activeTab === "artifacts"} onClick={() => setActiveTab("artifacts")} />
               </div>
 
               {activeTab === "overview" && <OverviewTab scenario={activeScenario} />}
@@ -486,7 +489,7 @@ function App() {
           <h3 className="text-xl text-white">Why this project matters</h3>
           <p className="mt-2 text-slate-300">
             In robotics, the hardest failures are the ones you can't reproduce. EdgeSim turns "what if?" situations into the reproducible test
-            runs you can generate at insanely fast speeds, so that teams can verify fixes, catch regressions early, generate lidar and pose data
+            runs you can generate at extremely fast speeds, so that teams can verify fixes, catch regressions early, generate lidar and pose data
             for training warehouse AMRs, and build confidence that improvements hold up across messy real-world conditions.
           </p>
         </div>
@@ -567,6 +570,42 @@ function StatCard({ label, value, icon, compact = false }: { label: string; valu
       <p className={`text-white ${compact ? "text-xl leading-none" : "text-2xl"}`}>{value}</p>
       <p className={compact ? "text-xs text-slate-400" : "text-sm text-slate-400"}>{label}</p>
     </Card>
+  );
+}
+
+function ScenarioDescription({
+  prompt,
+  className = "p-4",
+  collapsedMaxChars = 110,
+}: {
+  prompt: string;
+  className?: string;
+  collapsedMaxChars?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isTruncated = prompt.length > collapsedMaxChars;
+  const collapsedPrompt = isTruncated ? `${prompt.slice(0, collapsedMaxChars).trimEnd()}...` : prompt;
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [prompt]);
+
+  return (
+    <div className={`min-w-0 rounded-lg border border-slate-800 bg-slate-900/60 ${className}`}>
+      <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Scenario description</p>
+      <button
+        type="button"
+        onClick={() => {
+          if (isTruncated) setExpanded((prev) => !prev);
+        }}
+        aria-expanded={expanded}
+        className={`w-full min-w-0 text-left ${isTruncated ? "cursor-pointer" : "cursor-default"}`}
+      >
+        <p className={`font-mono text-sm text-slate-100 ${expanded ? "break-words [overflow-wrap:anywhere]" : "truncate"}`}>
+          {expanded ? prompt : collapsedPrompt}
+        </p>
+      </button>
+    </div>
   );
 }
 
@@ -749,7 +788,6 @@ function MobileDemo({
       <section
         id="hero-mobile"
         className="relative overflow-hidden border-b border-slate-800"
-        style={{ minHeight: mobileHeaderHeight > 0 ? `calc(100svh - ${mobileHeaderHeight}px)` : undefined }}
       >
         <div className="absolute inset-0">
           <img src={heroImage} alt="Warehouse aisle background" className="h-full w-full object-cover opacity-35" />
@@ -765,22 +803,22 @@ function MobileDemo({
           </p>
           <div className="mt-5 grid grid-cols-2 gap-3">
             <StatCard compact label="Scenarios" value={String(demoData.global.prompt_count)} icon={<FileText className="h-5 w-5" />} />
-            <StatCard compact label="Total runs" value={String(demoData.global.total_runs)} icon={<Database className="h-5 w-5" />} />
+            <StatCard compact label="Runs recorded" value={String(demoData.global.total_runs)} icon={<Database className="h-5 w-5" />} />
             <StatCard
               compact
               label="Collision rate"
               value={`${Math.max(0, 100 - demoData.global.batch_success_rate_pct).toFixed(2)}%`}
               icon={<ShieldCheck className="h-5 w-5" />}
             />
-            <StatCard compact label="Sim speed" value={`${demoData.global.avg_sims_per_min.toFixed(2)} sims/min`} icon={<Gauge className="h-5 w-5" />} />
+            <StatCard compact label="Runs per minute" value={`${demoData.global.avg_sims_per_min.toFixed(2)} sims/min`} icon={<Gauge className="h-5 w-5" />} />
           </div>
         </div>
       </section>
 
       <section id="explorer-mobile" className="px-4 pb-10 pt-8">
         <div className="mb-4">
-          <h2 className="text-2xl">Scenario Explorer</h2>
-          <p className="mt-2 text-sm text-slate-300">Inspect one scenario at a time and switch between overview and generated files.</p>
+          <h2 className="text-2xl">Browse Scenarios</h2>
+          <p className="mt-2 text-sm text-slate-300">Inspect one scenario at a time and switch between overview and results.</p>
         </div>
 
         <Card className="border-cyan-500/25 bg-cyan-950/10 p-4">
@@ -833,22 +871,19 @@ function MobileDemo({
             </div>
           </div>
 
-          <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-            <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Scenario description</p>
-            <p className="font-mono text-sm text-slate-100">{activeScenario.prompt}</p>
-          </div>
+          <ScenarioDescription prompt={activeScenario.prompt} className="mt-3 p-3" />
 
           <div className="mt-4 grid grid-cols-2 gap-3">
             <OutcomeCard
               compact
-              title="Example Replay"
+              title="Test run"
               outcome={activeScenario.test.outcome}
               timeValue={`${activeScenario.test.duration_s.toFixed(2)}s`}
               detailA={`Closest near-miss (sec): ${activeScenario.test.min_ttc_s.toFixed(2)}`}
             />
             <OutcomeCard
               compact
-              title={`${activeScenario.batch.runs} Repeats`}
+              title={`${activeScenario.batch.runs}-run batch`}
               outcome={Math.max(0, 100 - activeScenario.batch.coverage_pct.success) >= 50 ? "collision_dominant" : "low_collision"}
               timeValue={`${activeScenario.batch.avg_time_s.toFixed(2)}s avg`}
               detailA={`${Math.max(0, 100 - activeScenario.batch.coverage_pct.success).toFixed(1)}% collision`}
@@ -857,6 +892,16 @@ function MobileDemo({
 
           <div className="mt-4">
             <p className="mb-2 text-xs uppercase tracking-wide text-slate-400">Repeated-run outcomes</p>
+            <div className="mb-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full bg-blue-400/90" />
+                Successful run
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full bg-orange-400/90" />
+                Collision during run
+              </span>
+            </div>
             <div className="max-h-32 overflow-auto rounded-md border border-slate-800/70 bg-slate-950/40 p-2">
               <div
                 className="grid"
@@ -886,7 +931,7 @@ function MobileDemo({
 
         <div className="mt-4 flex flex-wrap gap-2">
           <TabButton label="Overview" active={activeTab === "overview"} onClick={() => onSetTab("overview")} />
-          <TabButton label="Generated data" active={activeTab === "artifacts"} onClick={() => onSetTab("artifacts")} />
+          <TabButton label="Results" active={activeTab === "artifacts"} onClick={() => onSetTab("artifacts")} />
         </div>
 
         <div className="mt-4">{activeTab === "overview" ? <MobileOverviewTab scenario={activeScenario} /> : <ArtifactsTab scenario={activeScenario} />}</div>
@@ -1541,28 +1586,16 @@ function LidarScanPanel({
 }
 
 function ArtifactsTab({ scenario }: { scenario: Scenario }) {
-  const testEntries = Object.entries(scenario.artifacts.test);
   const batchEntries = Object.entries(scenario.artifacts.batch);
 
   return (
     <Card className="border-slate-800 bg-slate-950/70 p-6">
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div>
-          <p className="mb-3 text-xs uppercase tracking-wide text-slate-400">Files from example replay</p>
-          <div className="space-y-2">
-            {testEntries.map(([key, href]) => (
-              <ArtifactLink key={key} label={artifactLabels[key] ?? key} href={href} />
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <p className="mb-3 text-xs uppercase tracking-wide text-slate-400">Files from repeated-run batch</p>
-          <div className="space-y-2">
-            {batchEntries.map(([key, href]) => (
-              <ArtifactLink key={key} label={artifactLabels[key] ?? key} href={href} />
-            ))}
-          </div>
+      <div>
+        <p className="mb-3 text-xs uppercase tracking-wide text-slate-400">Files from {scenario.batch.runs}-run batch</p>
+        <div className="space-y-2">
+          {batchEntries.map(([key, href]) => (
+            <ArtifactLink key={key} label={artifactLabels[key] ?? key} href={href} />
+          ))}
         </div>
       </div>
     </Card>
