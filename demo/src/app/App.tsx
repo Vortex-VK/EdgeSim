@@ -392,14 +392,12 @@ function App() {
                     outcome={activeScenario.test.outcome}
                     timeValue={`${activeScenario.test.duration_s.toFixed(2)}s`}
                     detailA={`Closest near-miss (sec): ${activeScenario.test.min_ttc_s.toFixed(2)}`}
-                    detailB={`${activeScenario.test.events.collisions ?? 0} contact events recorded`}
                   />
                   <OutcomeCard
                     title={`${activeScenario.batch.runs} Repeats`}
                     outcome={Math.max(0, 100 - activeScenario.batch.coverage_pct.success) >= 50 ? "collision_dominant" : "low_collision"}
                     timeValue={`${activeScenario.batch.avg_time_s.toFixed(2)}s avg`}
                     detailA={`${Math.max(0, 100 - activeScenario.batch.coverage_pct.success).toFixed(1)}% collision`}
-                    detailB={`${activeScenario.batch.successes}/${activeScenario.batch.runs} runs successful`}
                   />
                 </div>
 
@@ -587,20 +585,18 @@ function OutcomeCard({
   outcome,
   timeValue,
   detailA,
-  detailB,
   compact = false,
 }: {
   title: string;
   outcome: string;
   timeValue: string;
   detailA: string;
-  detailB: string;
   compact?: boolean;
 }) {
   const isCollision = isCollisionCategory(outcome);
   return (
     <Card className={`border ${compact ? "p-2.5" : "p-4"} ${isCollision ? "border-orange-500/40 bg-orange-900/10" : "border-blue-500/40 bg-blue-900/10"}`}>
-      <div className={`${compact ? "mb-1" : "mb-3"} flex items-center justify-between`}>
+      <div className={`${compact ? "mb-0.5" : "mb-3"} flex items-center justify-between`}>
         <p className="text-sm uppercase tracking-wide text-slate-300">{title}</p>
         <span
           className={`rounded-full px-2 py-0.5 text-xs ${
@@ -610,10 +606,9 @@ function OutcomeCard({
           {isCollision ? "collision" : "success"}
         </span>
       </div>
-      <p className="text-lg text-white">{outcomeLabel(outcome)}</p>
+      <p className={`${compact ? "text-base leading-tight" : "text-lg"} text-white`}>{outcomeLabel(outcome)}</p>
       <p className={`${compact ? "text-xs leading-tight" : "text-sm"} text-slate-300`}>{timeValue}</p>
-      <p className={`${compact ? "mt-0.5 leading-tight" : "mt-2"} text-xs text-slate-400`}>{detailA}</p>
-      <p className="text-xs text-slate-400">{detailB}</p>
+      <p className={`${compact ? "mt-0 leading-tight" : "mt-2"} text-xs text-slate-400`}>{detailA}</p>
     </Card>
   );
 }
@@ -766,7 +761,7 @@ function MobileDemo({
             <span className="text-cyan-300"> before deployment</span>
           </h1>
           <p className="mt-3 text-sm text-slate-300">
-            Build scenarios through text and coordinates, run simulation batches, and review evidence files for safety verification.
+            Build scenarios through text and coordinates, run simulation batches, and generate data of the edge case warehouse scenario.
           </p>
           <div className="mt-5 grid grid-cols-2 gap-3">
             <StatCard compact label="Scenarios" value={String(demoData.global.prompt_count)} icon={<FileText className="h-5 w-5" />} />
@@ -789,7 +784,7 @@ function MobileDemo({
         </div>
 
         <Card className="border-cyan-500/25 bg-cyan-950/10 p-4">
-          <p className="mb-2 text-xs uppercase tracking-wide text-cyan-200/85">Pick a scenario</p>
+          <p className="mb-1 text-xs uppercase tracking-wide text-cyan-200/85">Pick a scenario</p>
           <div ref={scenarioMenuRef} className="relative">
             <button
               className="flex w-full items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-left text-sm text-slate-100 transition-colors hover:border-cyan-500/70"
@@ -838,7 +833,7 @@ function MobileDemo({
             </div>
           </div>
 
-          <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+          <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
             <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Scenario description</p>
             <p className="font-mono text-sm text-slate-100">{activeScenario.prompt}</p>
           </div>
@@ -850,7 +845,6 @@ function MobileDemo({
               outcome={activeScenario.test.outcome}
               timeValue={`${activeScenario.test.duration_s.toFixed(2)}s`}
               detailA={`Closest near-miss (sec): ${activeScenario.test.min_ttc_s.toFixed(2)}`}
-              detailB={`${activeScenario.test.events.collisions ?? 0} contact events recorded`}
             />
             <OutcomeCard
               compact
@@ -858,7 +852,6 @@ function MobileDemo({
               outcome={Math.max(0, 100 - activeScenario.batch.coverage_pct.success) >= 50 ? "collision_dominant" : "low_collision"}
               timeValue={`${activeScenario.batch.avg_time_s.toFixed(2)}s avg`}
               detailA={`${Math.max(0, 100 - activeScenario.batch.coverage_pct.success).toFixed(1)}% collision`}
-              detailB={`${activeScenario.batch.successes}/${activeScenario.batch.runs} runs successful`}
             />
           </div>
 
