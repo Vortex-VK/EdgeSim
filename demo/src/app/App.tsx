@@ -16,6 +16,7 @@ import {
 
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
 import heroImage from "../assets/hero-background.png";
 import demoDataRaw from "./data/demoData.json";
 
@@ -220,6 +221,8 @@ function outcomeLabel(outcome: string): string {
 function App() {
   const [activeScenarioId, setActiveScenarioId] = useState(demoData.scenarios[0]?.id ?? "");
   const [activeTab, setActiveTab] = useState<ExplorerTab>("overview");
+  const [desktopHeaderHeight, setDesktopHeaderHeight] = useState(0);
+  const desktopHeaderRef = useRef<HTMLElement | null>(null);
 
   const activeScenario = useMemo(
     () => demoData.scenarios.find((scenario) => scenario.id === activeScenarioId) ?? demoData.scenarios[0],
@@ -234,6 +237,17 @@ function App() {
   const repeatedRadiusScale = repeatedRunCount > RUN_DOT_BASELINE_RUNS ? Math.sqrt(RUN_DOT_BASELINE_RUNS / repeatedRunCount) : 1;
   const repeatedDotRadiusPx = Math.max(RUN_DOT_MIN_RADIUS_PX, RUN_DOT_BASE_RADIUS_PX * repeatedRadiusScale);
   const repeatedDotDiameterPx = repeatedDotRadiusPx * 2;
+
+  useEffect(() => {
+    const measureDesktopHeader = () => {
+      if (!desktopHeaderRef.current) return;
+      setDesktopHeaderHeight(desktopHeaderRef.current.offsetHeight);
+    };
+
+    measureDesktopHeader();
+    window.addEventListener("resize", measureDesktopHeader);
+    return () => window.removeEventListener("resize", measureDesktopHeader);
+  }, []);
 
   const scrollTo = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -256,7 +270,7 @@ function App() {
       />
 
       <div className="hidden md:block">
-      <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur">
+      <header ref={desktopHeaderRef} className="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <button
             className="text-left"
@@ -264,6 +278,7 @@ function App() {
             aria-label="Jump to top of page"
           >
             <div className="text-xl tracking-tight">EdgeSim</div>
+            <div className="text-xs text-slate-400">Simulated warehouse edge cases</div>
           </button>
           <div className="hidden gap-3 sm:flex">
             <Button variant="outline" className="border-slate-700 bg-transparent text-slate-100" onClick={() => scrollTo("explorer")}>
@@ -275,17 +290,22 @@ function App() {
             <Button variant="outline" className="border-slate-700 bg-transparent text-slate-100" onClick={() => scrollTo("comparison")}>
               Compare Scenarios
             </Button>
+            <ContactMenuButton />
           </div>
         </div>
       </header>
 
-      <section id="hero" className="relative overflow-hidden border-b border-slate-800">
+      <section
+        id="hero"
+        className="relative overflow-hidden border-b border-slate-800"
+        style={{ minHeight: desktopHeaderHeight > 0 ? `calc(100svh - ${desktopHeaderHeight}px)` : undefined }}
+      >
         <div className="absolute inset-0">
           <img src={heroImage} alt="Warehouse aisle background" className="h-full w-full object-cover opacity-30" />
           <div className="absolute inset-0 bg-gradient-to-b from-slate-900/40 via-slate-950/90 to-slate-950" />
         </div>
 
-        <div className="relative mx-auto max-w-7xl px-6 pb-20 pt-10 sm:pt-14">
+        <div className="relative mx-auto max-w-7xl px-6 pb-20 pt-10">
           <div className="max-w-3xl">
             <h1 className="mb-4 text-4xl leading-tight sm:text-6xl">
               Evaluate warehouse robot safety
@@ -530,27 +550,6 @@ function App() {
         <div className="mx-auto max-w-7xl px-6 pb-10 pt-6">
           <div className="mt-2 space-y-1 text-sm text-slate-500">
             <p>Made by Vlad Kalinin</p>
-            <p>Contact details:</p>
-            <p>
-              <a href="tel:+17043020548" className="underline-offset-2 hover:underline">
-                +1 (704) 302 0548
-              </a>
-            </p>
-            <p>
-              <a href="mailto:kalinin.vlad.2003@gmail.com" className="underline-offset-2 hover:underline">
-                kalinin.vlad.2003@gmail.com
-              </a>
-            </p>
-            <p>
-              <a
-                href="https://www.linkedin.com/in/kalinin-vlad/"
-                target="_blank"
-                rel="noreferrer"
-                className="underline-offset-2 hover:underline"
-              >
-                https://www.linkedin.com/in/kalinin-vlad/
-              </a>
-            </p>
             <p>
               GitHub Repository:{" "}
               <a
@@ -644,6 +643,42 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
   );
 }
 
+function ContactMenuButton({ triggerClassName = "" }: { triggerClassName?: string }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" className={`border-slate-700 bg-transparent text-slate-100 ${triggerClassName}`}>
+          Contact me
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80 border-slate-700 bg-slate-950/95 p-2 text-slate-100 backdrop-blur">
+        <p className="px-2 py-1 text-[11px] uppercase tracking-wide text-slate-400">Contacts</p>
+        <DropdownMenuSeparator className="bg-slate-800" />
+        <div className="space-y-1.5 px-2 pb-1 pt-2 text-xs text-slate-300">
+          <p>
+            Phone number:{" "}
+            <a href="tel:+17043020548" className="text-cyan-300 underline-offset-2 hover:underline">
+              +1 (704) 302 0548
+            </a>
+          </p>
+          <p>
+            Email:{" "}
+            <a href="mailto:kalinin.vlad.2003@gmail.com" className="text-cyan-300 underline-offset-2 hover:underline">
+              kalinin.vlad.2003@gmail.com
+            </a>
+          </p>
+          <p>
+            LinkedIn:{" "}
+            <a href="https://www.linkedin.com/in/kalinin-vlad/" target="_blank" rel="noreferrer" className="text-cyan-300 underline-offset-2 hover:underline">
+              https://www.linkedin.com/in/kalinin-vlad/
+            </a>
+          </p>
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function MobileDemo({
   activeScenario,
   activeTab,
@@ -706,7 +741,7 @@ function MobileDemo({
           <button className="text-left text-lg tracking-tight" onClick={() => onScrollTo("hero-mobile")} aria-label="Jump to top of page">
             EdgeSim
           </button>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button
               variant="outline"
               className="border-slate-700 bg-transparent px-3 py-1 text-xs text-slate-100"
@@ -721,6 +756,7 @@ function MobileDemo({
             >
               Workflow
             </Button>
+            <ContactMenuButton triggerClassName="px-3 py-1 text-xs" />
           </div>
         </div>
       </header>
@@ -910,22 +946,6 @@ function MobileDemo({
         <div className="px-4 pb-8 pt-6">
           <div className="space-y-1 text-sm text-slate-500">
             <p>Made by Vlad Kalinin</p>
-            <p>Contact details:</p>
-            <p>
-              <a href="tel:+17043020548" className="underline-offset-2 hover:underline">
-                +1 (704) 302 0548
-              </a>
-            </p>
-            <p>
-              <a href="mailto:kalinin.vlad.2003@gmail.com" className="underline-offset-2 hover:underline">
-                kalinin.vlad.2003@gmail.com
-              </a>
-            </p>
-            <p>
-              <a href="https://www.linkedin.com/in/kalinin-vlad/" target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
-                https://www.linkedin.com/in/kalinin-vlad/
-              </a>
-            </p>
             <p>
               GitHub Repository:{" "}
               <a href="https://github.com/Vortex-VK/EdgeSim" target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">
@@ -1151,8 +1171,8 @@ function MapTab({ scenario, compact = false }: { scenario: Scenario; compact?: b
         <p className={`mb-2 uppercase tracking-wide text-slate-400 ${compact ? "text-[10px]" : "text-xs"}`}>Replay controls (map + sensor view)</p>
         {!hasFrames && <p className="text-sm text-slate-400">No sensor replay frames are available for this scenario.</p>}
         {hasFrames && (
-          <div className={compact ? "space-y-2" : "flex flex-wrap items-center gap-2"}>
-            <div className="flex items-center gap-2">
+          <div className="space-y-2">
+            <div className="flex w-full items-center gap-2">
               <Button className={`bg-blue-600 text-white hover:bg-blue-500 ${compact ? "h-8 px-3 text-xs" : ""}`} onClick={() => setIsPlaying((prev) => !prev)}>
                 {isPlaying ? "Pause" : "Play"}
               </Button>
@@ -1162,7 +1182,7 @@ function MapTab({ scenario, compact = false }: { scenario: Scenario; compact?: b
                 max={Math.max(0, lidarFrames.length - 1)}
                 value={clampedFrameIdx}
                 onChange={(event) => setFrameIdx(Number(event.target.value))}
-                className={`h-2 flex-1 accent-blue-500 ${compact ? "min-w-0" : "min-w-[220px]"}`}
+                className="h-2 min-w-0 flex-1 accent-blue-500"
               />
             </div>
             <span className={compact ? "text-xs text-slate-300" : "text-sm text-slate-300"}>
