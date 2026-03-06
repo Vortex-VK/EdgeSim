@@ -203,6 +203,8 @@ const RUN_DOT_MOBILE_BASELINE_RUNS = 300;
 const RUN_DOT_MOBILE_BASE_RADIUS_PX = 4.6;
 const RUN_DOT_MOBILE_MIN_RADIUS_PX = 1.1;
 const RUN_DOT_MOBILE_GAP_PX = 2;
+const WET_CROSSING_SCENARIO_TITLE = "Wet Crossing Near Rack Block";
+const FORKLIFT_RACK_SCENARIO_TITLE = "Forklift Through Rack Chicane";
 
 function isCollisionCategory(outcome: string): boolean {
   return outcome === "collision_human" || outcome === "collision_static" || outcome === "collision_dominant";
@@ -218,14 +220,26 @@ function outcomeLabel(outcome: string): string {
 }
 
 function App() {
-  const [activeScenarioId, setActiveScenarioId] = useState(demoData.scenarios[0]?.id ?? "");
+  const orderedScenarios = useMemo(() => {
+    const scenarios = [...demoData.scenarios];
+    const wetCrossingIndex = scenarios.findIndex((scenario) => scenario.title === WET_CROSSING_SCENARIO_TITLE);
+    const forkliftRackIndex = scenarios.findIndex((scenario) => scenario.title === FORKLIFT_RACK_SCENARIO_TITLE);
+
+    if (wetCrossingIndex >= 0 && forkliftRackIndex >= 0) {
+      [scenarios[wetCrossingIndex], scenarios[forkliftRackIndex]] = [scenarios[forkliftRackIndex], scenarios[wetCrossingIndex]];
+    }
+
+    return scenarios;
+  }, []);
+
+  const [activeScenarioId, setActiveScenarioId] = useState(orderedScenarios[0]?.id ?? "");
   const [activeTab, setActiveTab] = useState<ExplorerTab>("overview");
   const [desktopHeaderHeight, setDesktopHeaderHeight] = useState(0);
   const desktopHeaderRef = useRef<HTMLElement | null>(null);
 
   const activeScenario = useMemo(
-    () => demoData.scenarios.find((scenario) => scenario.id === activeScenarioId) ?? demoData.scenarios[0],
-    [activeScenarioId],
+    () => orderedScenarios.find((scenario) => scenario.id === activeScenarioId) ?? orderedScenarios[0],
+    [activeScenarioId, orderedScenarios],
   );
 
   if (!activeScenario) {
@@ -259,6 +273,7 @@ function App() {
     >
       <MobileDemo
         activeScenario={activeScenario}
+        scenarios={orderedScenarios}
         activeTab={activeTab}
         onPickScenario={(scenarioId) => {
           setActiveScenarioId(scenarioId);
@@ -305,15 +320,18 @@ function App() {
         </div>
 
         <div className="relative mx-auto max-w-7xl px-6 pb-16 pt-10">
-          <div className="max-w-3xl">
+          <div className="max-w-4xl">
             <h1 className="mb-4 text-4xl leading-tight sm:text-6xl">
-              Evaluate warehouse robot safety
-              <span className="text-cyan-300"> before deployment</span>
+              Test warehouse robot
+              <span className="block">
+                safety <span className="text-cyan-300">before deployment</span>
+              </span>
             </h1>
-            <p className="max-w-2xl text-lg text-slate-300">
-              EdgeSim lets teams describe a warehouse situation through text and coordinates, then automatically builds and runs a simulation for it. You can
-              inspect one test run, then compare repeated runs to see how often collisions, near-misses, and delays occur. Each metric is
-              backed by downloadable logs and reports.
+            <p className="max-w-[54rem] text-lg text-slate-300">
+              Unexpected obstacles, close calls, and short delays can cause expensive problems in warehouses. EdgeSim helps teams test these
+              situations before real robots face them by turning a plain-language description into a simulation. Users can first watch a single
+              test run to check that the setup looks right, then run a batch of many variations of the same situation to collect data to train or
+              test the robot's performance.
             </p>
 
           </div>
@@ -327,7 +345,7 @@ function App() {
               icon={<ShieldCheck className="h-5 w-5" />}
             />
             <StatCard label="Average repeated-run time" value={`${demoData.global.avg_batch_time_s.toFixed(2)}s`} icon={<Timer className="h-5 w-5" />} />
-            <StatCard label="Runs per minute" value={`${demoData.global.avg_sims_per_min.toFixed(2)} sims/min`} icon={<Gauge className="h-5 w-5" />} />
+            <StatCard label="Simulation speed" value={`${demoData.global.avg_sims_per_min.toFixed(2)} sims/min`} icon={<Gauge className="h-5 w-5" />} />
           </div>
         </div>
       </section>
@@ -345,7 +363,7 @@ function App() {
             <Card className="self-start border-cyan-500/25 bg-cyan-950/10 p-3 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]">
               <p className="mb-1 px-1 text-xs uppercase tracking-wide text-cyan-200/85">Pick a scenario</p>
               <div className="space-y-3">
-                {demoData.scenarios.map((scenario) => {
+                {orderedScenarios.map((scenario) => {
                   const isActive = scenario.id === activeScenario.id;
                   const collisionRate = Math.max(0, 100 - scenario.batch.coverage_pct.success);
                   return (
@@ -518,7 +536,7 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {demoData.scenarios.map((scenario) => (
+                  {orderedScenarios.map((scenario) => (
                     <tr key={scenario.id} className="border-t border-slate-800 text-slate-200">
                       <td className="px-4 py-3">
                         <p className="text-white">{scenario.title}</p>
@@ -592,7 +610,7 @@ function ScenarioDescription({
 
   return (
     <div className={`min-w-0 rounded-lg border border-slate-800 bg-slate-900/60 ${className}`}>
-      <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Scenario description</p>
+      <p className="mb-1 text-xs uppercase tracking-wide text-slate-400">Input text</p>
       <button
         type="button"
         onClick={() => {
@@ -634,8 +652,8 @@ function OutcomeCard({
 }) {
   const isCollision = isCollisionCategory(outcome);
   return (
-    <Card className={`border ${compact ? "p-2.5" : "p-4"} ${isCollision ? "border-orange-500/40 bg-orange-900/10" : "border-blue-500/40 bg-blue-900/10"}`}>
-      <div className={`${compact ? "mb-0.5" : "mb-3"} flex items-center justify-between`}>
+    <Card className={`border ${compact ? "p-2" : "p-4"} ${isCollision ? "border-orange-500/40 bg-orange-900/10" : "border-blue-500/40 bg-blue-900/10"}`}>
+      <div className={`${compact ? "mb-0" : "mb-3"} flex items-center justify-between`}>
         <p className="text-sm uppercase tracking-wide text-slate-300">{title}</p>
         <span
           className={`rounded-full px-2 py-0.5 text-xs ${
@@ -645,9 +663,9 @@ function OutcomeCard({
           {isCollision ? "collision" : "success"}
         </span>
       </div>
-      <p className={`${compact ? "text-base leading-tight" : "text-lg"} text-white`}>{outcomeLabel(outcome)}</p>
+      <p className={`${compact ? "text-base leading-none" : "text-lg"} text-white`}>{outcomeLabel(outcome)}</p>
       <p className={`${compact ? "text-xs leading-tight" : "text-sm"} text-slate-300`}>{timeValue}</p>
-      <p className={`${compact ? "mt-0 leading-tight" : "mt-2"} text-xs text-slate-400`}>{detailA}</p>
+      <p className={`${compact ? "mt-0 leading-[1.1]" : "mt-2"} text-xs text-slate-400`}>{detailA}</p>
     </Card>
   );
 }
@@ -705,12 +723,14 @@ function ContactMenuButton({ triggerClassName = "" }: { triggerClassName?: strin
 
 function MobileDemo({
   activeScenario,
+  scenarios,
   activeTab,
   onPickScenario,
   onSetTab,
   onScrollTo,
 }: {
   activeScenario: Scenario;
+  scenarios: Scenario[];
   activeTab: ExplorerTab;
   onPickScenario: (scenarioId: string) => void;
   onSetTab: (tab: ExplorerTab) => void;
@@ -795,11 +815,15 @@ function MobileDemo({
         </div>
         <div className="relative px-4 pb-10 pt-10">
           <h1 className="text-3xl leading-tight">
-            Evaluate warehouse robot safety
-            <span className="text-cyan-300"> before deployment</span>
+            Test warehouse robot
+            <span className="block">
+              safety <span className="text-cyan-300">before deployment</span>
+            </span>
           </h1>
           <p className="mt-3 text-sm text-slate-300">
-            Build scenarios through text and coordinates, run simulation batches, and generate data of the edge case warehouse scenario.
+            Unexpected obstacles and short delays can create costly problems for warehouse robots. EdgeSim lets teams describe a warehouse
+            situation in plain text, watch one test run to confirm it looks right, and then run many variations to collect data to train or
+            test the robot's performance.
           </p>
           <div className="mt-5 grid grid-cols-2 gap-3">
             <StatCard compact label="Scenarios" value={String(demoData.global.prompt_count)} icon={<FileText className="h-5 w-5" />} />
@@ -810,7 +834,7 @@ function MobileDemo({
               value={`${Math.max(0, 100 - demoData.global.batch_success_rate_pct).toFixed(2)}%`}
               icon={<ShieldCheck className="h-5 w-5" />}
             />
-            <StatCard compact label="Runs per minute" value={`${demoData.global.avg_sims_per_min.toFixed(2)} sims/min`} icon={<Gauge className="h-5 w-5" />} />
+            <StatCard compact label="Simulation speed" value={`${demoData.global.avg_sims_per_min.toFixed(2)} sims/min`} icon={<Gauge className="h-5 w-5" />} />
           </div>
         </div>
       </section>
@@ -822,10 +846,10 @@ function MobileDemo({
         </div>
 
         <Card className="border-cyan-500/25 bg-cyan-950/10 p-4">
-          <p className="mb-1 text-xs uppercase tracking-wide text-cyan-200/85">Pick a scenario</p>
+          <p className="mb-0.5 text-xs uppercase tracking-wide text-cyan-200/85">Pick a scenario</p>
           <div ref={scenarioMenuRef} className="relative">
             <button
-              className="flex w-full items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-left text-sm text-slate-100 transition-colors hover:border-cyan-500/70"
+              className="flex w-full items-center justify-between rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-left text-sm text-slate-100 transition-colors hover:border-cyan-500/70"
               onClick={() => setIsScenarioMenuOpen((prev) => !prev)}
               aria-expanded={isScenarioMenuOpen}
               aria-haspopup="listbox"
@@ -844,7 +868,7 @@ function MobileDemo({
                 }`}
               >
                 <div role="listbox" aria-label="Scenario list" className="max-h-60 overflow-y-auto">
-                  {demoData.scenarios.map((scenario) => {
+                  {scenarios.map((scenario) => {
                     const isSelected = scenario.id === activeScenario.id;
                     return (
                       <button
@@ -871,9 +895,9 @@ function MobileDemo({
             </div>
           </div>
 
-          <ScenarioDescription prompt={activeScenario.prompt} className="mt-3 p-3" />
+          <ScenarioDescription prompt={activeScenario.prompt} className="mt-2 p-2.5" />
 
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="mt-2.5 grid grid-cols-2 gap-3">
             <OutcomeCard
               compact
               title="Test run"
@@ -890,7 +914,7 @@ function MobileDemo({
             />
           </div>
 
-          <div className="mt-4">
+          <div className="mt-2.5">
             <p className="mb-2 text-xs uppercase tracking-wide text-slate-400">Repeated-run outcomes</p>
             <div className="mb-2 flex flex-wrap items-center gap-4 text-xs text-slate-300">
               <span className="inline-flex items-center gap-1.5">
@@ -996,8 +1020,6 @@ function MobileOverviewTab({ scenario }: { scenario: Scenario }) {
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Sensor refresh rate" value={`${scenario.config.lidar_hz.toFixed(1)} Hz`} icon={<Gauge className="h-5 w-5" />} />
         <StatCard label="Simulation time step" value={`${scenario.config.dt.toFixed(2)} s`} icon={<Timer className="h-5 w-5" />} />
-        <StatCard label="People / Vehicles" value={`${scenario.config.humans} / ${scenario.config.vehicles}`} icon={<CircleAlert className="h-5 w-5" />} />
-        <StatCard label="Racks / Barriers" value={`${scenario.config.racks} / ${scenario.config.walls}`} icon={<Map className="h-5 w-5" />} />
         <div className="col-span-2">
           <StatCard label="Simulation speed" value={`${scenario.batch.perf.sims_per_min.toFixed(2)} sims/min`} icon={<Database className="h-5 w-5" />} />
         </div>
@@ -1044,12 +1066,17 @@ function OverviewTab({ scenario }: { scenario: Scenario }) {
     <Card className="border-slate-800 bg-slate-950/70 p-6">
       <MapTab scenario={scenario} />
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
         <MetricCard label="Sensor refresh rate" value={`${scenario.config.lidar_hz.toFixed(1)} Hz`} icon={<Gauge className="h-4 w-4" />} />
         <MetricCard label="Simulation time step" value={`${scenario.config.dt.toFixed(2)} s`} icon={<Timer className="h-4 w-4" />} />
-        <MetricCard label="People / Vehicles" value={`${scenario.config.humans} / ${scenario.config.vehicles}`} icon={<CircleAlert className="h-4 w-4" />} />
-        <MetricCard label="Racks / Barriers" value={`${scenario.config.racks} / ${scenario.config.walls}`} icon={<Map className="h-4 w-4" />} />
         <MetricCard label="Simulation speed" value={`${scenario.batch.perf.sims_per_min.toFixed(2)} sims/min`} icon={<Database className="h-4 w-4" />} />
+      </div>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Humans" value={String(scenario.config.humans)} icon={<CircleAlert className="h-4 w-4" />} />
+        <MetricCard label="Vehicles" value={String(scenario.config.vehicles)} icon={<Database className="h-4 w-4" />} />
+        <MetricCard label="Racks" value={String(scenario.config.racks)} icon={<Map className="h-4 w-4" />} />
+        <MetricCard label="Barriers" value={String(scenario.config.walls)} icon={<ShieldCheck className="h-4 w-4" />} />
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
